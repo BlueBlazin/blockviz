@@ -5,11 +5,13 @@ pub mod effects;
 pub mod flow;
 pub mod frameworks;
 pub mod index;
+pub mod names;
 pub mod source;
 pub mod walk;
 
 use crate::ir::*;
 use crate::text::summary;
+use crate::vocabulary::{self, Domains};
 use flow::{Ctx, Fb, Relation};
 use index::{docstring, Index, PyModule};
 use ruff_python_ast::token::TokenKind;
@@ -125,7 +127,11 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
             }
         }
     }
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new() };
+    // A module works in the domains of the libraries it imports, and of those
+    // its project imports use (views that call a `db.py` work with a database).
+    let direct: Vec<Domains> = ix.externals.iter().map(|ext| ext.iter().fold(Domains::default(), |d, e| d.union(vocabulary::library_domains(e)))).collect();
+    let domains: Vec<Domains> = (0..n).map(|mi| ix.imports[mi].iter().fold(direct[mi], |d, (t, _)| d.union(direct[*t]))).collect();
+    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), domains };
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }

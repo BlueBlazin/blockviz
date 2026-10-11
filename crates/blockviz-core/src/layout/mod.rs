@@ -153,6 +153,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
             to_x,
             weight: match e.kind {
                 EdgeKind::Context => 0.15,
+                EdgeKind::Control => 0.3,
                 _ => 1.,
             },
             draw: true,

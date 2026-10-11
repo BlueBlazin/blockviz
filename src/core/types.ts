@@ -6,7 +6,7 @@ export type Kind =
   | 'call' | 'op' | 'glyph' | 'table' | 'artifact' | 'symbol' | 'input' | 'output';
 
 export type Shape = 'box' | 'region' | 'glyph' | 'port';
-export type EdgeKind = 'data' | 'context' | 'uses' | 'exec' | 'artifact';
+export type EdgeKind = 'data' | 'control' | 'context' | 'uses' | 'exec' | 'artifact';
 
 export interface Rect { x: number; y: number; w: number; h: number }
 export interface Span { file: number; start: number; end: number; line: number; endLine: number }

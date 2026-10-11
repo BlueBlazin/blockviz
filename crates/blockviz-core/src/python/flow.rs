@@ -8,9 +8,14 @@
 //! * `a + b` of two computed values becomes a ⊕ glyph (residual connections).
 //! * `print`, `assert`, imports, docstrings and `super().__init__()` produce no
 //!   blocks; prints become effects on the enclosing block.
+//! * Blocks are named by `crate::naming`: the operation for calls, the
+//!   developer's name for a value or field, never cut-off code.
 //! * Control flow becomes regions: loops and branches drawn inline when small
 //!   (with "× n" repeat badges), lanes for if/elif/else, and a guard tag on a
-//!   lone guarded statement instead of a box.
+//!   lone guarded statement instead of a box. Every exit and every branch arm
+//!   shows a step: `return None · if value is None`.
+//! * Conditions reach the steps they guard as control edges; settings and
+//!   properties of values (`len`, `shape`) as context edges.
 //! * Long statement lists are split into sections at comment-headed
 //!   paragraphs; runs of constants become a settings table.
 //! * Values crossing region boundaries get ports automatically, so every
@@ -19,9 +24,12 @@
 use super::effects::{self, Io};
 use super::frameworks::{self, Handler};
 use super::index::*;
+use super::names::Namer;
 use super::walk;
 use crate::ir::*;
+use crate::naming::{self, Dest, Step};
 use crate::text::{clip, heading, is_directive, squash, summary};
+use crate::vocabulary::{self, Domains};
 use ruff_python_ast::{self as ast, Expr, Stmt};
 use ruff_text_size::{Ranged, TextRange};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -50,6 +58,19 @@ pub struct Ctx<'p> {
     pub handlers: Vec<Vec<Handler>>,
     /// Router prefixes per module, computed on first use.
     pub prefixes: HashMap<usize, HashMap<String, String>>,
+    /// The domains each module works in, from the libraries it uses.
+    pub domains: Vec<Domains>,
+}
+
+impl Ctx<'_> {
+    /// The architecture-figure category of the first name that has one, in
+    /// modules that build neural networks; elsewhere names carry no colour.
+    pub fn category(&self, mi: usize, names: &[&str]) -> Option<&'static str> {
+        if !self.domains[mi].ml {
+            return None;
+        }
+        names.iter().find_map(|n| vocabulary::ml_category(n))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -126,7 +147,6 @@ impl Locals for TypesView<'_> {
 
 const SECTION_MIN: usize = 12;
 const MINOR_EXT: &[&str] = &["os.path.", "math.", "operator.", "typing.", "functools.", "itertools.", "collections.", "copy.", "inspect.", "string.", "re.", "builtins.", "dataclasses.", "time.", "sys.exit"];
-const SCALAR_FNS: &[&str] = &["len", "int", "float", "bool", "str", "round", "abs", "min", "max", "sum", "size", "item", "numel", "dim", "time", "perf_counter", "sqrt", "log", "exp", "ceil", "floor", "isinstance", "hasattr", "exists"];
 
 pub struct Fb<'c, 'p> {
     cx: &'c mut Ctx<'p>,
@@ -148,35 +168,12 @@ pub struct Fb<'c, 'p> {
     library: bool,
     /// Module-level statements already accounted for by `declarations`.
     handled: HashSet<u32>,
+    /// Building the body of a single guarded statement (`if c: x`).
+    guarded: bool,
 }
 
 fn compact(s: &str, max: usize) -> String {
     clip(&squash(s), max)
-}
-
-/// Category from well-known names, so ML code reads like an architecture figure.
-pub fn name_category(name: &str) -> Option<&'static str> {
-    let n = name.to_lowercase();
-    let n = n.as_str();
-    if n.contains("attn") || n.contains("attention") {
-        Some("attention")
-    } else if n.contains("norm") || n.starts_with("ln_") || n == "ln" || n.starts_with("ln_f") {
-        Some("norm")
-    } else if n.contains("embed") || n == "wte" || n == "wpe" {
-        Some("embed")
-    } else if n.contains("softmax") || matches!(n, "gelu" | "relu" | "silu" | "tanh" | "sigmoid" | "swish" | "mish" | "elu" | "leaky_relu" | "glu" | "swiglu" | "act" | "activation") {
-        Some("activation")
-    } else if n.contains("dropout") {
-        Some("dropout")
-    } else if n.contains("mlp") || n.contains("feedforward") || n.contains("feed_forward") || n.contains("ffn") || n == "ff" {
-        Some("mlp")
-    } else if n.contains("linear") || n.contains("proj") || n == "dense" || n.contains("lm_head") || n.contains("head") || n.starts_with("c_fc") || n.starts_with("c_attn") || n.contains("conv") {
-        Some("linear")
-    } else if n.contains("loss") || n.contains("cross_entropy") {
-        Some("loss")
-    } else {
-        None
-    }
 }
 
 impl<'c, 'p> Fb<'c, 'p> {
@@ -198,6 +195,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             loop_alias: HashMap::new(),
             library: false,
             handled: HashSet::new(),
+            guarded: false,
         }
     }
 
@@ -226,6 +224,11 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn src(&self) -> &'p super::source::Source {
         &self.m.src
+    }
+
+    /// Describes expressions for naming; chains of calls stop at blocks.
+    fn namer(&self) -> Namer<'_> {
+        Namer { src: self.src(), is_block: Box::new(move |c| self.is_major(&self.classify(c), c)) }
     }
 
     fn add(&mut self, kind: Kind, shape: Shape, title: impl Into<String>) -> Id {
@@ -346,7 +349,15 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn link(&mut self, v: &Val, to: Id) {
-        let kind = kind_of(v.style, v.scalar);
+        self.link_as(v, to, kind_of(v.style, v.scalar));
+    }
+
+    /// A value that decides whether or which way `to` runs.
+    fn link_control(&mut self, v: &Val, to: Id) {
+        self.link_as(v, to, if v.style == Style::Def { EdgeKind::Uses } else { EdgeKind::Control });
+    }
+
+    fn link_as(&mut self, v: &Val, to: Id, kind: EdgeKind) {
         let label = if v.style == Style::Def { String::new() } else { v.label.clone() };
         for &s in &v.srcs {
             let from_port = self.out_ports.get(&(s, label.clone())).copied();
@@ -547,7 +558,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                 i += 1;
                 continue;
             }
-            if self.module_level && self.is_setting(&stmts[i]) {
+            // Settings are declared at the top of a script, not chosen by a branch.
+            if self.module_level && self.is_setting(&stmts[i]) && !self.in_branch() {
                 let mut j = i + 1;
                 while j < stmts.len() && self.is_setting(&stmts[j]) {
                     j += 1;
@@ -561,11 +573,14 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             // `if c: …; return x` followed by more code is an if/else: what
             // follows only runs otherwise, so it becomes the else branch.
+            // A guarded bare exit (`if c: return x`) stays a tagged step instead.
             if let Stmt::If(x) = &stmts[i] {
-                if x.elif_else_clauses.is_empty() && i + 1 < stmts.len() && matches!(x.body.last(), Some(Stmt::Return(_))) && self.units(&x.body) >= 1 {
+                let exits = matches!(x.body.last(), Some(Stmt::Return(_) | Stmt::Continue(_) | Stmt::Break(_)));
+                let bare = matches!(&x.body[..], [only] if self.bare_exit(only));
+                if x.elif_else_clauses.is_empty() && i + 1 < stmts.len() && exits && !bare && self.units(&x.body) >= 1 {
                     let tail = &stmts[i + 1..];
                     let lanes = vec![
-                        (format!("if {}", compact(self.src().of(&*x.test), 40)), &x.body[..], Some(&*x.test), x.range),
+                        (format!("if {}", self.namer().code(&x.test, 40)), &x.body[..], Some(&*x.test), x.range),
                         ("else".to_string(), tail, None, TextRange::new(tail[0].start(), tail[tail.len() - 1].end())),
                     ];
                     let whole = RangeOf(TextRange::new(x.range.start(), tail[tail.len() - 1].end()));
@@ -573,9 +588,10 @@ impl<'c, 'p> Fb<'c, 'p> {
                     break;
                 }
             }
-            // `session.add(x); session.commit()` and `parser.add_argument(…)` × 12
-            // say one thing to a reader: fuse runs of calls on one receiver.
-            let run = self.call_run(stmts, i);
+            // `session.add(x); session.commit()`, `parser.add_argument(…)` × 12 and
+            // `opts["tls"] = …; opts["ssl"] = …` each say one thing to a reader:
+            // fuse runs of statements on one subject.
+            let run = self.subject_run(stmts, i);
             if run > i + 1 {
                 self.fused_run(&stmts[i..run], &suffix[run]);
                 i = run;
@@ -605,35 +621,66 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     // ----- fused runs ---------------------------------------------------------------
 
-    /// The receiver and method of a statement that is a library method call:
-    /// `session.commit()`, `parser.add_argument(...)`.
-    /// Also says whether the method is project code (`group.add_argument(...)`
-    /// on a project class), which only fuses as a table of identical calls.
-    fn receiver_call(&self, s: &Stmt) -> Option<(String, String, bool)> {
-        let Stmt::Expr(e) = s else { return None };
-        let Expr::Call(c) = &*e.value else { return None };
-        let Expr::Attribute(a) = &*c.func else { return None };
-        if self.is_print(c) || is_super(c) || contains_call(&a.value) || !matches!(&*a.value, Expr::Name(_) | Expr::Attribute(_)) || self.is_self(&a.value) {
-            return None;
-        }
-        let recv = squash(self.src().of(&*a.value));
-        match self.classify(c) {
-            Callee::Method(_) | Callee::Ext(_) => Some((recv, a.attr.to_string(), false)),
-            Callee::Func(_) => Some((recv, a.attr.to_string(), true)),
+    /// What a statement acts on, for fusing runs of statements on one
+    /// subject: a library method call (`session.commit()`), a store into a
+    /// named field (`smtp_options["tls"] = True`) or an update of a variable
+    /// (`text += "…"`). Project methods only fuse as a table of identical calls.
+    fn subject(&self, s: &Stmt) -> Option<Subject> {
+        match s {
+            Stmt::Expr(e) => {
+                let Expr::Call(c) = &*e.value else { return None };
+                let Expr::Attribute(a) = &*c.func else { return None };
+                if self.is_print(c) || is_super(c) || contains_call(&a.value) || !matches!(&*a.value, Expr::Name(_) | Expr::Attribute(_)) || self.is_self(&a.value) {
+                    return None;
+                }
+                let project = match self.classify(c) {
+                    Callee::Method(_) | Callee::Ext(_) => false,
+                    Callee::Func(_) => true,
+                    _ => return None,
+                };
+                Some(Subject { recv: squash(self.src().of(&*a.value)), verb: a.attr.to_string(), project, kind: RunKind::Call })
+            }
+            Stmt::Assign(a) if a.targets.len() == 1 => {
+                let (owner, key) = match &a.targets[0] {
+                    Expr::Attribute(t) => (&*t.value, t.attr.to_string()),
+                    Expr::Subscript(t) => (&*t.value, string_literal(&t.slice)?.to_string()),
+                    _ => return None,
+                };
+                // A value with a block of its own keeps it; `__init__` stores are not steps.
+                if !matches!(owner, Expr::Name(_) | Expr::Attribute(_)) || contains_call(owner) || (self.in_init && self.is_self(owner)) || self.has_block(&a.value) {
+                    return None;
+                }
+                Some(Subject { recv: squash(self.src().of(owner)), verb: key, project: false, kind: RunKind::Store })
+            }
+            Stmt::AugAssign(a) => match &*a.target {
+                Expr::Name(n) if !self.has_block(&a.value) => Some(Subject { recv: n.id.to_string(), verb: format!("{}=", a.op.as_str()), project: false, kind: RunKind::Update }),
+                _ => None,
+            },
             _ => None,
         }
     }
 
-    /// End of a run of at least two calls on one receiver starting at `i`.
-    fn call_run(&self, stmts: &[Stmt], i: usize) -> usize {
-        let Some((recv, method, _)) = self.receiver_call(&stmts[i]) else { return i };
+    /// Whether an expression contains a call that is a block of its own.
+    fn has_block(&self, e: &Expr) -> bool {
+        let mut found = false;
+        walk::walk(e, &mut |x| {
+            if let Expr::Call(c) = x {
+                found |= self.is_major(&self.classify(c), c);
+            }
+        });
+        found
+    }
+
+    /// End of a run of at least two statements on one subject starting at `i`.
+    fn subject_run(&self, stmts: &[Stmt], i: usize) -> usize {
+        let Some(first) = self.subject(&stmts[i]) else { return i };
         let mut j = i + 1;
-        let mut project = false;
+        let mut project = first.project;
         while j < stmts.len() && !self.handled.contains(&u32::from(stmts[j].start())) {
-            match self.receiver_call(&stmts[j]) {
-                Some((r, m, p)) if r == recv => {
-                    project |= p || self.receiver_call(&stmts[i]).is_some_and(|x| x.2);
-                    if project && m != method {
+            match self.subject(&stmts[j]) {
+                Some(x) if x.recv == first.recv && x.kind == first.kind => {
+                    project |= x.project;
+                    if project && x.verb != first.verb {
                         break;
                     }
                     j += 1;
@@ -680,10 +727,29 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.stmt(s, later);
         }
         let made: Vec<Id> = self.cx.b.get(container).children.iter().copied().filter(|c| !before.contains(c) && !self.cx.b.get(*c).is_port()).collect();
-        if made.len() < 2 {
+        // A residual `x += f(x)` stays a ⊕.
+        if made.len() < 2 || made.iter().any(|&m| self.cx.b.get(m).kind == Kind::Glyph) {
             return;
         }
         let src = self.src();
+        let namer = Namer::plain(src);
+        // Each statement in order, shown when the fused block is opened.
+        let mut steps: Vec<Row> = vec![];
+        for s in stmts {
+            let key = match s {
+                Stmt::Expr(e) => match &*e.value {
+                    Expr::Call(c) => format!("{}({})", match &*c.func {
+                        Expr::Attribute(a) => a.attr.to_string(),
+                        f => namer.code(f, 24),
+                    }, namer.args(c, 48)),
+                    v => namer.code(v, 56),
+                },
+                Stmt::Assign(a) => format!("{} = {}", namer.code(&a.targets[0], 24), namer.code(&a.value, 40)),
+                Stmt::AugAssign(a) => format!("{}= {}", a.op.as_str(), namer.code(&a.value, 48)),
+                _ => continue,
+            };
+            steps.push(Row { key, value: String::new(), note: String::new(), heading: false });
+        }
         // What each statement does, for titles and rows.
         let mut recv = String::new();
         let mut methods: Vec<String> = vec![];
@@ -696,7 +762,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                 _ => continue,
             };
             let Expr::Call(c) = call else { continue };
-            let args: Vec<String> = c.arguments.args.iter().map(|a| compact(src.of(a), 40)).chain(c.arguments.keywords.iter().map(|k| compact(src.of(k), 40))).collect();
+            let namer = Namer::plain(src);
+            let args: Vec<String> = c.arguments.args.iter().map(|a| namer.code(a, 40)).chain(c.arguments.keywords.iter().map(|k| match &k.arg {
+                Some(a) => format!("{a}={}", namer.code(&k.value, 36)),
+                None => format!("**{}", namer.code(&k.value, 36)),
+            })).collect();
             match &*c.func {
                 Expr::Attribute(a) if target.is_none() => {
                     recv = squash(src.of(&*a.value));
@@ -706,15 +776,15 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             match target {
                 Some(t) => {
-                    rows.push(Row { key: t.clone(), value: clip(&args.join(", "), 48), note: String::new(), heading: false });
+                    rows.push(Row { key: t.clone(), value: naming::list(&args, 48), note: String::new(), heading: false });
                     names.push(t);
                 }
                 None => {
                     let (key, rest) = match args.split_first() {
-                        Some((k, r)) => (k.clone(), r.join(", ")),
+                        Some((k, r)) => (k.clone(), naming::list(r, 48)),
                         None => ("()".into(), String::new()),
                     };
-                    rows.push(Row { key, value: clip(&rest, 48), note: String::new(), heading: false });
+                    rows.push(Row { key, value: rest, note: String::new(), heading: false });
                 }
             }
         }
@@ -794,6 +864,38 @@ impl<'c, 'p> Fb<'c, 'p> {
         n.code = code;
         n.outputs = outputs;
         n.reference = None;
+        n.link = None;
+        n.badges.clear();
+        let subject = self.subject(&stmts[0]);
+        match subject.as_ref().map(|x| x.kind) {
+            // Fields set one after another read as a table of what was set.
+            Some(RunKind::Store) => {
+                let rows: Vec<Row> = stmts
+                    .iter()
+                    .filter_map(|s| match s {
+                        Stmt::Assign(a) => Some(Row { key: namer.dest(&a.targets[0]).field_key(), value: namer.code(&a.value, 40), note: String::new(), heading: false }),
+                        _ => None,
+                    })
+                    .collect();
+                let n = self.cx.b.get_mut(fused);
+                n.kind = Kind::Table;
+                n.title = naming::qualifier(&subject.unwrap().recv, naming::TITLE_MAX);
+                n.subtitle = format!("set × {}", rows.len());
+                n.rows = rows;
+                return;
+            }
+            Some(RunKind::Update) => {
+                let x = subject.unwrap();
+                let n = self.cx.b.get_mut(fused);
+                n.kind = Kind::Op;
+                n.title = x.recv;
+                n.subtitle = format!("{} × {}", x.verb, stmts.len());
+                n.rows = steps;
+                return;
+            }
+            _ => {}
+        }
+        let n = self.cx.b.get_mut(fused);
         if table {
             n.kind = Kind::Table;
             n.title = if names.is_empty() { format!("{recv}.{}", methods[0]) } else { methods[0].clone() };
@@ -805,9 +907,12 @@ impl<'c, 'p> Fb<'c, 'p> {
         } else if same {
             n.title = format!("{recv}.{}", methods[0]);
             n.subtitle = format!("× {}", methods.len());
+            n.rows = steps;
         } else {
+            // `session` · add → commit → refresh; opening it shows each call in order.
             n.title = recv;
-            n.subtitle = clip(&methods.join(" → "), 40);
+            n.subtitle = naming::join(&methods, " → ", 40);
+            n.rows = steps;
             if io {
                 n.category = "io";
             }
@@ -914,11 +1019,12 @@ impl<'c, 'p> Fb<'c, 'p> {
         let row = |call: &Expr| -> Row {
             match call {
                 Expr::Call(c) => {
-                    let key = c.arguments.args.first().map(|a| string_literal(a).map(|t| if t.is_empty() { "/".to_string() } else { t.to_string() }).unwrap_or_else(|| compact(src.of(a), 40))).unwrap_or_default();
-                    let value = c.arguments.args.get(1).map(|a| compact(src.of(a), 44)).unwrap_or_default();
+                    let namer = Namer::plain(src);
+                    let key = c.arguments.args.first().map(|a| string_literal(a).map(|t| if t.is_empty() { "/".to_string() } else { t.to_string() }).unwrap_or_else(|| namer.code(a, 40))).unwrap_or_default();
+                    let value = c.arguments.args.get(1).map(|a| namer.code(a, 44)).unwrap_or_default();
                     Row { key, value, note: guard.map(|g| format!("if {g}")).unwrap_or_default(), heading: false }
                 }
-                e => Row { key: compact(src.of(e), 40), value: String::new(), note: guard.map(|g| format!("if {g}")).unwrap_or_default(), heading: false },
+                e => Row { key: Namer::plain(src).code(e, 40), value: String::new(), note: guard.map(|g| format!("if {g}")).unwrap_or_default(), heading: false },
             }
         };
         let calls = |e: &'p Expr| -> Option<&'p [Expr]> {
@@ -953,7 +1059,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if !only(&x.body) || x.elif_else_clauses.iter().any(|c| !only(&c.body)) {
                     return false;
                 }
-                let test = compact(src.of(&*x.test), 30);
+                let test = Namer::plain(src).code(&x.test, 30);
                 for b in &x.body {
                     self.route_rows(b, tables, Some(&test));
                 }
@@ -1089,9 +1195,9 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut names = vec![];
         for &s in stmts {
             let (name, value) = match s {
-                Stmt::Assign(a) => (src.of(&a.targets[0]).to_string(), compact(src.of(&*a.value), 40)),
-                Stmt::AnnAssign(a) => (src.of(&*a.target).to_string(), a.value.as_deref().map(|v| compact(src.of(v), 40)).unwrap_or_default()),
-                Stmt::TypeAlias(t) => (src.of(&*t.name).to_string(), compact(src.of(&*t.value), 40)),
+                Stmt::Assign(a) => (src.of(&a.targets[0]).to_string(), Namer::plain(src).code(&a.value, 40)),
+                Stmt::AnnAssign(a) => (src.of(&*a.target).to_string(), a.value.as_deref().map(|v| Namer::plain(src).code(v, 40)).unwrap_or_default()),
+                Stmt::TypeAlias(t) => (src.of(&*t.name).to_string(), Namer::plain(src).code(&t.value, 40)),
                 _ => continue,
             };
             rows.push(Row { key: name.clone(), value, note: String::new(), heading: false });
@@ -1210,7 +1316,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             prev_end = Some(src.line_of(usize::from(s.end()).saturating_sub(1)));
             let name = src.of(target).trim().to_string();
-            rows.push(Row { key: name.clone(), value: compact(src.of(value), 40), note: src.trailing_comment(line).filter(|c| !is_directive(c)).unwrap_or("").to_string(), heading: false });
+            rows.push(Row { key: name.clone(), value: Namer::plain(src).code(value, 40), note: src.trailing_comment(line).filter(|c| !is_directive(c)).unwrap_or("").to_string(), heading: false });
             names.push(name.clone());
             let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
             if ty != Ty::Unknown {
@@ -1277,7 +1383,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
             }
             Stmt::AugAssign(a) => self.aug_assign(s, a),
-            Stmt::Return(r) => self.ret(r.value.as_deref(), "return"),
+            Stmt::Return(r) => self.ret(s, r.value.as_deref(), "return"),
+            // Inside a branch arm, leaving the loop is what the arm does.
+            Stmt::Continue(_) | Stmt::Break(_) if self.in_branch() => {
+                self.exit_step(s, if matches!(s, Stmt::Continue(_)) { "continue" } else { "break" }, None, vec![], &Gather::default());
+            }
             Stmt::If(x) => self.if_stmt(s, x, later),
             Stmt::For(x) => self.for_stmt(s, &x.target, &x.iter, &x.body, later),
             Stmt::While(x) => self.while_stmt(s, &x.test, &x.body, later),
@@ -1338,11 +1448,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                 // Reading values to print is not a dataflow worth drawing.
             }
             Expr::Call(c) if is_super(c) => {}
-            Expr::Yield(y) => self.ret(y.value.as_deref(), "yield"),
-            Expr::YieldFrom(y) => self.ret(Some(&y.value), "yield"),
+            Expr::Yield(y) => self.ret(s, y.value.as_deref(), "yield"),
+            Expr::YieldFrom(y) => self.ret(s, Some(&y.value), "yield"),
             _ => {
                 let mut g = Gather::default();
-                let outcome = self.value(value, &mut g, "");
+                let outcome = self.value(value, &mut g, &Dest::None);
                 let Some(id) = outcome.node else { return };
                 self.finish_node(id, s, &g);
                 // `model.to(device)` / `optimizer.zero_grad()` change their receiver.
@@ -1402,7 +1512,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             _ => None,
         });
         if simple {
-            if !self.module_level && is_literal(value) {
+            if !self.module_level && is_literal(value) && !self.in_branch() {
                 let text = compact(self.src().of(value), 40);
                 for n in &names {
                     if let Some(f) = string_literal(value).and_then(effects::file_name) {
@@ -1412,9 +1522,28 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 return;
             }
+            // `a, b = x.a, x.b` only gives values names: no step of its own.
+            if let ([Expr::Tuple(tt)], Expr::Tuple(vt)) = (targets, value) {
+                let plain = |v: &Expr| is_literal(v) || (root_name(v).is_some() && !contains_call(v) && !matches!(v, Expr::Call(_)));
+                if tt.elts.len() == vt.elts.len() && tt.elts.iter().all(|t| matches!(t, Expr::Name(_))) && vt.elts.iter().all(plain) && !self.in_branch() {
+                    for (t, v) in tt.elts.iter().zip(&vt.elts) {
+                        let Expr::Name(n) = t else { continue };
+                        let mut g = Gather::default();
+                        let mut vals = if is_literal(v) { vec![] } else { self.collect(v, &mut g, false) };
+                        dedup_vals(&mut vals);
+                        match vals.as_slice() {
+                            [one] => {
+                                let style = if one.scalar || one.style == Style::Ctx { Style::Ctx } else { Style::Data };
+                                self.bind(&n.id, Bind::Src(one.srcs.clone(), style));
+                            }
+                            _ => self.bind(&n.id, Bind::Static),
+                        }
+                    }
+                    return;
+                }
+            }
             let mut g = Gather::default();
-            let label = names.join(", ");
-            let outcome = self.value(value, &mut g, &label);
+            let outcome = self.value(value, &mut g, &Dest::Names(names.clone()));
             // Types and file names flow through assignments.
             if names.len() == 1 {
                 let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
@@ -1451,9 +1580,25 @@ impl<'c, 'p> Fb<'c, 'p> {
                         self.bind(n, Bind::Src(vec![id], style));
                     }
                 }
-                Outcome { alias: Some(v), .. } => {
+                // In a branch arm, choosing a value is what the arm does: show it.
+                Outcome { alias, .. } if self.in_branch() => {
+                    let vals: Vec<Val> = alias.into_iter().collect();
+                    let id = self.store_step(s, &Dest::Names(names.clone()), value, &vals);
+                    self.finish_node(id, s, &g);
+                    self.cx.b.get_mut(id).outputs = names.clone();
                     for n in &names {
-                        self.bind(n, Bind::Src(v.srcs.clone(), if v.style == Style::Def { Style::Data } else { v.style }));
+                        self.bind(n, Bind::Src(vec![id], Style::Data));
+                    }
+                }
+                Outcome { alias: Some(v), .. } => {
+                    // `device = x.device` is metadata like a setting; `h = x` is `x`.
+                    let style = match v.style {
+                        Style::Def => Style::Data,
+                        _ if v.scalar => Style::Ctx,
+                        st => st,
+                    };
+                    for n in &names {
+                        self.bind(n, Bind::Src(v.srcs.clone(), style));
                     }
                 }
                 _ => {
@@ -1465,12 +1610,13 @@ impl<'c, 'p> Fb<'c, 'p> {
             return;
         }
         if let Some(attr) = self_attr {
-            if self.in_init && !self.builds_component(value) {
+            if self.in_init && !self.builds_component(value) && !self.in_branch() {
                 return;
             }
             // Component construction in __init__ reads as "c_attn: Linear".
             let mut g = Gather::default();
-            let outcome = self.value(value, &mut g, "");
+            let dest = Dest::Field { owner: self.this.as_ref().map(|t| t.0.clone()).unwrap_or_default(), key: attr.to_string(), item: false };
+            let outcome = self.value(value, &mut g, &dest);
             if let Some(id) = outcome.node {
                 self.finish_node(id, s, &g);
                 if outcome.root_call {
@@ -1485,29 +1631,30 @@ impl<'c, 'p> Fb<'c, 'p> {
                     let n = self.cx.b.get_mut(id);
                     let ctor = std::mem::take(&mut n.title);
                     if !n.subtitle.contains('×') {
-                        n.subtitle = if written.is_empty() { ctor } else { clip(&written, 28) };
+                        n.subtitle = if written.is_empty() { ctor } else { naming::qualifier(&written, 28) };
                     }
                     n.title = attr.to_string();
-                    if n.category == "library" || n.category == "class" || n.category == "component" {
-                        if let Some(c) = name_category(&n.subtitle).or_else(|| name_category(attr)) {
-                            n.category = c;
+                    let sub = n.subtitle.clone();
+                    if matches!(n.category, "library" | "class" | "component") {
+                        if let Some(c) = self.cx.category(self.mi, &[&sub, attr]) {
+                            self.cx.b.get_mut(id).category = c;
                         }
                     }
-                } else {
-                    let n = self.cx.b.get_mut(id);
-                    n.title = format!("self.{attr} = …");
                 }
                 if !self.in_init {
                     self.cx.b.get_mut(id).effects.push(format!("mutates self.{attr}"));
                 }
-            } else if !self.in_init {
-                // A plain state update outside the constructor is still worth showing.
+            } else if !self.in_init || self.in_branch() {
+                // A plain state update outside the constructor is still worth showing,
+                // and so is one that a branch of the constructor chooses.
                 let vals = {
                     let mut g = Gather::default();
                     self.collect(value, &mut g, false)
                 };
-                if !vals.is_empty() {
-                    let id = self.add(Kind::Op, Shape::Box, format!("self.{attr} = …"));
+                if !vals.is_empty() || self.in_branch() {
+                    let name = naming::name(&Step::Other, &dest, "");
+                    let id = self.add(Kind::Op, Shape::Box, name.title);
+                    self.cx.b.get_mut(id).subtitle = name.caption;
                     self.cx.b.get_mut(id).category = "op";
                     self.cx.b.get_mut(id).code = compact(self.src().of(s), 120);
                     self.cx.b.get_mut(id).effects.push(format!("mutates self.{attr}"));
@@ -1520,8 +1667,10 @@ impl<'c, 'p> Fb<'c, 'p> {
             return;
         }
         // Writes into an object or container: `out[split] = ...`, `model.flag = ...`.
+        let dest = self.namer().dest(&targets[0]);
         let mut g = Gather::default();
-        let mut vals = self.collect(value, &mut g, false);
+        let outcome = self.value(value, &mut g, &dest);
+        let mut vals = vec![];
         let mut root_var = None;
         let mut module_attr = false;
         for t in targets {
@@ -1540,13 +1689,34 @@ impl<'c, 'p> Fb<'c, 'p> {
                 vals.extend(self.read(b, &mut g));
             }
         }
-        let text = squash(self.src().of(&targets[0]));
-        let id = self.add(Kind::Op, Shape::Box, clip(&text, 30));
-        self.cx.b.get_mut(id).category = if module_attr { "config" } else { "op" };
-        self.cx.b.get_mut(id).code = compact(self.src().of(s), 160);
+        let id = match outcome {
+            // A call stored under a name is named by it, like a component:
+            // `Authorization` ← _build_auth_header.
+            Outcome { node: Some(id), root_call: true, .. } => {
+                if let Dest::Field { key, .. } = &dest {
+                    let n = self.cx.b.get_mut(id);
+                    let callee = std::mem::replace(&mut n.title, key.clone());
+                    n.subtitle = callee;
+                }
+                id
+            }
+            Outcome { node: Some(id), .. } => id,
+            // A plain value stored: the store is the step.
+            Outcome { alias, .. } => {
+                let name = naming::name(&Step::Other, &dest, "");
+                let id = self.add(Kind::Op, Shape::Box, name.title);
+                self.cx.b.get_mut(id).subtitle = name.caption;
+                self.cx.b.get_mut(id).category = "op";
+                vals.extend(alias);
+                id
+            }
+        };
         if module_attr {
+            self.cx.b.get_mut(id).category = "config";
             g.effects.insert("sets library state".into());
         }
+        self.cx.b.get_mut(id).code = compact(self.src().of(s), 160);
+        self.set_span(id, s);
         dedup_vals(&mut vals);
         for v in &vals {
             self.link(v, id);
@@ -1578,7 +1748,13 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.cx.b.get_mut(id).category = "op";
             id
         } else {
-            let id = self.add(Kind::Op, Shape::Box, clip(&squash(self.src().of(s)), 30));
+            let name = {
+                let namer = self.namer();
+                let step = Step::Update { op: format!("{}=", a.op.as_str()), operand: namer.code(&a.value, 24) };
+                naming::name(&step, &namer.dest(&a.target), "")
+            };
+            let id = self.add(Kind::Op, Shape::Box, name.title);
+            self.cx.b.get_mut(id).subtitle = name.caption;
             self.cx.b.get_mut(id).category = "op";
             id
         };
@@ -1599,24 +1775,73 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
-    fn ret(&mut self, value: Option<&'p Expr>, kind: &str) {
-        let Some(v) = value else { return };
+    /// Inside an arm of a branch (a lane, or a single guarded statement),
+    /// where every statement shows what the arm does.
+    fn in_branch(&self) -> bool {
+        self.guarded || self.cx.b.get(self.container()).kind == Kind::Lane
+    }
+
+    /// `return x`, `continue` or `break` whose value makes no block of its own.
+    fn bare_exit(&self, s: &Stmt) -> bool {
+        match s {
+            Stmt::Continue(_) | Stmt::Break(_) => true,
+            Stmt::Return(r) => r.value.as_deref().is_none_or(|v| {
+                let mut work = false;
+                walk::walk(v, &mut |x| match x {
+                    Expr::Call(c) => work |= self.is_major(&self.classify(c), c),
+                    Expr::Yield(_) | Expr::YieldFrom(_) | Expr::Await(_) | Expr::Lambda(_) => work = true,
+                    _ => {}
+                });
+                !work
+            }),
+            _ => false,
+        }
+    }
+
+    /// A result: `return x` or `yield x`. Values packed into a tuple flow on
+    /// as they are. Inside a branch arm, a result that makes no block of its
+    /// own (`return None`, `return value`) is drawn as a step, so the arm
+    /// shows what it does; the value flows through it to the result.
+    fn ret(&mut self, s: &impl Ranged, value: Option<&'p Expr>, kind: &str) {
+        let in_branch = self.in_branch();
+        let Some(v) = value else {
+            if in_branch {
+                self.exit_step(s, kind, None, vec![], &Gather::default());
+            }
+            return;
+        };
         let mut g = Gather::default();
-        let vals: Vec<Val> = match v {
-            Expr::Tuple(t) if t.elts.iter().all(|e| matches!(e, Expr::Name(_)) || is_constant(e)) => {
+        let mut made = false;
+        let mut vals: Vec<Val> = match v {
+            Expr::Tuple(t) if t.elts.iter().all(|e| self.passes_through(e)) => {
                 let mut out = vec![];
                 for e in &t.elts {
-                    if let Expr::Name(n) = e {
-                        out.extend(self.read(&n.id, &mut g));
+                    match e {
+                        Expr::Name(n) => out.extend(self.read(&n.id, &mut g)),
+                        e if is_literal(e) => {}
+                        e => {
+                            let before = self.cx.b.nodes.len();
+                            out.extend(self.collect(e, &mut g, false));
+                            made |= self.cx.b.nodes.len() > before;
+                        }
                     }
                 }
                 out
             }
             _ => {
-                let outcome = self.value(v, &mut g, "");
+                let outcome = self.value(v, &mut g, &Dest::None);
                 if let Some(id) = outcome.node {
+                    made = true;
                     let stmt_range = v.range();
                     self.finish_node(id, &RangeOf(stmt_range), &g);
+                    // Glue that a branch returns is the arm's exit: `return int(…)`.
+                    if in_branch && self.cx.b.get(id).kind == Kind::Op {
+                        let code = self.namer().code(v, naming::CAPTION_MAX);
+                        let name = naming::name(&Step::Exit { verb: kind.into(), value: code.clone() }, &Dest::None, &code);
+                        let n = self.cx.b.get_mut(id);
+                        n.title = name.title;
+                        n.subtitle = name.caption;
+                    }
                     vec![Val { srcs: vec![id], label: String::new(), style: Style::Data, scalar: false }]
                 } else if let Some(a) = outcome.alias {
                     vec![a]
@@ -1625,30 +1850,113 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
             }
         };
+        dedup_vals(&mut vals);
+        if in_branch && !made {
+            let id = self.exit_step(s, kind, Some(v), vals, &g);
+            let label = if let Expr::Name(n) = v { n.id.to_string() } else { String::new() };
+            vals = vec![Val { srcs: vec![id], label, style: Style::Data, scalar: false }];
+        }
         let label_text = compact(self.src().of(v), 28);
         let r = self.regions.last_mut().unwrap();
-        for mut val in vals {
-            if val.label.is_empty() {
-                val.label = String::new();
-            }
-            r.returns.push(val);
-        }
+        r.returns.extend(vals);
         if r.returns.is_empty() {
             r.returns.push(Val { srcs: vec![], label: String::new(), style: Style::Data, scalar: false });
         }
         r.effects.insert(format!("__{kind}:{label_text}"));
     }
 
+    /// Values a tuple can pack without a step of its own: names, constants,
+    /// attribute reads and calls that are blocks anyway.
+    fn passes_through(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Name(_) => true,
+            e if is_literal(e) => true,
+            Expr::Attribute(_) => root_name(e).is_some() && !contains_call(e),
+            Expr::Call(c) => self.is_major(&self.classify(c), c),
+            _ => false,
+        }
+    }
+
+    /// A step for leaving early or producing a value without other work:
+    /// `return None`, `yield chunk`, `continue`. `vals` flow into it.
+    fn exit_step(&mut self, s: &impl Ranged, verb: &str, value: Option<&'p Expr>, vals: Vec<Val>, g: &Gather) -> Id {
+        let code = value.map(|v| self.namer().code(v, naming::CAPTION_MAX)).unwrap_or_default();
+        let name = naming::name(&Step::Exit { verb: verb.into(), value: code.clone() }, &Dest::None, &code);
+        let id = self.add(Kind::Op, Shape::Box, name.title);
+        {
+            let src = self.src();
+            let n = self.cx.b.get_mut(id);
+            n.subtitle = name.caption;
+            n.category = "op";
+            n.code = compact(src.of(s), 160);
+        }
+        self.set_span(id, s);
+        for v in &vals {
+            self.link(v, id);
+        }
+        self.finish_node(id, s, g);
+        id
+    }
+
+    /// An arm that drew nothing still shows what it does when that is an
+    /// import (`try: import h2`, an optional dependency) or a `super()` call;
+    /// an arm of only `pass` or logging stays empty.
+    fn fill_empty_arm(&mut self, body: &'p [Stmt]) {
+        let lane = self.container();
+        if self.cx.b.get(lane).children.iter().any(|&c| !self.cx.b.get(c).is_port()) {
+            return;
+        }
+        for st in body {
+            let (title, caption) = match st {
+                Stmt::Import(i) => (format!("import {}", naming::list(&i.names.iter().map(|a| a.name.to_string()).collect::<Vec<_>>(), 24)), String::new()),
+                Stmt::ImportFrom(i) => (format!("import {}", i.module.as_ref().map(|m| m.to_string()).unwrap_or_default()), String::new()),
+                Stmt::Expr(e) => match &*e.value {
+                    Expr::Call(c) if is_super(c) => match &*c.func {
+                        Expr::Attribute(a) => (a.attr.to_string(), "super".to_string()),
+                        _ => continue,
+                    },
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let id = self.add(Kind::Op, Shape::Box, title);
+            let code = compact(self.src().of(st), 160);
+            let n = self.cx.b.get_mut(id);
+            n.subtitle = caption;
+            n.category = if matches!(st, Stmt::Expr(_)) { "op" } else { "library" };
+            n.code = code;
+            self.set_span(id, st);
+        }
+    }
+
+    /// A step for an assignment that makes no block of its own (`x = y`,
+    /// `error = "…"`), named by where it stores; `vals` flow into it.
+    fn store_step(&mut self, s: &Stmt, dest: &Dest, value: &Expr, vals: &[Val]) -> Id {
+        let code = self.namer().code(value, naming::CAPTION_MAX);
+        let name = naming::name(&Step::Other, dest, &code);
+        let id = self.add(Kind::Op, Shape::Box, name.title);
+        {
+            let src = self.src();
+            let n = self.cx.b.get_mut(id);
+            n.subtitle = name.caption;
+            n.category = "op";
+            n.code = compact(src.of(s), 160);
+        }
+        self.set_span(id, s);
+        for v in vals {
+            self.link(v, id);
+        }
+        id
+    }
+
     fn raise_stmt(&mut self, s: &'p Stmt, r: &'p ast::StmtRaise) {
-        let what = r
-            .exc
-            .as_ref()
-            .map(|e| match &**e {
-                Expr::Call(c) => squash(self.src().of(&*c.func)),
-                other => squash(self.src().of(other)),
-            })
-            .unwrap_or_else(|| "re-raise".into());
-        let id = self.add(Kind::Op, Shape::Box, format!("raise {}", clip(&what, 24)));
+        // Named by the exception: `raise ValueError`, not its module path or message.
+        let title = match r.exc.as_deref() {
+            Some(Expr::Call(c)) => format!("raise {}", self.namer().brief(&c.func)),
+            Some(e) => format!("raise {}", self.namer().brief(e)),
+            None => "re-raise".into(),
+        };
+        let id = self.add(Kind::Op, Shape::Box, title);
         self.cx.b.get_mut(id).category = "error";
         self.cx.b.get_mut(id).code = compact(self.src().of(s), 160);
         self.cx.b.get_mut(id).effects.push("raises".into());
@@ -1762,7 +2070,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             if v.srcs.iter().all(|s| fed.contains(s)) {
                 continue;
             }
-            self.link(v, region);
+            self.link_control(v, region);
         }
     }
 
@@ -1770,9 +2078,6 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut g = Gather::default();
         let mut vals = self.collect(test, &mut g, false);
         dedup_vals(&mut vals);
-        for v in &mut vals {
-            v.scalar = true;
-        }
         vals
     }
 
@@ -1788,10 +2093,10 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             return;
         }
-        let mut lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)> = vec![(format!("if {}", compact(self.src().of(&*x.test), 40)), &x.body, Some(&*x.test), x.range)];
+        let mut lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)> = vec![(format!("if {}", self.namer().code(&x.test, 40)), &x.body, Some(&*x.test), x.range)];
         for c in &x.elif_else_clauses {
             match &c.test {
-                Some(t) => lanes.push((format!("elif {}", compact(self.src().of(t), 40)), &c.body, Some(t), c.range)),
+                Some(t) => lanes.push((format!("elif {}", self.namer().code(t, 40)), &c.body, Some(t), c.range)),
                 None => lanes.push(("else".into(), &c.body, None, c.range)),
             }
         }
@@ -1806,13 +2111,15 @@ impl<'c, 'p> Fb<'c, 'p> {
             // Guard tag instead of a box for a single guarded statement.
             let container = self.container();
             let before: HashSet<Id> = self.cx.b.get(container).children.iter().copied().collect();
+            let guarded = std::mem::replace(&mut self.guarded, true);
             self.statements(lanes[0].1, later, false);
+            self.guarded = guarded;
             let new: Vec<Id> = self.cx.b.get(container).children.iter().copied().filter(|c| !before.contains(c) && !self.cx.b.get(*c).is_port()).collect();
-            let badge = clip(&lanes[0].0, 34);
+            let badge = format!("if {}", self.namer().code(&x.test, 31));
             for id in &new {
                 self.cx.b.get_mut(*id).badges.push(badge.clone());
                 for v in &cond {
-                    self.link(v, *id);
+                    self.link_control(v, *id);
                 }
             }
             return;
@@ -1845,6 +2152,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.cx.b.get_mut(lane).span = Some(span);
             self.regions.push(Region::new(lane));
             self.statements(body, later, true);
+            self.fill_empty_arm(body);
             self.close_region(later);
         }
         self.close_region(later);
@@ -1852,7 +2160,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn for_stmt(&mut self, s: &'p Stmt, target: &'p Expr, iter: &'p Expr, body: &'p [Stmt], later: &HashSet<String>) {
-        let title = format!("for {} in {}", compact(self.src().of(target), 16), compact(self.src().of(iter), 32));
+        let title = format!("for {} in {}", self.namer().code(target, 16), self.namer().code(iter, 32));
         let iter_ty = self.cx.ix.infer(self.mi, iter, &TypesView(&self.types));
         let count = match &iter_ty {
             Ty::List(_, Some(n)) => Some(n.clone()),
@@ -1911,7 +2219,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn while_stmt(&mut self, s: &'p Stmt, test: &'p Expr, body: &'p [Stmt], later: &HashSet<String>) {
         let forever = matches!(test, Expr::BooleanLiteral(b) if b.value);
-        let title = if forever { "repeat".to_string() } else { format!("while {}", compact(self.src().of(test), 36)) };
+        let title = if forever { "repeat".to_string() } else { format!("while {}", self.namer().code(test, 36)) };
         let cond = if forever { vec![] } else { self.condition_vals(test) };
         let id = self.open_region(Kind::Loop, title, s);
         if forever && has_break(body) {
@@ -1944,7 +2252,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             if major && !names.is_empty() {
                 let mut g = Gather::default();
-                let outcome = self.value(e, &mut g, &names.join(", "));
+                let outcome = self.value(e, &mut g, &Dest::Names(names.clone()));
                 if let Some(id) = outcome.node {
                     self.finish_node(id, e, &g);
                     self.cx.b.get_mut(id).outputs = names.clone();
@@ -1975,7 +2283,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.regions.last_mut().unwrap().merging = true;
         let mut lanes: Vec<(String, &'p [Stmt])> = vec![("try".into(), body)];
         for ast::ExceptHandler::ExceptHandler(h) in handlers {
-            let t = h.type_.as_ref().map(|t| compact(self.src().of(&**t), 28)).unwrap_or_else(|| "Exception".into());
+            let t = h.type_.as_ref().map(|t| self.namer().code(t, 28)).unwrap_or_else(|| "Exception".into());
             lanes.push((format!("except {t}"), &h.body));
         }
         if !orelse.is_empty() {
@@ -1987,8 +2295,13 @@ impl<'c, 'p> Fb<'c, 'p> {
         for (title, b) in lanes {
             let lane = self.add(Kind::Lane, Shape::Region, title);
             self.cx.b.get_mut(lane).category = "lane";
+            if let (Some(first), Some(last)) = (b.first(), b.last()) {
+                let span = self.src().span(TextRange::new(first.start(), last.end()));
+                self.cx.b.get_mut(lane).span = Some(span);
+            }
             self.regions.push(Region::new(lane));
             self.statements(b, later, true);
+            self.fill_empty_arm(b);
             self.close_region(later);
         }
         self.close_region(later);
@@ -1996,7 +2309,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn match_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtMatch, later: &HashSet<String>) {
         let cond = self.condition_vals(&x.subject);
-        let id = self.open_region(Kind::Branch, format!("match {}", compact(self.src().of(&*x.subject), 30)), s);
+        let id = self.open_region(Kind::Branch, format!("match {}", self.namer().code(&x.subject, 30)), s);
         self.cx.b.get_mut(id).hints.lanes = true;
         self.regions.last_mut().unwrap().merging = true;
         for case in &x.cases {
@@ -2005,11 +2318,12 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.cx.b.get_mut(lane).category = "lane";
             self.regions.push(Region::new(lane));
             self.statements(&case.body, later, true);
+            self.fill_empty_arm(&case.body);
             self.close_region(later);
         }
         self.close_region(later);
         for v in &cond {
-            self.link(v, id);
+            self.link_control(v, id);
         }
     }
 
@@ -2077,10 +2391,11 @@ impl<'c, 'p> Fb<'c, 'p> {
         let src = self.src();
         let mut role = None;
         for d in def.decorators {
-            match frameworks::role(&d.expression, def.name, &self.cx.prefixes[&mi], |e| compact(src.of(e), 24)) {
+            let namer = Namer::plain(src);
+            match frameworks::role(&d.expression, def.name, &self.cx.prefixes[&mi], |e| namer.code(e, 24)) {
                 Some(r) if role.is_none() => role = Some(r),
                 Some(_) => {}
-                None => badges.extend(frameworks::tag(d, |e| compact(src.of(e), 24))),
+                None => badges.extend(frameworks::tag(d, |e| namer.code(e, 24))),
             }
         }
         match kind {
@@ -2104,7 +2419,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         n.subtitle = match &role {
             Some(r) => r.label.clone(),
             None if def.name == "__init__" => "constructor".into(),
-            None => format!("({})", clip(&params.join(", "), 40)),
+            None => format!("({})", naming::list(&params, 40)),
         };
         n.category = if role.as_ref().is_some_and(|r| r.kind != Handler::Hook) { "endpoint" } else { "function" };
         n.doc = doc;
@@ -2169,15 +2484,16 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
-    /// A database call by its receiver's name, unless that name is an import
-    /// from a library that is not a database (Flask's cookie `session`).
+    /// A database call by its receiver's name, in a module that works with a
+    /// database, unless the receiver is an import from a library that is not
+    /// one (Flask's cookie `session`).
     fn is_database(&self, a: &ast::ExprAttribute) -> bool {
-        if !effects::database(&squash(self.src().of(&*a.value)), a.attr.as_str()) {
+        if !self.cx.domains[self.mi].database || !vocabulary::database_call(&squash(self.src().of(&*a.value)), a.attr.as_str()) {
             return false;
         }
         let Some(root) = root_name(&a.value) else { return true };
         match self.cx.ix.sym(self.mi, root) {
-            Some(Sym::Ext(p)) => ["sqlalchemy", "sqlmodel", "sqlite3", "psycopg", "psycopg2", "asyncpg", "pymongo", "motor", "peewee", "tortoise", "django.db", "databases", "duckdb", "mysql", "pymysql", "aiosqlite", "redis", "sqlglot", "pony"].iter().any(|l| p == l || p.starts_with(&format!("{l}."))),
+            Some(Sym::Ext(p)) => vocabulary::library_domains(p.split('.').next().unwrap_or(p)).database,
             _ => true,
         }
     }
@@ -2267,7 +2583,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
             }
             other => match self.ty(other) {
-                Ty::Inst(k) => Callee::Instance { class: k, var: compact(self.src().of(other), 20) },
+                Ty::Inst(k) => Callee::Instance { class: k, var: self.namer().code(other, 20) },
                 Ty::Func(f) => Callee::Func(f),
                 Ty::Class(k) => Callee::Ctor(k),
                 _ => Callee::Unknown,
@@ -2306,13 +2622,17 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
-    fn scalar_result(callee: &Callee) -> bool {
+    /// Calls that read a property of their inputs (`len(x)`, `x.size()`): the
+    /// result is metadata and the inputs are used only for that property.
+    /// Conversions and arithmetic (`int`, `round`, `sum`) are not: their
+    /// results are metadata only when their inputs are.
+    fn metadata(callee: &Callee) -> bool {
         let name = match callee {
             Callee::Ext(p) => p.rsplit('.').next().unwrap_or(p),
             Callee::Builtin(b) | Callee::Method(b) => b.as_str(),
             _ => return false,
         };
-        SCALAR_FNS.contains(&name) || matches!(callee, Callee::Ext(p) if p.starts_with("math."))
+        vocabulary::is_metadata(name)
     }
 
     /// Collects the dataflow sources of an expression, creating blocks for major calls.
@@ -2337,13 +2657,20 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if text == "sys.argv" {
                     g.effects.insert("reads CLI args".into());
                 }
-                self.collect(&a.value, g, fold)
+                let mut vals = self.collect(&a.value, g, fold);
+                // `x.shape`, `x.device`: a property, not the value itself.
+                if vocabulary::is_metadata(a.attr.as_str()) {
+                    for v in &mut vals {
+                        v.scalar = true;
+                    }
+                }
+                vals
             }
             Expr::Call(c) => {
                 let callee = self.classify(c);
                 if !fold && self.is_major(&callee, c) {
                     let id = self.call_node(e, &callee, g);
-                    return vec![Val { srcs: vec![id], label: String::new(), style: Style::Data, scalar: Self::scalar_result(&callee) }];
+                    return vec![Val { srcs: vec![id], label: String::new(), style: Style::Data, scalar: Self::metadata(&callee) }];
                 }
                 if let Callee::Ext(p) = &callee {
                     if let Some((eff, _)) = effects::io_of(p, c, self.src()) {
@@ -2390,7 +2717,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     }
                     out.extend(vs);
                 }
-                if Self::scalar_result(&callee) {
+                if Self::metadata(&callee) {
                     for v in &mut out {
                         v.scalar = true;
                     }
@@ -2517,13 +2844,13 @@ impl<'c, 'p> Fb<'c, 'p> {
             Callee::Func(f) => {
                 let info = &self.cx.ix.funcs[*f];
                 let owner = info.class.map(|k| self.cx.ix.classes[k].name.clone()).unwrap_or_default();
-                let cat = name_category(&info.name).unwrap_or("function");
+                let cat = self.cx.category(self.mi, &[&info.name]).unwrap_or("function");
                 (info.name.clone(), owner, cat, Some(info.node))
             }
             Callee::Ctor(k) => {
                 let cls = &self.cx.ix.classes[*k];
                 link = Some(cls.node);
-                (cls.name.clone(), "new instance".into(), name_category(&cls.name).unwrap_or("class"), None)
+                (cls.name.clone(), "new instance".into(), self.cx.category(self.mi, &[&cls.name]).unwrap_or("class"), None)
             }
             Callee::Instance { class, var } => {
                 let cls = &self.cx.ix.classes[*class];
@@ -2534,7 +2861,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 } else {
                     (var.clone(), cls.name.clone())
                 };
-                (title, sub, name_category(&cls.name).or_else(|| name_category(var)).unwrap_or("component"), reference)
+                (title, sub, self.cx.category(self.mi, &[&cls.name, var]).unwrap_or("component"), reference)
             }
             Callee::Component { name, ty } => {
                 let display = self.cx.ix.display(ty);
@@ -2543,7 +2870,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     _ => None,
                 };
                 let project = matches!(ty, Ty::Inst(_));
-                let cat = name_category(&display).or_else(|| name_category(name)).unwrap_or(if project { "component" } else { "library" });
+                let cat = self.cx.category(self.mi, &[&display, name]).unwrap_or(if project { "component" } else { "library" });
                 (name.clone(), display, cat, reference)
             }
             Callee::Ext(p) => {
@@ -2558,7 +2885,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let cat = if effects::io_of(p, c, src).is_some() || effects::ext_effect(p).is_some_and(|e| e.contains("network") || e.contains("file")) {
                     "io"
                 } else {
-                    name_category(&last).or_else(|| name_category(&resolved)).unwrap_or("library")
+                    self.cx.category(self.mi, &[&last, &resolved]).unwrap_or("library")
                 };
                 let mut sub = if prefix.is_empty() && resolved != last { resolved.clone() } else { prefix };
                 // Containers of project modules say what they hold.
@@ -2573,14 +2900,15 @@ impl<'c, 'p> Fb<'c, 'p> {
                         sub = shown;
                     }
                 }
-                (last, clip(&sub, 28), cat, None)
+                let sub = if sub.chars().count() <= 28 { sub } else if sub.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') { naming::qualifier(&sub, 28) } else { naming::shorten(&sub, 28) };
+                (last, sub, cat, None)
             }
             // `open(path, mode)`: the arguments tell two calls of a builtin apart.
-            Callee::Builtin(b) => (b.clone(), args_text(c, src), if b == "open" || b == "input" { "io" } else { "op" }, None),
+            Callee::Builtin(b) => (b.clone(), Namer::plain(src).args(c, 34), if b == "open" || b == "input" { "io" } else { "op" }, None),
             Callee::Value(v) => (v.clone(), String::new(), "function", None),
             Callee::Method(m) => {
                 let recv = match &*c.func {
-                    Expr::Attribute(a) => compact(src.of(&*a.value), 20),
+                    Expr::Attribute(a) => Namer::plain(src).code(&a.value, 20),
                     _ => String::new(),
                 };
                 (m.clone(), recv, if effects::method_io(m).is_some() { "io" } else { "op" }, None)
@@ -2725,7 +3053,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     /// Builds the value of an expression: one block for the statement unless it
     /// is a plain alias or a single major call.
-    fn value(&mut self, e: &'p Expr, g: &mut Gather, target: &str) -> Outcome {
+    fn value(&mut self, e: &'p Expr, g: &mut Gather, dest: &Dest) -> Outcome {
         match e {
             Expr::Name(n) => {
                 let vals = self.read(&n.id, g);
@@ -2736,19 +3064,21 @@ impl<'c, 'p> Fb<'c, 'p> {
                 dedup_vals(&mut vals);
                 if vals.len() == 1 {
                     let mut v = vals.remove(0);
-                    v.scalar = false;
+                    v.scalar = is_metadata_read(e);
                     return Outcome { alias: Some(v), ..Outcome::none() };
                 }
-                if vals.is_empty() {
+                // `current_app.config["KEY"]`: a lookup into state the diagram does
+                // not otherwise show is still where the value comes from.
+                if vals.is_empty() && !(matches!(e, Expr::Subscript(_)) && matches!(dest, Dest::Names(_))) {
                     return Outcome::none();
                 }
-                let id = self.fused(e, vals, g, target);
+                let id = self.fused(e, vals, dest);
                 return Outcome { node: Some(id), ..Outcome::none() };
             }
             e if is_constant(e) => return Outcome::none(),
             Expr::Await(a) => {
                 g.effects.insert("awaits".into());
-                return self.value(&a.value, g, target);
+                return self.value(&a.value, g, dest);
             }
             // `X(...) if cond else None`: the block exists conditionally.
             Expr::If(x) => {
@@ -2765,9 +3095,15 @@ impl<'c, 'p> Fb<'c, 'p> {
                     dedup_vals(&mut vals);
                     let name = |c: &ast::ExprCall| squash(self.src().of(&*c.func)).rsplit('.').next().unwrap_or("").to_string();
                     let label = format!("{} / {}", name(a), name(b));
-                    let id = self.fused(e, vals, g, target);
-                    self.cx.b.get_mut(id).title = clip(&label, 28);
-                    self.cx.b.get_mut(id).category = "library";
+                    let id = self.fused(e, vals, dest);
+                    let n = self.cx.b.get_mut(id);
+                    if matches!(dest, Dest::Names(_) | Dest::Field { .. }) {
+                        n.subtitle = label;
+                    } else {
+                        n.title = label;
+                        n.subtitle.clear();
+                    }
+                    n.category = "library";
                     return Outcome { node: Some(id), ..Outcome::none() };
                 }
                 let (call, other, negate) = if simple(&x.orelse) { (&*x.body, &*x.orelse, false) } else { (&*x.orelse, &*x.body, true) };
@@ -2777,11 +3113,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                         if self.is_major(&callee, c) {
                             let cond = self.condition_vals(&x.test);
                             let id = self.call_node(call, &callee, g);
-                            let test = compact(self.src().of(&*x.test), 28);
+                            let test = self.namer().code(&x.test, 28);
                             let badge = if negate { format!("unless {test}") } else { format!("if {test}") };
                             self.cx.b.get_mut(id).badges.push(badge);
                             for v in &cond {
-                                self.link(v, id);
+                                self.link_control(v, id);
                             }
                             // The fallback value flows through when the condition fails.
                             let mut fallback = self.collect(other, g, false);
@@ -2807,7 +3143,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             // A minor call at the root (`x.size()`, `len(data)`) is the statement's block;
             // its inputs are real inputs, and a scalar result is drawn lightly downstream.
-            if Self::scalar_result(&callee) {
+            if Self::metadata(&callee) {
                 let mut vals = self.collect(e, g, false);
                 for v in &mut vals {
                     v.scalar = v.style == Style::Ctx;
@@ -2816,7 +3152,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if vals.is_empty() {
                     return Outcome::none();
                 }
-                let id = self.fused(e, vals, g, target);
+                let id = self.fused(e, vals, dest);
                 return Outcome { node: Some(id), scalar: true, ..Outcome::none() };
             }
         }
@@ -2845,7 +3181,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if vals.is_empty() {
                     return Outcome::none();
                 }
-                let id = self.fused(e, vals, g, target);
+                let id = self.fused(e, vals, dest);
                 return Outcome { node: Some(id), scalar, ..Outcome::none() };
             }
         }
@@ -2856,12 +3192,12 @@ impl<'c, 'p> Fb<'c, 'p> {
             return Outcome::none();
         }
         // A single block wrapped in trivial glue (`f(x)[0]`, `g(x).attr`) keeps its identity.
-        let made_here = |s: Id| s >= first_new;
+        let made_here = |s: Id| s >= first_new && !self.cx.b.get(s).is_port();
         if vals.len() == 1 && vals[0].srcs.len() == 1 && made_here(vals[0].srcs[0]) && is_glue(e) {
             return Outcome { node: Some(vals[0].srcs[0]), ..Outcome::none() };
         }
         let scalar = !vals.is_empty() && vals.iter().all(|v| v.scalar);
-        let id = self.fused(e, vals, g, target);
+        let id = self.fused(e, vals, dest);
         Outcome { node: Some(id), scalar, ..Outcome::none() }
     }
 
@@ -2882,18 +3218,24 @@ impl<'c, 'p> Fb<'c, 'p> {
         if !n.subtitle.contains('×') {
             n.subtitle = ctor.clone();
         }
-        if let Some(cat) = name_category(&ctor).or_else(|| name_category(key)) {
-            n.category = cat;
+        if let Some(cat) = self.cx.category(self.mi, &[&ctor, key]) {
+            self.cx.b.get_mut(id).category = cat;
         }
     }
 
-    fn fused(&mut self, e: &'p Expr, vals: Vec<Val>, g: &Gather, target: &str) -> Id {
+    /// One block for glue: named by where its result goes and what it does
+    /// (see `crate::naming`).
+    fn fused(&mut self, e: &'p Expr, vals: Vec<Val>, dest: &Dest) -> Id {
         let src = self.src();
-        let label = fused_label(e, src, g, target);
-        let id = self.add(Kind::Op, Shape::Box, label);
+        let name = {
+            let namer = self.namer();
+            naming::name(&namer.step(e), dest, &namer.code(e, naming::CAPTION_MAX))
+        };
+        let id = self.add(Kind::Op, Shape::Box, name.title);
         let span = src.span(e.range());
         {
             let n = self.cx.b.get_mut(id);
+            n.subtitle = name.caption;
             n.category = "op";
             n.code = compact(src.of(e), 200);
             n.span = Some(span);
@@ -2927,6 +3269,21 @@ impl<'c, 'p> Fb<'c, 'p> {
             n.badges.push("generator".into());
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    Call,
+    Store,
+    Update,
+}
+
+/// What a statement acts on, for fusing runs (see `Fb::subject`).
+struct Subject {
+    recv: String,
+    verb: String,
+    project: bool,
+    kind: RunKind,
 }
 
 struct Outcome {
@@ -3034,6 +3391,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         });
         let span = src.span(def.range);
         let data = cx.ix.classes[cid].data;
+        let category = cx.category(mi, &[&name]);
         let n = cx.b.get_mut(node);
         n.kind = Kind::Class;
         n.shape = Shape::Box;
@@ -3043,11 +3401,11 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
             sub.push(e.clone());
         }
         n.subtitle = sub.join(", ");
-        n.category = if data { "config" } else { name_category(&name).unwrap_or("class") };
+        n.category = if data { "config" } else { category.unwrap_or("class") };
         n.doc = doc;
         n.span = Some(span);
         for d in &def.decorator_list {
-            n.badges.extend(super::frameworks::tag(d, |e| compact(src.of(e), 20)));
+            n.badges.extend(super::frameworks::tag(d, |e| Namer::plain(src).code(e, 20)));
         }
         // ORM models are the database's tables: SQLModel `table=True`,
         // Django `models.Model`, SQLAlchemy declarative bases.
@@ -3066,15 +3424,15 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         for s in &def.body {
             match s {
                 Stmt::AnnAssign(a) => rows.push(Row {
-                    key: compact(src.of(&*a.target), 30),
+                    key: Namer::plain(src).code(&a.target, 30),
                     value: match &a.value {
-                        Some(v) => format!("{} = {}", compact(src.of(&*a.annotation), 16), compact(src.of(&**v), 30)),
-                        None => compact(src.of(&*a.annotation), 30),
+                        Some(v) => format!("{} = {}", Namer::plain(src).code(&a.annotation, 16), Namer::plain(src).code(v, 30)),
+                        None => Namer::plain(src).code(&a.annotation, 30),
                     },
                     note: src.trailing_comment(src.line_of(usize::from(a.range.start()))).unwrap_or("").to_string(),
                     heading: false,
                 }),
-                Stmt::Assign(a) => rows.push(Row { key: compact(src.of(&a.targets[0]), 30), value: compact(src.of(&*a.value), 34), note: String::new(), heading: false }),
+                Stmt::Assign(a) => rows.push(Row { key: Namer::plain(src).code(&a.targets[0], 30), value: Namer::plain(src).code(&a.value, 34), note: String::new(), heading: false }),
                 _ => {}
             }
         }
@@ -3088,7 +3446,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         cx.b.get_mut(group).category = "region";
         cx.b.get_mut(group).hints.pack = -1;
         for (name, ty, ctor, range) in comps {
-            component_node(cx, group, &name, &ty, &ctor, Some(src.span(range)));
+            component_node(cx, mi, group, &name, &ty, &ctor, Some(src.span(range)));
         }
     }
     let methods = cx.ix.classes[cid].methods.clone();
@@ -3148,14 +3506,14 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
     }
 }
 
-fn component_node(cx: &mut Ctx, parent: Id, name: &str, ty: &Ty, ctor: &str, span: Option<Span>) {
+fn component_node(cx: &mut Ctx, mi: usize, parent: Id, name: &str, ty: &Ty, ctor: &str, span: Option<Span>) {
     if let Ty::Dict(fields) = ty {
         let group = cx.b.add(Some(parent), Kind::Group, Shape::Region, name);
         cx.b.get_mut(group).category = "region";
         cx.b.get_mut(group).span = span.clone();
         for (k, t) in fields {
             if is_component(t) {
-                component_node(cx, group, k, t, "", span.clone());
+                component_node(cx, mi, group, k, t, "", span.clone());
             }
         }
         return;
@@ -3171,9 +3529,10 @@ fn component_node(cx: &mut Ctx, parent: Id, name: &str, ty: &Ty, ctor: &str, spa
     };
     let id = cx.b.add(Some(parent), Kind::Symbol, Shape::Box, name);
     let project = reference.is_some();
+    let category = cx.category(mi, &[&display, name]);
     let n = cx.b.get_mut(id);
-    n.subtitle = if display.is_empty() { compact(ctor, 24) } else { display.clone() };
-    n.category = name_category(&display).or_else(|| name_category(name)).unwrap_or(if project { "component" } else { "library" });
+    n.subtitle = if display.is_empty() { naming::qualifier(&squash(ctor), 24) } else { display.clone() };
+    n.category = category.unwrap_or(if project { "component" } else { "library" });
     n.link = reference;
     n.span = span;
 }
@@ -3226,7 +3585,8 @@ fn return_label(vals: &[Val]) -> String {
             }
         }
     }
-    clip(&labels.join(", "), 32)
+    let labels: Vec<String> = labels.into_iter().map(str::to_string).collect();
+    naming::list(&labels, 32)
 }
 
 fn op_symbol(op: ast::Operator) -> &'static str {
@@ -3318,6 +3678,15 @@ fn contains_call(e: &Expr) -> bool {
         }
     });
     found
+}
+
+/// `x.shape`, `x.shape[0]`, `x.device`: a property of a value.
+fn is_metadata_read(e: &Expr) -> bool {
+    match e {
+        Expr::Attribute(a) => vocabulary::is_metadata(a.attr.as_str()),
+        Expr::Subscript(s) => is_metadata_read(&s.value),
+        _ => false,
+    }
 }
 
 /// Glue that does not deserve its own block around a single major call:
@@ -3424,11 +3793,6 @@ fn is_plumbing(s: &Stmt) -> bool {
     }
 }
 
-/// A call's arguments, compacted: `path, mode, encoding=encoding`.
-fn args_text(c: &ast::ExprCall, src: &super::source::Source) -> String {
-    let parts: Vec<String> = c.arguments.args.iter().map(|a| squash(src.of(a))).chain(c.arguments.keywords.iter().map(|k| squash(src.of(k)))).collect();
-    clip(&parts.join(", "), 34)
-}
 
 /// The title a comment block gives the code below it. One line is a heading
 /// (`# training loop`); a longer block is an explanation, titled only by a
@@ -3527,44 +3891,4 @@ fn g_strings_files(fb: &Fb, e: &Expr) -> Vec<String> {
     out.sort();
     out.dedup();
     out
-}
-
-/// Label for a fused statement block: the call chain when there is one
-/// (`view · transpose`), otherwise the expression itself.
-fn fused_label(e: &Expr, src: &super::source::Source, g: &Gather, target: &str) -> String {
-    let mut calls: Vec<String> = vec![];
-    for c in &g.minor_calls {
-        if !calls.contains(c) && !matches!(c.as_str(), "len" | "int" | "float" | "str" | "range" | "list" | "dict" | "tuple" | "join" | "dirname" | "min" | "max" | "isinstance" | "hasattr" | "getattr") {
-            calls.push(c.clone());
-        }
-    }
-    match e {
-        Expr::Dict(d) => {
-            let keys: Vec<String> = d.items.iter().filter_map(|i| i.key.as_ref().and_then(string_literal).map(|s| s.to_string())).collect();
-            if !keys.is_empty() {
-                let more = if keys.len() > 3 { format!(", +{}", keys.len() - 3) } else { String::new() };
-                return format!("{{{}{}}}", keys.iter().take(3).cloned().collect::<Vec<_>>().join(", "), more);
-            }
-        }
-        Expr::Call(c) if matches!(&*c.func, Expr::Name(n) if n.id.as_str() == "dict") => {
-            let keys: Vec<String> = c.arguments.keywords.iter().filter_map(|k| k.arg.as_ref().map(|a| a.to_string())).collect();
-            if !keys.is_empty() {
-                let more = if keys.len() > 3 { format!(", +{}", keys.len() - 3) } else { String::new() };
-                return format!("{{{}{}}}", keys.iter().take(3).cloned().collect::<Vec<_>>().join(", "), more);
-            }
-        }
-        _ => {}
-    }
-    // A lone call is named by what it calls, with the object it acts on:
-    // `session.get`, `os.path.join`, not `get` or a clipped line of code.
-    if let Expr::Call(c) = e {
-        if calls.len() <= 1 && !contains_call(&c.func) {
-            return clip(&squash(src.of(&*c.func)), 28);
-        }
-    }
-    if !calls.is_empty() && calls.len() <= 3 && !matches!(e, Expr::BinOp(_) | Expr::Compare(_) | Expr::BoolOp(_)) {
-        return calls.join(" · ");
-    }
-    let _ = target;
-    clip(&squash(src.of(e)), 28)
 }

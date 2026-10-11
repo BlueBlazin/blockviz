@@ -420,10 +420,12 @@ export class Renderer {
     const ctx = this.ctx;
     const lit = focus !== null && (e.from === focus || e.to === focus);
     const dim = focus !== null && !lit;
+    // Settings and sizes are faint; conditions are dotted: neither is the data itself.
     const context = e.kind === 'context';
-    let color = context ? theme.context : e.kind === 'artifact' ? theme.artifact : e.kind === 'exec' ? theme.faintEdge : theme.edge;
-    let a = alpha * (context ? 0.55 : 0.95) * (dim ? 0.35 : 1);
-    let width = context ? lw * 0.8 : lw;
+    const control = e.kind === 'control';
+    let color = context || control ? theme.context : e.kind === 'artifact' ? theme.artifact : e.kind === 'exec' ? theme.faintEdge : theme.edge;
+    let a = alpha * (context ? 0.55 : control ? 0.8 : 0.95) * (dim ? 0.35 : 1);
+    let width = context || control ? lw * 0.85 : lw;
     if (lit) {
       color = theme.accent;
       a = Math.max(alpha, 0.9);
@@ -434,11 +436,11 @@ export class Renderer {
     ctx.fillStyle = color;
     ctx.lineWidth = width;
     ctx.lineJoin = 'round';
-    ctx.setLineDash(e.kind === 'exec' ? [5, 4] : e.kind === 'artifact' ? [6, 3] : []);
+    ctx.setLineDash(e.kind === 'exec' ? [5, 4] : e.kind === 'artifact' ? [6, 3] : control ? [1.5, 2.5].map(d => d * Math.max(width, 1)) : []);
     const n = pts.length / 2;
     const X = (i: number) => t.x + pts[i * 2] * t.s;
     const Y = (i: number) => t.y + pts[i * 2 + 1] * t.s;
-    const head = e.open ? 0 : clamp(7 * Math.sqrt(t.s), 3, 8) * (context ? 0.8 : 1);
+    const head = e.open ? 0 : clamp(7 * Math.sqrt(t.s), 3, 8) * (context || control ? 0.8 : 1);
     // Shorten the last segment so the line ends at the arrow's base.
     const ex = X(n - 1);
     const ey = Y(n - 1);

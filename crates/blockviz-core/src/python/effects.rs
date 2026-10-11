@@ -128,23 +128,3 @@ pub fn method_io(m: &str) -> Option<Io> {
         _ => None,
     }
 }
-
-/// Database access through a session, connection, cursor or ORM manager:
-/// `session.commit()`, `db.execute(...)`, `Post.objects.filter(...)`.
-/// Judged by the receiver's name, since its type is rarely known.
-pub fn database(receiver: &str, method: &str) -> bool {
-    const VERBS: &[&str] = &[
-        "execute", "executemany", "executescript", "commit", "rollback", "add", "add_all", "delete", "merge", "flush", "refresh", "query", "get", "exec", "scalar", "scalars", "fetchone", "fetchall", "fetchmany", "filter", "filter_by", "exclude", "all", "first", "create", "get_or_create", "update_or_create", "bulk_create", "bulk_update", "update", "insert_one", "insert_many", "find", "find_one", "update_one", "update_many", "delete_one", "delete_many", "aggregate", "count", "values", "values_list", "order_by", "select_related", "prefetch_related", "annotate",
-    ];
-    if !VERBS.contains(&method) {
-        return false;
-    }
-    let r = receiver.to_ascii_lowercase();
-    if r.ends_with(".objects") || r == "objects" || r.contains(".objects.") {
-        return true;
-    }
-    let root = r.split('.').next().unwrap_or(&r);
-    let last = r.rsplit('.').next().unwrap_or(&r);
-    let dbish = |n: &str| matches!(n, "session" | "db" | "db_session" | "dbsession" | "sess" | "conn" | "connection" | "cursor" | "cur" | "cnx" | "tx" | "transaction" | "async_session" | "database" | "engine") || n.ends_with("_session") || n.ends_with("_db") || n.ends_with("_conn") || n.ends_with("_cursor");
-    dbish(root) || dbish(last)
-}

@@ -9,11 +9,13 @@ pub mod highlight;
 pub mod invocations;
 pub mod ir;
 pub mod layout;
+pub mod naming;
 pub mod notebook;
 pub mod outline;
 pub mod project;
 pub mod python;
 pub mod text;
+pub mod vocabulary;
 
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;

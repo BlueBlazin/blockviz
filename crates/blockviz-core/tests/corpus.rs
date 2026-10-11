@@ -141,6 +141,9 @@ fn library_modules_show_definitions_not_declarations() {
         assert_ne!(n.title, "TypeVar", "type variables are not steps");
         assert!(!n.title.starts_with("getLogger"), "logger setup is not a step");
     }
+    // Not a neural network: `head`, `headers` and `normalize` carry no architecture colours.
+    let ml = ["attention", "norm", "embed", "activation", "dropout", "mlp", "linear", "loss"];
+    assert!(s.nodes.iter().all(|n| !ml.contains(&n.category)), "{:?}", s.nodes.iter().filter(|n| ml.contains(&n.category)).map(|n| &n.title).collect::<Vec<_>>());
     let client = file(&s, "httpx/_client.py");
     assert!(kids(&s, client).iter().all(|n| n.kind != Kind::Section), "a long comment does not section a library module");
     assert!(kids(&s, client).iter().any(|n| n.title == "Client" && n.kind == Kind::Class));
@@ -187,7 +190,10 @@ fn flask_views_and_signals() {
     for view in ["auth.py", "blog.py"] {
         assert!(parent.edges.iter().any(|e| e.from == templates.id && s.nodes[e.to as usize].title == view && e.label == "template"), "templates → {view}");
     }
-    assert!(!kid(&s, auth, "load_logged_in_user").effects.contains(&"database".into()));
+    let load_user = kid(&s, auth, "load_logged_in_user");
+    let cookie = kids(&s, load_user).into_iter().find(|n| n.title == "get" && n.subtitle == "session").expect("session.get");
+    assert!(!cookie.effects.contains(&"database".into()), "the cookie session is not a database");
+    assert!(load_user.effects.contains(&"database".into()), "get_db().execute(…) is");
     assert!(kid(&s, auth, "register").effects.contains(&"database".into()));
 }
 
@@ -234,6 +240,46 @@ fn corpus_layouts_are_sound() {
             }
             for e in &n.edges {
                 assert!(e.points.len() >= 4, "{name}: edge without route in {}", n.title);
+            }
+        }
+    }
+}
+
+#[test]
+fn branch_arms_show_what_they_do() {
+    // Every arm of a branch draws at least one step, unless all it does is
+    // `pass` or log (shown as the arm's side-effect mark).
+    for name in ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corpus").join(name);
+        let s = scene(name);
+        for lane in s.nodes.iter().filter(|n| n.kind == Kind::Lane) {
+            if lane.children.iter().any(|&c| !s.nodes[c as usize].is_port()) {
+                continue;
+            }
+            let sp = lane.span.as_ref().expect("lanes have spans");
+            let text = std::fs::read_to_string(root.join(&s.files[sp.file as usize].path)).unwrap();
+            let body = text.lines().skip(sp.line as usize - 1).take((sp.end_line - sp.line + 1) as usize).map(|l| l.split('#').next().unwrap().trim()).collect::<Vec<_>>().join(" ");
+            let quiet = body.trim() == "pass" || (!lane.effects.is_empty() && ["warn(", "log", "print("].iter().any(|w| body.contains(w)));
+            assert!(quiet, "{name}: empty arm {:?} in {} (`{body}`)", lane.title, s.files[sp.file as usize].path);
+        }
+    }
+}
+
+#[test]
+fn titles_are_names_not_cut_code() {
+    // A block is titled by a name or a short phrase; source code appears in a
+    // title only when it fits whole, never cut off mid-expression.
+    for name in ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"] {
+        let s = scene(name);
+        for n in s.nodes.iter().filter(|n| matches!(n.kind, Kind::Op | Kind::Call | Kind::Table)) {
+            let squashed: String = n.code.split_whitespace().collect::<Vec<_>>().join(" ");
+            if let Some(cut) = n.title.strip_suffix('…') {
+                assert!(cut.len() < 4 || !squashed.starts_with(cut.trim_end()), "{name}: {:?} is cut from `{}`", n.title, n.code);
+            }
+            for b in &n.badges {
+                if let Some(cut) = b.strip_prefix("if ").and_then(|b| b.strip_suffix('…')) {
+                    assert!(!cut.ends_with(|c: char| c.is_alphanumeric() || c == '_'), "{name}: badge {b:?} on {} cuts a token", n.title);
+                }
             }
         }
     }
