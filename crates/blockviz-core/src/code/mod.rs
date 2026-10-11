@@ -28,6 +28,9 @@ pub struct CodeFile {
     pub entry: bool,
     pub doc: String,
     pub imports: Vec<(u32, Vec<String>)>,
+    /// The modules that define what it imports (through re-exports), with
+    /// the names: what it depends on.
+    pub uses: Vec<(u32, Vec<String>)>,
     /// Project files that are not code it imports: stylesheets, data, images.
     pub assets: Vec<String>,
     pub externals: BTreeSet<String>,
@@ -48,11 +51,63 @@ pub struct CodeResult {
     pub templates: Vec<(u32, String)>,
 }
 
+/// Every name a module's code reads: in statements, nested definitions,
+/// functions written as values, and annotations.
+fn names_used(body: &[syntax::Stmt]) -> std::collections::HashSet<String> {
+    use syntax::{Expr, Stmt};
+    fn expr(e: &Expr, out: &mut std::collections::HashSet<String>) {
+        walk::walk(e, &mut |x| match x {
+            Expr::Name(n) => {
+                out.insert(n.id.clone());
+            }
+            Expr::Function(f) => stmts(&f.body, out),
+            _ => {}
+        });
+    }
+    fn stmts(body: &[Stmt], out: &mut std::collections::HashSet<String>) {
+        let mut roots = vec![];
+        walk::stmt_exprs(body, false, &mut |e| roots.push(e));
+        for e in roots {
+            expr(e, out);
+        }
+        for s in body {
+            match s {
+                Stmt::FunctionDef(f) => {
+                    for a in f.params.iter().filter_map(|p| p.annotation.as_ref()).chain(f.returns.as_deref()) {
+                        expr(a, out);
+                    }
+                    stmts(&f.body, out);
+                }
+                Stmt::ClassDef(c) => stmts(&c.body, out),
+                Stmt::AnnAssign(a) => expr(&a.annotation, out),
+                Stmt::If(x) => {
+                    stmts(&x.body, out);
+                    x.elif_else_clauses.iter().for_each(|c| stmts(&c.body, out));
+                }
+                Stmt::For(x) => stmts(&x.body, out),
+                Stmt::While(x) => stmts(&x.body, out),
+                Stmt::With(x) => stmts(&x.body, out),
+                Stmt::Try(x) => {
+                    stmts(&x.body, out);
+                    x.handlers.iter().for_each(|h| stmts(&h.body, out));
+                    stmts(&x.orelse, out);
+                    stmts(&x.finalbody, out);
+                }
+                Stmt::Match(x) => x.cases.iter().for_each(|c| stmts(&c.body, out)),
+                _ => {}
+            }
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    stmts(body, &mut out);
+    out
+}
+
 /// A file node for a module the front end could not analyze.
 pub fn failed_file(b: &mut Builder, file: u32, path: &str, lang: Lang, notebook: bool, why: String) -> CodeFile {
     let node = b.add(None, if notebook { Kind::Notebook } else { Kind::File }, Shape::Box, path.rsplit('/').next().unwrap_or(path));
     b.get_mut(node).badges.push("too complex".into());
-    CodeFile { file, node, lang, entry: false, doc: String::new(), imports: vec![], assets: vec![], externals: BTreeSet::new(), error: Some(why), app: false, handlers: vec![] }
+    CodeFile { file, node, lang, entry: false, doc: String::new(), imports: vec![], uses: vec![], assets: vec![], externals: BTreeSet::new(), error: Some(why), app: false, handlers: vec![] }
 }
 
 /// Builds diagrams for every module. `headers` are the comment blocks that
@@ -109,7 +164,8 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
     };
     let domains: Vec<Domains> = (0..n).map(reach).collect();
     let mounts = frameworks::mounts(&modules, &ix);
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains };
+    let routes = frameworks::routes(&modules, &ix);
+    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes };
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }
@@ -122,6 +178,52 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
             entry: cx.entry[mi],
             doc: cx.b.get(cx.file_nodes[mi]).doc.clone(),
             imports: cx.ix.imports[mi].iter().map(|(t, names)| (modules[*t].file, names.clone())).collect(),
+            uses: {
+                let mut out: Vec<(u32, Vec<String>)> = vec![];
+                let mut add = |t: usize, name: Option<&String>| {
+                    let file = modules[t].file;
+                    let i = out.iter().position(|(f, _)| *f == file).unwrap_or_else(|| {
+                        out.push((file, vec![]));
+                        out.len() - 1
+                    });
+                    if let Some(n) = name {
+                        if !out[i].1.contains(n) {
+                            out[i].1.push(n.clone());
+                        }
+                    }
+                };
+                // A module depends on a name it imports only if its own code
+                // uses it: what it imports to re-export (`pub use db::Db;`,
+                // `export { Button } from "./button"`, a crate root's
+                // `use db::Db;` for `crate::Db`) is its importers' dependency
+                // on where the name is defined.
+                // Rust lowers every type it names, so what its code uses is
+                // known; elsewhere (TypeScript types are kept as text) only
+                // names re-exported by `export { … }` are left out.
+                let used = names_used(&m.ast);
+                let exported: std::collections::HashSet<&str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::Export(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().filter(|(local, exported)| local == exported).map(|(local, _)| local.as_str())).collect();
+                let local: HashMap<&str, &str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::ImportFrom(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().map(|a| (a.name.as_str(), a.asname.as_deref().unwrap_or(&a.name)))).collect();
+                let depends = |n: &str| {
+                    let l = *local.get(n).unwrap_or(&n);
+                    if m.lang == Lang::Rust {
+                        used.contains(l)
+                    } else {
+                        !exported.contains(l)
+                    }
+                };
+                for (t, names) in &cx.ix.imports[mi] {
+                    if names.is_empty() {
+                        add(*t, None);
+                    }
+                    for n in names.iter().filter(|n| depends(n)) {
+                        let d = cx.ix.defined_in(*t, n);
+                        if d != mi {
+                            add(d, Some(n));
+                        }
+                    }
+                }
+                out
+            },
             assets: cx.ix.assets[mi].clone(),
             externals: cx.ix.externals[mi].clone(),
             error: m.error.clone(),

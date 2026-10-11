@@ -41,11 +41,13 @@ pub struct FnDef<'p> {
     pub is_async: bool,
     pub kind: DefKind,
     pub doc: Option<&'p str>,
+    /// The declared return type.
+    pub returns: Option<&'p Expr>,
 }
 
 impl<'p> FnDef<'p> {
     pub fn of(f: &'p ast::FunctionDef) -> Self {
-        FnDef { name: &f.name, args: &f.params, body: &f.body, decorators: &f.decorators, range: f.range, is_async: f.is_async, kind: f.kind, doc: f.doc.as_deref() }
+        FnDef { name: &f.name, args: &f.params, body: &f.body, decorators: &f.decorators, range: f.range, is_async: f.is_async, kind: f.kind, doc: f.doc.as_deref(), returns: f.returns.as_deref() }
     }
     pub fn from_stmt(s: &'p Stmt) -> Option<Self> {
         match s {
@@ -138,6 +140,9 @@ pub struct ClassInfo<'p> {
     pub bases: Vec<Ty>,
     pub base_text: Vec<String>,
     pub methods: Vec<(String, usize)>,
+    /// Methods other modules add to the class (Rust `impl` blocks elsewhere):
+    /// found by lookup, drawn where they are written.
+    pub extra: Vec<(String, usize)>,
     pub fields: Vec<Field>,
     pub data: bool,
     pub node: Id,
@@ -250,6 +255,18 @@ impl<'p> Index<'p> {
             let bases: Vec<Ty> = class_bases(def).iter().map(|b| ix.infer(m, b, &NoLocals)).collect();
             ix.classes[c].bases = bases;
         }
+        // Extensions lend their methods to the type they extend.
+        for c in 0..ix.classes.len() {
+            if ix.classes[c].def.kind != ast::ClassKind::Extension {
+                continue;
+            }
+            if let Some(Ty::Class(t)) = ix.classes[c].bases.first().cloned() {
+                if t != c {
+                    let methods = ix.classes[c].methods.clone();
+                    ix.classes[t].extra.extend(methods);
+                }
+            }
+        }
         for c in 0..ix.classes.len() {
             let fields = ix.infer_fields(c);
             ix.classes[c].fields = fields;
@@ -285,7 +302,8 @@ impl<'p> Index<'p> {
             match s {
                 Stmt::ClassDef(c) => {
                     let id = self.register_class(mi, c, alloc);
-                    if top || !self.syms[mi].contains_key(c.name.as_str()) {
+                    // An extension adds to a type named elsewhere; it binds no name.
+                    if c.kind != ast::ClassKind::Extension && (top || !self.syms[mi].contains_key(c.name.as_str())) {
                         self.syms[mi].insert(c.name.to_string(), Sym::Class(id));
                     }
                 }
@@ -335,7 +353,7 @@ impl<'p> Index<'p> {
         let cid = self.classes.len();
         let src = &self.modules[mi].src;
         let base_text: Vec<String> = class_bases(c).iter().map(|b| squash(src.of(b))).collect();
-        self.classes.push(ClassInfo { name: c.name.to_string(), module: mi, def: c, bases: vec![], base_text, methods: vec![], fields: vec![], data: false, node });
+        self.classes.push(ClassInfo { name: c.name.to_string(), module: mi, def: c, bases: vec![], base_text, methods: vec![], extra: vec![], fields: vec![], data: false, node });
         self.defs_at.insert((mi, u32::from(c.range.start())), Sym::Class(cid));
         let mut methods = vec![];
         for s in &c.body {
@@ -359,10 +377,11 @@ impl<'p> Index<'p> {
             matches!(tail, "NamedTuple" | "TypedDict" | "BaseModel" | "Enum" | "IntEnum" | "StrEnum" | "BaseSettings")
         });
         let behaviour = methods.iter().any(|(n, _)| !n.starts_with("__"));
-        // TypeScript interfaces and enums describe data, as does a JavaScript
-        // class of field declarations only (a DTO).
-        let fields_only = self.modules[mi].lang.is_js() && methods.is_empty() && c.body.iter().any(|s| matches!(s, Stmt::AnnAssign(_) | Stmt::Assign(_)));
-        let declared = matches!(c.kind, ast::ClassKind::Interface | ast::ClassKind::Enum) || fields_only;
+        // Interfaces, enums and traits without methods describe data, as does
+        // a class of field declarations only (a DTO, a Rust struct).
+        let lang = self.modules[mi].lang;
+        let fields_only = lang.declares_fields() && methods.is_empty() && c.kind == ast::ClassKind::Class && c.body.iter().any(|s| matches!(s, Stmt::AnnAssign(_) | Stmt::Assign(_)));
+        let declared = matches!(c.kind, ast::ClassKind::Interface | ast::ClassKind::Enum | ast::ClassKind::Trait) && methods.is_empty() || fields_only;
         self.classes[cid].data = declared || (data_decorator || data_base) && !behaviour;
         self.classes[cid].methods = methods;
         cid
@@ -371,6 +390,14 @@ impl<'p> Index<'p> {
     fn collect_imports(&mut self, mi: usize, body: &'p [Stmt], top: bool) {
         for s in body {
             match s {
+                Stmt::Import(x) if x.style == ast::ModuleStyle::Path && x.declaration => {
+                    if let Some(t) = x.resolved.as_deref().and_then(|p| self.by_path.get(p).copied()) {
+                        for a in &x.names {
+                            let local = a.asname.clone().unwrap_or_else(|| a.name.clone());
+                            self.syms[mi].entry(local).or_insert(Sym::Module(t));
+                        }
+                    }
+                }
                 Stmt::Import(x) if x.style == ast::ModuleStyle::Path => self.path_import(mi, x.resolved.as_deref(), &x.names[0].name, x.names.iter().map(|a| (None, a.asname.clone())).collect(), top),
                 Stmt::ImportFrom(x) if x.style == ast::ModuleStyle::Path => {
                     let names = x.names.iter().map(|a| (Some(a.name.clone()), Some(a.asname.clone().unwrap_or_else(|| a.name.clone())))).collect();
@@ -477,6 +504,12 @@ impl<'p> Index<'p> {
                         self.assets[mi].push(p.to_string());
                     }
                 }
+                None if self.modules[mi].lang == Lang::Rust => {
+                    let krate = spec.split(['.', ':']).next().unwrap_or(spec);
+                    if !matches!(krate, "crate" | "self" | "super" | "") {
+                        self.externals[mi].insert(krate.to_string());
+                    }
+                }
                 None if !spec.starts_with('.') && !spec.starts_with('/') => {
                     let (package, _) = crate::js::resolve::package_name(spec);
                     self.externals[mi].insert(package.to_string());
@@ -486,7 +519,7 @@ impl<'p> Index<'p> {
         }
         // A project file that is missing or is not code (`./data.json`) is
         // known by its file name; a package by its specifier.
-        let relative = spec.starts_with('.') || spec.starts_with('/');
+        let relative = spec.starts_with('.') || spec.starts_with('/') || spec.contains("::");
         let spec = if relative { spec.rsplit('/').next().unwrap_or(spec).split('.').next().unwrap_or(spec) } else { spec };
         let mut used = vec![];
         for (imported, local) in names {
@@ -576,6 +609,28 @@ impl<'p> Index<'p> {
         }
     }
 
+    /// The module that defines a name `m` makes available, following
+    /// re-exports (`pub use db::Db;` in `lib.rs`, `export * from "./x"`,
+    /// `from .models import User` in `__init__.py`).
+    pub fn defined_in(&self, m: usize, name: &str) -> usize {
+        let (mut m, mut name) = (m, name.to_string());
+        for _ in 0..8 {
+            match self.syms[m].get(&name) {
+                Some(Sym::Member(t, n)) => {
+                    m = *t;
+                    name = n.clone();
+                }
+                Some(Sym::Module(t)) => return *t,
+                Some(_) => return m,
+                None => match self.stars[m].iter().find(|&&t| self.syms[t].contains_key(&name)) {
+                    Some(&t) => m = t,
+                    None => return m,
+                },
+            }
+        }
+        m
+    }
+
     pub fn sym(&self, mi: usize, name: &str) -> Option<&Sym> {
         self.syms[mi].get(name)
     }
@@ -591,7 +646,7 @@ impl<'p> Index<'p> {
             Some(Sym::Ext(p)) => Ty::Ext(p.clone()),
             Some(Sym::Member(m, n)) => self.sym_ty(*m, n, depth + 1),
             Some(Sym::Var) => self.var_types.borrow().get(&(mi, name.to_string())).cloned().unwrap_or(Ty::Unknown),
-            None if self.modules[mi].lang.is_js() => {
+            None if self.modules[mi].lang.resolves_paths() => {
                 // Names re-exported wholesale from another module.
                 if let Some(t) = self.stars[mi].iter().copied().find(|&t| self.syms[t].contains_key(name) || !self.stars[t].is_empty()) {
                     let ty = self.sym_ty(t, name, depth + 1);
@@ -599,7 +654,7 @@ impl<'p> Index<'p> {
                         return ty;
                     }
                 }
-                if JS_GLOBALS.contains(&name) {
+                if self.modules[mi].lang.is_js() && JS_GLOBALS.contains(&name) {
                     Ty::Ext(format!("globals.{name}"))
                 } else {
                     Ty::Unknown
@@ -637,7 +692,7 @@ impl<'p> Index<'p> {
             return None;
         }
         let cls = &self.classes[c];
-        if let Some((_, f)) = cls.methods.iter().find(|(n, _)| n == name) {
+        if let Some((_, f)) = cls.methods.iter().chain(&cls.extra).find(|(n, _)| n == name) {
             return Some(*f);
         }
         cls.bases.iter().find_map(|b| if let Ty::Class(p) = b { self.method_depth(*p, name, depth + 1) } else { None })
@@ -779,7 +834,34 @@ impl<'p> Index<'p> {
         }
     }
 
-    /// Return type of a project function, when it returns a local built from a known type.
+    /// The type of a value declared with an annotation: an instance of the
+    /// class it names (`users: UsersService`, `config: &Config`), or a list of
+    /// them (`blocks: Vec<Block>`). Library types count in languages whose
+    /// annotations are checked (TypeScript, Rust).
+    pub fn annotated(&self, mi: usize, annotation: &Expr, locals: &dyn Locals) -> Ty {
+        if let Expr::Subscript(s) = annotation {
+            if let Expr::Name(n) = &*s.value {
+                if matches!(n.id.as_str(), "list" | "List" | "Sequence" | "Array" | "ReadonlyArray") || crate::rust::lower::SEQUENCES.contains(&n.id.as_str()) {
+                    return match self.annotated(mi, &s.slice, locals) {
+                        Ty::Unknown => Ty::Unknown,
+                        t => Ty::List(Box::new(t), None),
+                    };
+                }
+            }
+            // A generic type (`Client<Body>`) is an instance of the type.
+            if self.modules[mi].lang == Lang::Rust {
+                return self.annotated(mi, &s.value, locals);
+            }
+        }
+        match self.infer(mi, annotation, locals) {
+            Ty::Class(k) => Ty::Inst(k),
+            Ty::Ext(p) if self.modules[mi].lang.declares_fields() => Ty::ExtInst(p),
+            _ => Ty::Unknown,
+        }
+    }
+
+    /// Return type of a project function, when it returns a local built from
+    /// a known type, else the class its declared return type names.
     pub fn return_ty(&self, f: usize) -> Ty {
         if let Some(t) = self.returns.borrow().get(&f) {
             return t.clone();
@@ -800,6 +882,13 @@ impl<'p> Index<'p> {
         }
         let mut result = Ty::Unknown;
         self.scan_returns(info.module, info.def.body, &mut locals, &mut result);
+        if result == Ty::Unknown {
+            if let Some(r) = info.def.returns {
+                if let Ty::Inst(k) = self.annotated(info.module, r, &locals) {
+                    result = Ty::Inst(k);
+                }
+            }
+        }
         self.returns.borrow_mut().insert(f, result.clone());
         result
     }
@@ -846,18 +935,63 @@ impl<'p> Index<'p> {
         let mut fields: Vec<Field> = vec![];
         let mut methods: Vec<usize> = cls.methods.iter().map(|(_, f)| *f).collect();
         methods.sort_by_key(|&f| self.funcs[f].name != "__init__");
-        // JavaScript fields declared in the class body (`users = new Map()`).
-        if self.modules[mi].lang.is_js() {
-            self.collect_self_fields(mi, src, &cls.def.body, "this", &mut HashMap::new(), &mut fields);
+        // Fields declared in the class body (`users = new Map()`, `users: Users`).
+        let lang = self.modules[mi].lang;
+        if lang.declares_fields() {
+            self.collect_self_fields(mi, src, &cls.def.body, lang.receiver(), &mut HashMap::new(), &mut fields);
         }
-        for f in methods {
+        for f in methods.iter().copied() {
             let def = self.funcs[f].def;
             let params = def.params();
             let Some(this) = params.first().cloned() else { continue };
             let mut locals: HashMap<String, Ty> = HashMap::new();
             self.collect_self_fields(mi, src, def.body, &this, &mut locals, &mut fields);
         }
+        // A constructor's struct literal (`Self { blocks, .. }`) says what the
+        // declared fields hold: `blocks` built from `(0..n_layer).map(…)` is
+        // n_layer blocks.
+        if lang == Lang::Rust {
+            for f in methods {
+                let mut locals: HashMap<String, Ty> = HashMap::new();
+                self.struct_literal_fields(c, mi, self.funcs[f].def.body, &mut locals, &mut fields);
+            }
+        }
         fields
+    }
+
+    fn struct_literal_fields(&self, c: usize, mi: usize, body: &[Stmt], locals: &mut HashMap<String, Ty>, fields: &mut [Field]) {
+        let name = self.classes[c].name.as_str();
+        for s in body {
+            if let Stmt::Assign(a) = s {
+                if let [Expr::Name(n)] = &a.targets[..] {
+                    let t = self.infer(mi, &a.value, locals);
+                    if t != Ty::Unknown {
+                        locals.insert(n.id.to_string(), t);
+                    }
+                }
+            }
+            walk::stmt_exprs(std::slice::from_ref(s), false, &mut |root| {
+                walk::walk(root, &mut |e| {
+                    let Expr::Call(call) = e else { return };
+                    if !matches!(&*call.func, Expr::Name(n) if n.id == name) {
+                        return;
+                    }
+                    for k in &call.arguments.keywords {
+                        let Some(key) = &k.arg else { continue };
+                        let Some(field) = fields.iter_mut().find(|f| &f.name == key) else { continue };
+                        let t = self.infer(mi, &k.value, locals);
+                        let better = match (&field.ty, &t) {
+                            (Ty::List(_, None), Ty::List(e, Some(_))) => !matches!(**e, Ty::Unknown),
+                            (Ty::Unknown, t) => *t != Ty::Unknown,
+                            _ => false,
+                        };
+                        if better {
+                            field.ty = t;
+                        }
+                    }
+                });
+            });
+        }
     }
 
     fn collect_self_fields(&self, mi: usize, src: &Source, body: &[Stmt], this: &str, locals: &mut HashMap<String, Ty>, fields: &mut Vec<Field>) {
@@ -892,11 +1026,7 @@ impl<'p> Index<'p> {
                             // `this.users: UsersService = users`: the annotation types the field.
                             let value = a.value.as_deref().map(|v| self.infer(mi, v, locals)).unwrap_or(Ty::Unknown);
                             let ty = match value {
-                                Ty::Unknown => match self.infer(mi, &a.annotation, locals) {
-                                    Ty::Class(k) => Ty::Inst(k),
-                                    Ty::Ext(p) if self.modules[mi].lang.is_js() => Ty::ExtInst(p),
-                                    _ => Ty::Unknown,
-                                },
+                                Ty::Unknown => self.annotated(mi, &a.annotation, locals),
                                 t => t,
                             };
                             fields.push(Field { name: attr.attr.to_string(), ty, ctor: String::new(), range: a.range });
@@ -962,6 +1092,13 @@ pub fn range_count(src: &Source, iter: &Expr) -> Option<String> {
         },
         Expr::List(l) => Some(l.elts.len().to_string()),
         Expr::Tuple(l) => Some(l.elts.len().to_string()),
+        // A Rust range: `0..n`, `a..b`.
+        Expr::Slice(s) => match (&s.lower, &s.upper) {
+            (None, Some(n)) => Some(count_text(src.of(&**n))),
+            (Some(a), Some(n)) if matches!(&**a, Expr::NumberLiteral(_)) && src.of(&**a) == "0" => Some(count_text(src.of(&**n))),
+            (Some(a), Some(b)) => Some(format!("{} − {}", count_text(src.of(&**b)), count_text(src.of(&**a)))),
+            _ => None,
+        },
         _ => None,
     }
 }

@@ -79,7 +79,8 @@ impl Collection {
 pub enum Step {
     /// A chain of calls, innermost first (`x.view(…).transpose(…)` → view,
     /// transpose), applied to `receiver`; `reads` are the variables it reads.
-    Calls { names: Vec<String>, receiver: String, reads: Vec<String> },
+    /// `path` when the first is reached by a path (`Db::default`), not on a value.
+    Calls { names: Vec<String>, receiver: String, reads: Vec<String>, path: bool },
     /// Text built from a template, with holes shown as `{name}`.
     Format { template: String },
     /// A collection display; `keys` are a mapping's keys or the elements' names.
@@ -145,14 +146,26 @@ pub fn qualifier(path: &str, max: usize) -> String {
     if path.chars().count() <= max {
         return path.to_string();
     }
-    let parts: Vec<&str> = path.split('.').collect();
-    for k in (1..parts.len()).rev() {
-        let tail = parts[parts.len() - k..].join(".");
+    // Segments start after a `.` or a Rust `::`.
+    let starts: Vec<usize> = path.match_indices("::").map(|(i, _)| i + 2).chain(path.match_indices('.').map(|(i, _)| i + 1)).collect();
+    let mut starts = starts;
+    starts.sort();
+    for &i in &starts {
+        let tail = &path[i..];
         if tail.chars().count() <= max {
-            return tail;
+            return tail.to_string();
         }
     }
     String::new()
+}
+
+/// `1 route`, `3 routes`.
+pub fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
 }
 
 /// A short phrase for a step that has no name of its own.
@@ -258,13 +271,13 @@ pub fn name(step: &Step, dest: &Dest, code: &str) -> Name {
             // A step that transforms a value in place is named by what it does
             // (`k = k.view(…).transpose(…)`); one that produces a new value, by
             // the developer's name for it (`userpass = b":".join(…)`).
-            if let Step::Calls { names, reads, receiver } = step {
+            if let Step::Calls { names, reads, receiver, path } = step {
                 if ns.iter().any(|n| reads.contains(n)) {
                     return Name { title: calls(names), caption: String::new() };
                 }
-                // A call on a module or object keeps its qualifier: `os.path.join`.
-                let qualified = format!("{receiver}.{}", calls(names));
-                let plain = receiver.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+                // A call on a module or object keeps its qualifier: `os.path.join`, `Db::default`.
+                let qualified = format!("{receiver}{}{}", if *path { "::" } else { "." }, calls(names));
+                let plain = receiver.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ':');
                 let caption = if names.len() == 1 && !receiver.is_empty() && plain && fits(&qualified, CAPTION_MAX) { qualified } else { calls(names) };
                 return Name { title: list(ns, NAMES_MAX), caption };
             }
@@ -299,14 +312,14 @@ mod tests {
 
     #[test]
     fn calls_keep_their_names_unless_they_make_a_new_value() {
-        let chain = Step::Calls { names: s(&["view", "transpose"]), receiver: "k".into(), reads: s(&["k", "B", "T"]) };
+        let chain = Step::Calls { names: s(&["view", "transpose"]), receiver: "k".into(), reads: s(&["k", "B", "T"]), path: false };
         assert_eq!(name(&chain, &Dest::Names(s(&["k"])), "k.view(B, T).transpose(1, 2)").title, "view · transpose");
-        let join = Step::Calls { names: s(&["join"]), receiver: "b\":\"".into(), reads: s(&["username", "password"]) };
+        let join = Step::Calls { names: s(&["join"]), receiver: "b\":\"".into(), reads: s(&["username", "password"]), path: false };
         let n = name(&join, &Dest::Names(s(&["userpass"])), "b\":\".join((to_bytes(username), to_bytes(password)))");
         assert_eq!((n.title.as_str(), n.caption.as_str()), ("userpass", "join"));
-        let path = Step::Calls { names: s(&["join"]), receiver: "os.path".into(), reads: s(&["os", "root", "name"]) };
+        let path = Step::Calls { names: s(&["join"]), receiver: "os.path".into(), reads: s(&["os", "root", "name"]), path: false };
         assert_eq!(name(&path, &Dest::Names(s(&["path"])), "os.path.join(root, name)").caption, "os.path.join");
-        let n = name(&Step::Calls { names: s(&["authenticators"]), receiver: "self._netrc_info".into(), reads: s(&["self"]) }, &Dest::None, "");
+        let n = name(&Step::Calls { names: s(&["authenticators"]), receiver: "self._netrc_info".into(), reads: s(&["self"]), path: false }, &Dest::None, "");
         assert_eq!((n.title.as_str(), n.caption.as_str()), ("authenticators", "self._netrc_info"));
     }
 

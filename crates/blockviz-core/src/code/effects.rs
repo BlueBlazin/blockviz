@@ -71,10 +71,16 @@ pub fn open_mode(c: &ast::ExprCall) -> Io {
 }
 
 /// File or network I/O performed by an external function, by dotted path.
-pub fn io_of(path: &str, c: &ast::ExprCall, _src: &Source) -> Option<(String, Io)> {
+pub fn io_of(path: &str, c: &ast::ExprCall, src: &Source) -> Option<(String, Io)> {
     let last = path.rsplit('.').next().unwrap_or(path);
     let root = path.split('.').next().unwrap_or(path);
-    let io = js_io(root.strip_prefix("node:").unwrap_or(root), last).or_else(|| match path {
+    // Each ecosystem's libraries: Node's `http` is not Python's `http.cookiejar`.
+    let io = match src.lang {
+        ast::Lang::JavaScript | ast::Lang::TypeScript => js_io(root.strip_prefix("node:").unwrap_or(root), last),
+        ast::Lang::Rust => rust_io(path),
+        ast::Lang::Python => None,
+    };
+    let io = io.or_else(|| match path {
         "torch.save" | "numpy.save" | "numpy.savez" | "numpy.savez_compressed" | "numpy.savetxt" | "pickle.dump" | "json.dump" | "yaml.dump" | "yaml.safe_dump" | "torch.jit.save" | "toml.dump" | "joblib.dump" | "matplotlib.pyplot.savefig" | "safetensors.torch.save_file" | "torch.onnx.export" => Some(Io::Write),
         "torch.load" | "numpy.load" | "numpy.fromfile" | "numpy.loadtxt" | "numpy.genfromtxt" | "pickle.load" | "json.load" | "yaml.load" | "yaml.safe_load" | "toml.load" | "tomllib.load" | "joblib.load" | "safetensors.torch.load_file" | "torch.jit.load" | "PIL.Image.open" => Some(Io::Read),
         "numpy.memmap" => Some(match mode_of(c, 2) {
@@ -82,7 +88,10 @@ pub fn io_of(path: &str, c: &ast::ExprCall, _src: &Source) -> Option<(String, Io
             _ => Io::Write,
         }),
         _ if root == "pandas" && last.starts_with("read_") => Some(Io::Read),
-        _ if matches!(root, "requests" | "httpx" | "aiohttp" | "urllib" | "urllib3" | "http" | "socket" | "boto3" | "wget" | "huggingface_hub") => Some(Io::Network),
+        _ if matches!(root, "requests" | "httpx" | "aiohttp" | "urllib3" | "socket" | "boto3" | "wget" | "huggingface_hub") => Some(Io::Network),
+        // `http.client` and `urllib.request` talk to servers; `http.cookiejar`
+        // and `urllib.parse` do not.
+        _ if path.starts_with("http.client") || path.starts_with("urllib.request") => Some(Io::Network),
         _ if last == "from_pretrained" || last == "load_dataset" || last == "hf_hub_download" || path.starts_with("torch.hub.") => Some(Io::Network),
         _ => None,
     })?;
@@ -92,6 +101,30 @@ pub fn io_of(path: &str, c: &ast::ExprCall, _src: &Source) -> Option<(String, Io
         Io::Network => "network",
     };
     Some((text.into(), io))
+}
+
+/// I/O by Rust crates, by dotted path: `std::fs` and its async twins, sockets
+/// and HTTP clients.
+fn rust_io(path: &str) -> Option<Io> {
+    let segs: Vec<&str> = path.split('.').collect();
+    let runtime = matches!(segs[0], "std" | "tokio" | "async_std" | "smol");
+    let last = segs.last().copied().unwrap_or("");
+    if runtime && segs.get(1) == Some(&"fs") {
+        return if matches!(last, "read" | "read_to_string" | "read_dir" | "metadata" | "symlink_metadata" | "canonicalize" | "read_link" | "try_exists" | "open" | "File") {
+            Some(Io::Read)
+        } else if matches!(last, "write" | "create" | "OpenOptions") {
+            Some(Io::Write)
+        } else {
+            None
+        };
+    }
+    if runtime && segs.get(1) == Some(&"net") {
+        return Some(Io::Network);
+    }
+    match segs[0] {
+        "reqwest" | "ureq" | "hyper" | "surf" | "isahc" | "attohttpc" | "tonic" | "tungstenite" | "tokio_tungstenite" | "awc" | "curl" | "lettre" | "rumqttc" | "lapin" | "rdkafka" | "async_nats" => Some(Io::Network),
+        _ => None,
+    }
 }
 
 /// I/O by JavaScript modules and globals: Node's `fs`, HTTP clients, `fetch`.
@@ -126,6 +159,18 @@ pub fn ext_effect(path: &str) -> Option<&'static str> {
     }
     if matches!(root, "child_process" | "execa" | "cross-spawn" | "zx") {
         return Some("spawns process");
+    }
+    // Rust's standard library and runtimes.
+    if matches!(root, "std" | "tokio" | "async_std") {
+        let rest = &path[root.len() + 1.min(path.len() - root.len())..];
+        match rest {
+            "process.Command" | "process.Command.new" => return Some("spawns process"),
+            "process.exit" | "process.abort" => return Some("exits process"),
+            "thread.sleep" | "time.sleep" | "time.sleep_until" | "task.sleep" => return Some("sleeps"),
+            "env.var" | "env.var_os" | "env.vars" | "env.args" | "env.args_os" => return Some("reads environment"),
+            "fs.create_dir" | "fs.create_dir_all" | "fs.remove_file" | "fs.remove_dir" | "fs.remove_dir_all" | "fs.rename" | "fs.copy" | "fs.hard_link" | "fs.set_permissions" => return Some("filesystem"),
+            _ => {}
+        }
     }
     match path {
         "random.seed" | "numpy.random.seed" | "torch.manual_seed" | "torch.cuda.manual_seed" | "torch.cuda.manual_seed_all" | "tensorflow.random.set_seed" => return Some("seeds RNG"),

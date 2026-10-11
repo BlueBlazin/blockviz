@@ -135,7 +135,7 @@ fn stmt(s: &py::Stmt, in_class: bool) -> Stmt {
         }),
         py::Stmt::Match(x) => Stmt::Match(StmtMatch {
             subject: bx(&x.subject),
-            cases: x.cases.iter().map(|c| MatchCase { patterns: vec![Ranged::range(&c.pattern)], guard: opt(&c.guard), body: body(&c.body), range: c.range }).collect(),
+            cases: x.cases.iter().map(|c| MatchCase { patterns: vec![Ranged::range(&c.pattern)], binds: None, variant: None, guard: opt(&c.guard), body: body(&c.body), range: c.range }).collect(),
             range: x.range,
         }),
         py::Stmt::Raise(x) => Stmt::Raise(StmtRaise { exc: opt(&x.exc), cause: opt(&x.cause), range: x.range }),
@@ -151,7 +151,7 @@ fn stmt(s: &py::Stmt, in_class: bool) -> Stmt {
             range: x.range,
         }),
         py::Stmt::Assert(x) => Stmt::Assert(StmtAssert { test: bx(&x.test), msg: opt(&x.msg), range: x.range }),
-        py::Stmt::Import(x) => Stmt::Import(StmtImport { names: x.names.iter().map(alias).collect(), style: ModuleStyle::Dotted, resolved: None, range: x.range }),
+        py::Stmt::Import(x) => Stmt::Import(StmtImport { names: x.names.iter().map(alias).collect(), style: ModuleStyle::Dotted, resolved: None, declaration: false, range: x.range }),
         py::Stmt::ImportFrom(x) => Stmt::ImportFrom(StmtImportFrom {
             module: x.module.as_ref().map(|m| m.to_string()),
             names: x.names.iter().map(alias).collect(),

@@ -86,6 +86,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     let mut entries: Vec<FileEntry> = vec![];
     let mut py_inputs = vec![];
     let mut js_inputs = vec![];
+    let mut rs_inputs = vec![];
     // Import resolution reads TypeScript configs and package manifests.
     let resolver = {
         let listing: Vec<(&str, Option<&str>)> = files
@@ -98,6 +99,17 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             .collect();
         crate::js::Resolver::new(&listing)
     };
+    // Rust modules are placed by their crates' manifests and `mod` declarations.
+    let rs_resolver = {
+        let listing: Vec<(&str, Option<&str>)> = files
+            .iter()
+            .map(|f| {
+                let rust = f.path.ends_with(".rs") || f.path.rsplit('/').next() == Some("Cargo.toml");
+                (f.path.as_str(), if rust { f.text.as_deref() } else { None })
+            })
+            .collect();
+        crate::rust::Resolver::new(&listing)
+    };
     for (i, f) in files.into_iter().enumerate() {
         let (class, language) = outline::classify(&f.path);
         let text = f.text.filter(|t| t.len() <= MAX_TEXT && !t.contains('\0'));
@@ -109,6 +121,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         match (class, &text) {
             (Class::Python, Some(t)) => py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: t.clone(), notebook: false }),
             (Class::Code, Some(t)) if crate::js::lang_of(&f.path).is_some() && !minified => js_inputs.push(crate::js::JsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
+            (Class::Code, Some(t)) if f.path.ends_with(".rs") => rs_inputs.push(crate::rust::RsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
             (Class::Notebook, Some(t)) => match crate::notebook::to_python(t) {
                 Some(py) => {
                     source = Some(py.clone());
@@ -139,6 +152,10 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     modules.extend(js_modules);
     headers.extend(js_headers);
     failed.extend(js_failed);
+    let (rs_modules, rs_headers, rs_failed) = crate::rust::parse(&mut b, rs_inputs, &rs_resolver, &mut diagnostics);
+    modules.extend(rs_modules);
+    headers.extend(rs_headers);
+    failed.extend(rs_failed);
     let (b2, py) = code::analyze(b, modules, headers, failed);
     let mut b = b2;
     let mut py_by_file: HashMap<u32, &code::CodeFile> = HashMap::new();
@@ -269,6 +286,23 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         // Tool configuration in code: `vite.config.ts`, `.eslintrc.js`, `jest.config.js`.
         let tool_config = js && (base.contains(".config.") || base.starts_with(".eslintrc") || base.starts_with(".prettierrc") || base.starts_with("babel.config") || base == "gulpfile.js" || base == "Gruntfile.js");
         let file_role = if js { framework_file_role(path) } else { None };
+        // A Rust file's role is its crate's: a binary or example runs, a
+        // library root is the library, `build.rs` builds.
+        let krate = (pf.lang == code::syntax::Lang::Rust).then(|| rs_resolver.module(path)).flatten().map(|(c, _)| c.clone());
+        let rust_root = krate.as_ref().filter(|c| c.root == path).map(|c| c.kind);
+        use crate::rust::resolve::CrateKind;
+        let runs = runs || matches!(rust_root, Some(CrateKind::Bin | CrateKind::Example));
+        let file_role = file_role.or_else(|| {
+            Some(match rust_root? {
+                CrateKind::Lib => "library",
+                CrateKind::Bin => "binary",
+                CrateKind::Example => "example",
+                CrateKind::Test => "tests",
+                CrateKind::Bench => "benchmarks",
+                CrateKind::Build => "build script",
+            })
+            .map(str::to_string)
+        });
         let role = if pf.error.is_some() {
             pf.lang.name()
         } else if notebook {
@@ -451,7 +485,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     let mut linked: HashSet<(Id, Id)> = HashSet::new();
     let skip = |f: u32| entries[f as usize].generated || entries[f as usize].hidden;
     for pf in &py.files {
-        for (target, names) in &pf.imports {
+        for (target, names) in &pf.uses {
             if skip(*target) || skip(pf.file) {
                 continue;
             }
@@ -703,22 +737,6 @@ fn resolve_import(from: &str, lang: &str, spec: &str, paths: &HashMap<&str, usiz
                 c.push(format!("{base}/index.{ext}"));
             }
             find(&c)
-        }
-        "Rust" => {
-            let file = from.rsplit('/').next().unwrap_or(from);
-            if let Some(m) = spec.strip_prefix("mod:") {
-                let here = if matches!(file, "lib.rs" | "main.rs" | "mod.rs") { dir.to_string() } else { join(dir, file.trim_end_matches(".rs")) };
-                find(&[join(&here, &format!("{m}.rs")), join(&here, &format!("{m}/mod.rs"))])
-            } else if let Some(m) = spec.strip_prefix("crate:") {
-                // The crate root is the nearest ancestor `src/`.
-                let root = match from.rfind("src/") {
-                    Some(i) => &from[..i + 3],
-                    None => dir,
-                };
-                find(&[format!("{root}/{m}.rs"), format!("{root}/{m}/mod.rs")])
-            } else {
-                None
-            }
         }
         _ => {
             let c = vec![join(dir, spec), spec.to_string()];

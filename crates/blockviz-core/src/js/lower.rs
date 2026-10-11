@@ -221,7 +221,7 @@ impl<'s> Lower<'s> {
     /// `require()`/`import()` inside an expression still depends on the module.
     fn required_imports(&self, out: &mut Vec<Stmt>) {
         for (spec, span) in self.required.borrow_mut().drain(..) {
-            out.push(Stmt::Import(StmtImport { names: vec![Alias { name: spec.clone(), asname: None, range: end(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(&spec), range: end(span) }));
+            out.push(Stmt::Import(StmtImport { names: vec![Alias { name: spec.clone(), asname: None, range: end(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(&spec), declaration: false, range: end(span) }));
         }
     }
 
@@ -284,7 +284,7 @@ impl<'s> Lower<'s> {
             js::Statement::TSImportEqualsDeclaration(x) => match &x.module_reference {
                 js::TSModuleReference::ExternalModuleReference(m) => {
                     let spec = m.expression.value.as_str();
-                    vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(x.id.name.to_string()), range: r(x.span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), range: r(x.span) })]
+                    vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(x.id.name.to_string()), range: r(x.span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), declaration: false, range: r(x.span) })]
                 }
                 _ => vec![],
             },
@@ -299,7 +299,7 @@ impl<'s> Lower<'s> {
                     Some(ns) => {
                         let ns = export_name(ns);
                         vec![
-                            Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(ns.clone()), range: r(x.span) }], style: ModuleStyle::Path, resolved, range: r(x.span) }),
+                            Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(ns.clone()), range: r(x.span) }], style: ModuleStyle::Path, resolved, declaration: false, range: r(x.span) }),
                             Stmt::Export(StmtExport { names: vec![(ns.clone(), ns)], range: end(x.span) }),
                         ]
                     }
@@ -429,7 +429,7 @@ impl<'s> Lower<'s> {
             }
             // `default` shares the lane of any cases that fall into it.
             let patterns = if c.test.is_none() { vec![] } else { std::mem::take(&mut patterns) };
-            cases.push(MatchCase { patterns, guard: None, body, range: r(Span::new(start.take().unwrap_or(c.span.start), c.span.end)) });
+            cases.push(MatchCase { patterns, binds: None, variant: None, guard: None, body, range: r(Span::new(start.take().unwrap_or(c.span.start), c.span.end)) });
         }
         Stmt::Match(StmtMatch { subject: Box::new(self.expr(&x.discriminant)), cases, range: r(x.span) })
     }
@@ -518,7 +518,7 @@ impl<'s> Lower<'s> {
                 }
                 e => {
                     if let Some(spec) = require_spec(e) {
-                        out.push(Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(name.into()), range: r(v.span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), range: r(span) }));
+                        out.push(Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(name.into()), range: r(v.span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), declaration: false, range: r(span) }));
                         return out;
                     }
                 }
@@ -580,7 +580,7 @@ impl<'s> Lower<'s> {
         let spec = x.source.value.as_str();
         let resolved = (self.resolve)(spec);
         let Some(specifiers) = &x.specifiers else {
-            return vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: None, range: r(x.span) }], style: ModuleStyle::Path, resolved, range: r(x.span) })];
+            return vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: None, range: r(x.span) }], style: ModuleStyle::Path, resolved, declaration: false, range: r(x.span) })];
         };
         let mut out = vec![];
         let mut names = vec![];
@@ -590,6 +590,7 @@ impl<'s> Lower<'s> {
                     names: vec![Alias { name: spec.into(), asname: Some(n.local.name.to_string()), range: r(n.span) }],
                     style: ModuleStyle::Path,
                     resolved: resolved.clone(),
+                    declaration: false,
                     range: r(x.span),
                 })),
                 js::ImportDeclarationSpecifier::ImportDefaultSpecifier(d) => names.push(Alias { name: "default".into(), asname: Some(d.local.name.to_string()), range: r(d.span) }),
@@ -662,7 +663,7 @@ impl<'s> Lower<'s> {
             }
             other => {
                 if let Some(spec) = require_spec(other) {
-                    return vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: None, range: r(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), range: r(span) })];
+                    return vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: None, range: r(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), declaration: false, range: r(span) })];
                 }
                 vec![Stmt::Expr(StmtExpr { value: Box::new(self.expr(other)), range: r(span) })]
             }
@@ -739,7 +740,7 @@ impl<'s> Lower<'s> {
                     e if require_spec(e).is_some() => {
                         let spec = require_spec(e).unwrap();
                         vec![
-                            Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(self.stem.clone()), range: r(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), range: r(span) }),
+                            Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(self.stem.clone()), range: r(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), declaration: false, range: r(span) }),
                             Stmt::Export(StmtExport { names: vec![(self.stem.clone(), "default".into())], range: end(span) }),
                         ]
                     }
@@ -769,7 +770,7 @@ impl<'s> Lower<'s> {
                     let export = Stmt::Export(StmtExport { names: vec![(field.clone(), field.clone())], range: end(span) });
                     // `exports.users = require("./users")` re-exports a module.
                     if let Some(spec) = require_spec(&a.right) {
-                        return vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(field), range: r(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), range: r(span) }), export];
+                        return vec![Stmt::Import(StmtImport { names: vec![Alias { name: spec.into(), asname: Some(field), range: r(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(spec), declaration: false, range: r(span) }), export];
                     }
                     return match unparen(&a.right) {
                         js::Expression::ArrowFunctionExpression(f) => vec![Stmt::FunctionDef(self.arrow(f, &field, span, DefKind::Function, false)), export],

@@ -1,6 +1,6 @@
 //! A syntax tree shared by every language front end.
 //!
-//! Front ends (Python via Ruff, JavaScript/TypeScript via oxc) lower their own
+//! Front ends (Python via Ruff, JavaScript/TypeScript via oxc, Rust via syn) lower their own
 //! trees into this one, and everything downstream (the symbol index, the flow
 //! builder, naming) reads only this. It keeps what diagrams need: statements,
 //! expressions, definitions and imports, with byte ranges into the original
@@ -15,6 +15,7 @@ pub enum Lang {
     Python,
     JavaScript,
     TypeScript,
+    Rust,
 }
 
 impl Lang {
@@ -26,6 +27,26 @@ impl Lang {
             Lang::Python => "Python",
             Lang::JavaScript => "JavaScript",
             Lang::TypeScript => "TypeScript",
+            Lang::Rust => "Rust",
+        }
+    }
+    /// Classes declare their fields in their body (`users = new Map()`,
+    /// `struct S { users: Users }`) rather than only assigning them in methods.
+    pub fn declares_fields(self) -> bool {
+        self != Lang::Python
+    }
+    /// Front ends resolve imports to files themselves (JavaScript specifiers,
+    /// Rust module paths), and modules re-export names wholesale (`export *`,
+    /// `pub use x::*`).
+    pub fn resolves_paths(self) -> bool {
+        self != Lang::Python
+    }
+    /// The receiver of a method: `self` or `this`.
+    pub fn receiver(self) -> &'static str {
+        if self.is_js() {
+            "this"
+        } else {
+            "self"
         }
     }
 }
@@ -554,6 +575,11 @@ pub enum ClassKind {
     Namespace,
     /// A JavaScript object that owns functions (`var app = {}; app.listen = …`).
     Object,
+    /// A Rust trait: required methods are signatures, provided ones methods.
+    Trait,
+    /// Methods added to a type defined in another module (a Rust `impl`
+    /// block): the type is the first base, an implemented trait the second.
+    Extension,
 }
 
 #[derive(Clone, Debug)]
@@ -749,6 +775,13 @@ pub struct MatchCase {
     /// The patterns as written (`case {"k": v}`; `case 'GET': case 'HEAD':`
     /// sharing one body); empty for a JavaScript `default:`.
     pub patterns: Vec<TextRange>,
+    /// What the pattern binds from the subject, as an assignment target
+    /// (`Some(user)` binds `user`; `Point { x, y }` binds `(x, y)`).
+    pub binds: Option<Box<Expr>>,
+    /// The variant a pattern unpacks, when it binds one value from it
+    /// (`Command::Get(cmd)` → `Get`): with the subject's type, says what the
+    /// value is.
+    pub variant: Option<String>,
     pub guard: Option<Box<Expr>>,
     pub body: Vec<Stmt>,
     pub range: TextRange,
@@ -778,13 +811,17 @@ pub enum ModuleStyle {
 }
 
 /// Imports a whole module: Python `import a.b as c`; JavaScript
-/// `import * as c from "m"` and `const c = require("m")` (`name` is the module).
+/// `import * as c from "m"` and `const c = require("m")` (`name` is the module);
+/// Rust `use crate::db;` and `mod db;`.
 #[derive(Clone, Debug)]
 pub struct StmtImport {
     pub names: Vec<Alias>,
     pub style: ModuleStyle,
     /// The project file the module resolves to, when the front end resolved it.
     pub resolved: Option<String>,
+    /// Declares a child module (Rust `mod db;`): binds its name without
+    /// depending on it.
+    pub declaration: bool,
     pub range: TextRange,
 }
 

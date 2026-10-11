@@ -257,8 +257,8 @@ function onAbort() {}
     for lane in lanes {
         assert!(!kids(&s, lane).is_empty(), "lane {} is empty", lane.title);
     }
-    let raise = descendants(&s, f).into_iter().find(|n| n.title == "raise Error").expect("throw is a step");
-    assert_eq!(raise.badges, ["if !res.ok"]);
+    let raise = descendants(&s, f).into_iter().find(|n| n.title == "throw Error").expect("throw is a step");
+    assert_eq!(raise.badges, ["unless res.ok"]);
 }
 
 #[test]

@@ -30,7 +30,7 @@ use crate::ir::*;
 use crate::naming::{self, Dest, Step};
 use crate::text::{clip, heading, is_directive, squash, summary};
 use crate::vocabulary::{self, Domains};
-use super::syntax::{self as ast, Ctx as Load, Expr, Ranged, Stmt, TemplateKind, TextRange};
+use super::syntax::{self as ast, Ctx as Load, Expr, Lang, Ranged, Stmt, TemplateKind, TextRange};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A cross-file relation discovered while building flows.
@@ -61,6 +61,8 @@ pub struct Ctx<'p> {
     pub mounts: HashMap<usize, String>,
     /// The domains each module works in, from the libraries it uses.
     pub domains: Vec<Domains>,
+    /// Routes router builders register (axum, actix-web).
+    pub routes: frameworks::Routes,
 }
 
 impl Ctx<'_> {
@@ -151,6 +153,12 @@ const MINOR_EXT: &[&str] = &[
     "os.path.", "math.", "operator.", "typing.", "functools.", "itertools.", "collections.", "copy.", "inspect.", "string.", "re.", "builtins.", "dataclasses.", "time.", "sys.exit",
     // JavaScript: language globals and helpers are glue, like Python builtins.
     "globals.", "path.", "url.", "util.", "lodash", "clsx", "classnames", "tailwind-merge",
+    // Rust: the standard library, and synchronisation and byte-buffer plumbing.
+    "std.", "core.", "alloc.", "tokio.sync.", "parking_lot.", "crossbeam", "once_cell.", "bytes.", "anyhow.", "thiserror.",
+    // Query builders are part of the query that runs them (`.fetch_one(&pool)`).
+    "sqlx.", "diesel.", "sea_orm.",
+    // Method routers (`get(handler)`) are parts of the route they register.
+    "axum.routing.", "actix_web.web.get", "actix_web.web.post", "actix_web.web.put", "actix_web.web.patch", "actix_web.web.delete", "actix_web.web.resource", "actix_web.web.scope",
 ];
 
 pub struct Fb<'c, 'p> {
@@ -186,6 +194,12 @@ pub struct Fb<'c, 'p> {
     /// Collecting a promise callback (`.then(r => …)`): its parameter is the
     /// value the promise settles with.
     settled: Option<Vec<Val>>,
+    /// Names a module-level definition uses that were not yet defined where
+    /// it was written (`impl Db` below `struct DbDropGuard { db: Db }`):
+    /// linked once the whole module is read.
+    pending: Vec<(Id, String)>,
+    /// The function being built.
+    fid: Option<usize>,
 }
 
 fn compact(s: &str, max: usize) -> String {
@@ -216,6 +230,8 @@ impl<'c, 'p> Fb<'c, 'p> {
             each: false,
             event: None,
             settled: None,
+            pending: vec![],
+            fid: None,
         }
     }
 
@@ -235,6 +251,14 @@ impl<'c, 'p> Fb<'c, 'p> {
         let body: &'p [Stmt] = if docstring(&m.ast).is_some() { &m.ast[1..] } else { &m.ast };
         fb.declarations(body);
         fb.statements(body, &later, true);
+        // Definitions use each other whatever order they are written in.
+        for (node, name) in std::mem::take(&mut fb.pending) {
+            if let Some(Bind::Src(srcs, Style::Def)) = fb.peek(&name).cloned() {
+                for s in srcs.into_iter().filter(|&s| s != node) {
+                    fb.link(&Val { srcs: vec![s], label: String::new(), style: Style::Def, scalar: false }, node);
+                }
+            }
+        }
         let effects = fb.regions[0].effects.clone();
         fb.cx.b.get_mut(root).effects.extend(effects);
     }
@@ -939,7 +963,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let n = self.cx.b.get_mut(fused);
             n.kind = Kind::Table;
             n.title = recv.clone();
-            n.subtitle = format!("{} routes", rows.len());
+            n.subtitle = naming::count(rows.len(), "route");
             n.category = "endpoint";
             n.rows = rows;
             return;
@@ -1081,7 +1105,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let span = self.src().span(first.range());
             let n = self.cx.b.get_mut(id);
             n.category = "endpoint";
-            n.subtitle = format!("{} routes", rows.len());
+            n.subtitle = naming::count(rows.len(), "route");
             n.rows = rows;
             n.span = Some(span);
             n.outputs = vec![name.clone()];
@@ -1559,7 +1583,9 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn is_print(&self, c: &ast::ExprCall) -> bool {
         match &*c.func {
-            Expr::Name(n) => matches!(n.id.as_str(), "print" | "pprint"),
+            Expr::Name(n) => matches!(n.id.as_str(), "print" | "pprint") || is_print_macro(&n.id) || is_log_macro(&n.id),
+            // `log::info!`, `tracing::warn!`
+            Expr::Attribute(a) if is_log_macro(&a.attr) => true,
             Expr::Attribute(a) => {
                 let base = self.src().of(&*a.value);
                 (base == "console" && matches!(a.attr.as_str(), "log" | "info" | "warn" | "error" | "debug" | "trace" | "table" | "dir" | "group" | "groupEnd" | "time" | "timeEnd"))
@@ -1575,7 +1601,11 @@ impl<'c, 'p> Fb<'c, 'p> {
         match value {
             e if is_constant(e) => {}
             Expr::Call(c) if self.is_print(c) => {
-                let label = if matches!(&*c.func, Expr::Name(_)) { "prints" } else { "logs" };
+                let label = match &*c.func {
+                    Expr::Name(n) if is_log_macro(&n.id) => "logs",
+                    Expr::Name(_) => "prints",
+                    _ => "logs",
+                };
                 self.effect(label);
                 // Reading values to print is not a dataflow worth drawing.
             }
@@ -2073,8 +2103,9 @@ impl<'c, 'p> Fb<'c, 'p> {
                     // `console.log("Directory already exists")`: an arm that only reports.
                     Expr::Call(c) if self.is_print(c) => {
                         let verb = match &*c.func {
-                            Expr::Attribute(a) => a.attr.to_string(),
-                            f => self.src().of(f).to_string(),
+                            Expr::Attribute(a) => a.attr.trim_end_matches('!').to_string(),
+                            Expr::Name(n) if is_print_macro(&n.id) => "print".to_string(),
+                            f => self.src().of(f).trim_end_matches('!').to_string(),
                         };
                         let what = c.arguments.args.first().map(|a| match string_literal(a) {
                             Some(t) => naming::shorten(t, naming::CAPTION_MAX),
@@ -2084,13 +2115,17 @@ impl<'c, 'p> Fb<'c, 'p> {
                     }
                     _ => continue,
                 },
+                // `case Err(e): assert …`: an arm that only checks.
+                Stmt::Assert(a) => ("assert".to_string(), self.namer().code(&a.test, naming::CAPTION_MAX)),
+                // `drop(guard)`, `del cache[key]`: an arm that releases something.
+                Stmt::Delete(d) => (if self.m.lang == Lang::Rust { "drop" } else { "del" }.to_string(), naming::list(&d.targets.iter().map(|t| self.namer().code(t, 20)).collect::<Vec<_>>(), naming::CAPTION_MAX)),
                 _ => continue,
             };
             let id = self.add(Kind::Op, Shape::Box, title);
             let code = compact(self.src().of(st), 160);
             let n = self.cx.b.get_mut(id);
             n.subtitle = caption;
-            n.category = if matches!(st, Stmt::Expr(_)) { "op" } else { "library" };
+            n.category = if matches!(st, Stmt::Expr(_) | Stmt::Assert(_) | Stmt::Delete(_)) { "op" } else { "library" };
             n.code = code;
             self.set_span(id, st);
         }
@@ -2118,15 +2153,43 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn raise_stmt(&mut self, s: &'p Stmt, r: &'p ast::StmtRaise) {
         // Named by the exception: `raise ValueError`, not its module path or message.
-        let title = match r.exc.as_deref() {
-            Some(Expr::Call(c)) => format!("raise {}", self.namer().brief(&c.func)),
-            Some(e) => format!("raise {}", self.namer().brief(e)),
-            None => "re-raise".into(),
+        let (verb, effect) = match self.m.lang {
+            Lang::Python => ("raise", "raises"),
+            Lang::JavaScript | Lang::TypeScript => ("throw", "throws"),
+            Lang::Rust => ("error", "returns error"),
         };
+        let macro_name = |c: &ast::ExprCall| match &*c.func {
+            Expr::Name(n) if n.id.ends_with('!') => Some(n.id.trim_end_matches('!').to_string()),
+            Expr::Attribute(a) if a.attr.ends_with('!') => Some(a.attr.trim_end_matches('!').to_string()),
+            _ => None,
+        };
+        let title = match r.exc.as_deref() {
+            // Rust: `panic!("…")`, `unreachable!()`, `anyhow::bail!("…")`.
+            Some(Expr::Call(c)) if macro_name(c).is_some() => {
+                let mac = macro_name(c).unwrap();
+                let mac = mac.as_str();
+                let what = c.arguments.args.first().map(|a| self.namer().code(a, 24)).unwrap_or_default();
+                match mac {
+                    "bail" | "anyhow" | "format_err" if !what.is_empty() => format!("error {what}"),
+                    "bail" | "anyhow" | "format_err" => "error".to_string(),
+                    _ if what.is_empty() => mac.to_string(),
+                    _ => format!("{mac} {what}"),
+                }
+            }
+            Some(Expr::Call(c)) => format!("{verb} {}", self.namer().brief(&c.func)),
+            // `Err((StatusCode::BAD_REQUEST, message))`: named by what leads.
+            Some(Expr::Tuple(t)) if !t.elts.is_empty() => format!("{verb} {}", self.namer().brief(&t.elts[0])),
+            // `Err(())`: an error that carries nothing.
+            Some(Expr::NoneLiteral(_)) if self.m.lang == Lang::Rust => verb.to_string(),
+            Some(e) => format!("{verb} {}", self.namer().brief(e)),
+            None => format!("re-{verb}"),
+        };
+        let panics = matches!(r.exc.as_deref(), Some(Expr::Call(c)) if matches!(macro_name(c).as_deref(), Some("panic" | "unreachable" | "todo" | "unimplemented")));
+        let effect = if panics { "panics" } else { effect };
         let id = self.add(Kind::Op, Shape::Box, title);
         self.cx.b.get_mut(id).category = "error";
         self.cx.b.get_mut(id).code = compact(self.src().of(s), 160);
-        self.cx.b.get_mut(id).effects.push("raises".into());
+        self.cx.b.get_mut(id).effects.push(effect.into());
         self.set_span(id, s);
         if let Some(e) = &r.exc {
             let mut g = Gather::default();
@@ -2263,7 +2326,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)> = vec![(format!("if {}", self.namer().code(&x.test, 40)), &x.body, Some(&*x.test), x.range)];
         for c in &x.elif_else_clauses {
             match &c.test {
-                Some(t) => lanes.push((format!("elif {}", self.namer().code(t, 40)), &c.body, Some(t), c.range)),
+                Some(t) => lanes.push((format!("{} {}", if self.m.lang == Lang::Python { "elif" } else { "else if" }, self.namer().code(t, 40)), &c.body, Some(t), c.range)),
                 None => lanes.push(("else".into(), &c.body, None, c.range)),
             }
         }
@@ -2282,7 +2345,11 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.statements(lanes[0].1, later, false);
             self.guarded = guarded;
             let new: Vec<Id> = self.cx.b.get(container).children.iter().copied().filter(|c| !before.contains(c) && !self.cx.b.get(*c).is_port()).collect();
-            let badge = format!("if {}", self.namer().code(&x.test, 31));
+            // `if not user: raise …` guards with a negation: "unless user".
+            let badge = match &*x.test {
+                Expr::UnaryOp(u) if u.op.is_not() => format!("unless {}", self.namer().code(&u.operand, 31)),
+                t => format!("if {}", self.namer().code(t, 31)),
+            };
             for id in &new {
                 self.cx.b.get_mut(*id).badges.push(badge.clone());
                 for v in &cond {
@@ -2494,15 +2561,64 @@ impl<'c, 'p> Fb<'c, 'p> {
         let id = self.open_region(Kind::Branch, format!("{} {}", if self.m.lang.is_js() { "switch" } else { "match" }, self.namer().code(&x.subject, 30)), s);
         self.cx.b.get_mut(id).hints.lanes = true;
         self.regions.last_mut().unwrap().merging = true;
-        for case in &x.cases {
-            let title = match &case.patterns[..] {
+        // What the patterns bind comes from the subject.
+        let binds = x.cases.iter().any(|c| c.binds.is_some());
+        let subject: Option<(Vec<Id>, Style)> = match &*x.subject {
+            _ if !binds => None,
+            Expr::Name(n) => self.lookup(&n.id),
+            _ => {
+                let srcs: Vec<Id> = cond.iter().filter(|v| v.style != Style::Def).flat_map(|v| v.srcs.clone()).collect();
+                (!srcs.is_empty()).then_some((srcs, Style::Data))
+            }
+        };
+        // `match command { Get(cmd) => cmd.apply(…) }`: an arm unpacking one
+        // value of an enum variant gives it the variant's type.
+        let subject_class = match self.ty(&x.subject) {
+            Ty::Inst(c) | Ty::Class(c) if self.cx.ix.classes[c].def.kind == ast::ClassKind::Enum => Some(c),
+            _ => None,
+        };
+        // Rust arms are their patterns; Python and JavaScript say `case`.
+        let case = if self.m.lang == Lang::Rust { "" } else { "case " };
+        for case_ in &x.cases {
+            let case_title = |p: &str| format!("{case}{p}");
+            let title = match &case_.patterns[..] {
+                [] if self.m.lang == Lang::Rust => "otherwise".to_string(),
                 [] => "default".to_string(),
-                [p] => format!("case {}", compact(self.src().slice(*p), 30)),
-                many => format!("case {}", naming::list(&many.iter().map(|p| compact(self.src().slice(*p), 20)).collect::<Vec<_>>(), 30)),
+                [p] => case_title(&compact(self.src().slice(*p), 30)),
+                many => case_title(&naming::list(&many.iter().map(|p| compact(self.src().slice(*p), 20)).collect::<Vec<_>>(), 30)),
             };
+            // `case x if x > 0`: the guard tells arms with one pattern apart.
+            let title = match &case_.guard {
+                Some(g) => format!("{title} if {}", self.namer().code(g, 30)),
+                None => title,
+            };
+            let case = case_;
             let lane = self.add(Kind::Lane, Shape::Region, title);
             self.cx.b.get_mut(lane).category = "lane";
+            let span = self.src().span(case.range);
+            self.cx.b.get_mut(lane).span = Some(span);
             self.regions.push(Region::new(lane));
+            if let (Some(c), Some(v), Some(Expr::Name(n))) = (subject_class, &case.variant, case.binds.as_deref()) {
+                let payload = self.cx.ix.classes[c].def.body.iter().find_map(|s| match s {
+                    Stmt::AnnAssign(a) if matches!(&*a.target, Expr::Name(t) if t.id == *v) => Some(&*a.annotation),
+                    _ => None,
+                });
+                let mi = self.cx.ix.classes[c].module;
+                if let Some(t) = payload.map(|p| self.cx.ix.annotated(mi, p, &NoLocals)).filter(|t| *t != Ty::Unknown) {
+                    self.types.insert(n.id.to_string(), t);
+                }
+            }
+            if let Some(b) = &case.binds {
+                let mut names = vec![];
+                walk::target_names(b, &mut names);
+                for n in names {
+                    let bind = match &subject {
+                        Some((srcs, st)) => Bind::Src(srcs.clone(), *st),
+                        None => Bind::Static,
+                    };
+                    self.regions.last_mut().unwrap().env.insert(n, bind);
+                }
+            }
             self.statements(&case.body, later, true);
             self.fill_empty_arm(&case.body);
             self.close_region(later);
@@ -2544,6 +2660,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         let free = walk::free_names(&params, f.body);
         let mut outer = HashSet::new();
         for name in free {
+            if self.peek(&name).is_none() && self.module_level && self.regions.len() == 1 {
+                self.pending.push((node, name));
+                continue;
+            }
             if let Some(Bind::Src(_, st)) = self.peek(&name) {
                 let st = *st;
                 let mut g = Gather::default();
@@ -2630,14 +2750,15 @@ impl<'c, 'p> Fb<'c, 'p> {
             match frameworks::role(&d.expression, def.name, &self.cx.prefixes[&mi], class_prefix.as_deref(), |e| namer.code(e, 24)) {
                 Some(r) if role.is_none() => role = Some(r),
                 Some(_) => {}
-                None => badges.extend(frameworks::tag(d, |e| namer.code(e, 24))),
+                None => badges.extend(frameworks::tag(d, self.m.lang, |e| namer.code(e, 24))),
             }
         }
         // An object's functions are all its own: none is "static".
         let object = info.class.is_some_and(|k| self.cx.ix.classes[k].def.kind == ast::ClassKind::Object);
         match kind {
             FnKind::ClassMethod => badges.push("classmethod".into()),
-            FnKind::StaticMethod if !object => badges.push("static".into()),
+            // Rust's associated functions (`new`) are not called static.
+            FnKind::StaticMethod if !object && self.m.lang != Lang::Rust => badges.push("static".into()),
             FnKind::Property if !self.m.lang.is_js() => badges.push("property".into()),
             _ => {}
         }
@@ -2648,6 +2769,9 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         if def.is_async {
             badges.push("async".into());
+        }
+        if role.is_none() {
+            role = self.cx.routes.handlers.get(&fid).map(|label| frameworks::Role { label: label.clone(), kind: Handler::Route });
         }
         let js = self.m.lang.is_js();
         // File-based routes: a Next.js `route.ts` exports one function per method.
@@ -2667,6 +2791,13 @@ impl<'c, 'p> Fb<'c, 'p> {
                 self.cx.handlers[mi].push(r.kind);
             }
         }
+        // The trait a method implements, with its type arguments only where
+        // the type implements that trait more than once (`From<io::Error>`).
+        let implements = frameworks::implemented_trait(def.decorators, |e| squash(src.of(e))).map(|t| {
+            let base = |t: &str| t.split('<').next().unwrap_or(t).to_string();
+            let siblings = info.class.map(|k| self.cx.ix.classes[k].methods.iter().filter_map(|(_, f)| frameworks::implemented_trait(self.cx.ix.funcs[*f].def.decorators, |e| squash(src.of(e)))).filter(|o| base(o) == base(&t) && *o != t).count()).unwrap_or(0);
+            if siblings > 0 { t } else { base(&t) }
+        });
         let n = self.cx.b.get_mut(node);
         n.kind = Kind::Function;
         n.shape = Shape::Box;
@@ -2675,6 +2806,8 @@ impl<'c, 'p> Fb<'c, 'p> {
             Some(r) => r.label.clone(),
             // `__init__` is a constructor; `constructor` already says so.
             None if def.name == "__init__" => "constructor".into(),
+            // `fmt` of `impl Display`: the trait says what it is for.
+            None if implements.is_some() => implements.unwrap(),
             None => format!("({})", naming::list(&params, 40)),
         };
         n.category = if role.as_ref().is_some_and(|r| r.kind != Handler::Hook) {
@@ -2716,6 +2849,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut outer = HashSet::new();
         for name in free {
             if name == c.name.as_str() {
+                continue;
+            }
+            if self.peek(&name).is_none() && self.module_level && self.regions.len() == 1 {
+                self.pending.push((node, name));
                 continue;
             }
             if let Some(Bind::Src(_, st)) = self.peek(&name) {
@@ -2766,6 +2903,28 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if vocabulary::library_domains(&root).database {
                     return true;
                 }
+            }
+        }
+        // `sqlx::query!(…).fetch_one(&pool)`: a query a database library built, run.
+        if vocabulary::is_database_verb(a.attr.as_str()) {
+            let mut cur: &Expr = &a.value;
+            let root = loop {
+                match cur {
+                    Expr::Call(c) => cur = &c.func,
+                    Expr::Await(x) => cur = &x.value,
+                    Expr::Attribute(x) => match self.ty(cur) {
+                        Ty::Ext(p) => break Some(p),
+                        _ => cur = &x.value,
+                    },
+                    Expr::Name(_) => break match self.ty(cur) {
+                        Ty::Ext(p) => Some(p),
+                        _ => None,
+                    },
+                    _ => break None,
+                }
+            };
+            if root.is_some_and(|p| self.m.lang == Lang::Rust && vocabulary::library_domains(p.split('.').next().unwrap_or(&p)).database) {
+                return true;
             }
         }
         if !self.cx.domains[self.mi].database || !vocabulary::database_call(&squash(self.src().of(&*a.value)), a.attr.as_str()) {
@@ -2995,6 +3154,20 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             Expr::Attribute(a) => {
                 let attr = a.attr.as_str();
+                // `self.wte.forward(idx)` (candle, burn) calls the component, as
+                // `self.wte(idx)` does in PyTorch.
+                if attr == "forward" && self.cx.domains[self.mi].ml {
+                    if let Expr::Attribute(f) = &*a.value {
+                        if let (true, Some((_, cid))) = (self.is_self(&f.value), self.this.clone()) {
+                            if let Some(field) = self.cx.ix.field(cid, f.attr.as_str()).filter(|x| is_callable_ty(&x.ty)) {
+                                return Callee::Component { name: f.attr.to_string(), ty: field.ty.clone() };
+                            }
+                        }
+                    }
+                    if let (Ty::Inst(k), Expr::Name(n), false) = (self.ty(&a.value), &*a.value, self.is_self(&a.value)) {
+                        return Callee::Instance { class: k, var: n.id.to_string() };
+                    }
+                }
                 if self.is_self(&a.value) {
                     let (_, cid) = self.this.clone().unwrap();
                     if let Some(f) = self.cx.ix.method(cid, attr) {
@@ -3008,6 +3181,9 @@ impl<'c, 'p> Fb<'c, 'p> {
                     return Callee::Method(attr.into());
                 }
                 match self.ty(&a.value) {
+                    // A library object's I/O method: `stream.write_all(…)` on a
+                    // `TcpStream`, `session.get(url)` on a `requests.Session`.
+                    Ty::ExtInst(p) if effects::io_of(&format!("{p}.{attr}"), c, self.src()).is_some() => Callee::Ext(format!("{p}.{attr}")),
                     Ty::Module(m) => match self.cx.ix.module_member(m, attr) {
                         Ty::Class(k) => Callee::Ctor(k),
                         Ty::Func(f) => Callee::Func(f),
@@ -3077,7 +3253,9 @@ impl<'c, 'p> Fb<'c, 'p> {
             Callee::Func(_) | Callee::Ctor(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::Value(_) | Callee::ExecFile(_) => true,
             Callee::Ext(p) => !MINOR_EXT.iter().any(|m| p.starts_with(m) || p == m.trim_end_matches('.')) || effects::io_of(p, c, self.src()).is_some(),
             Callee::Builtin(b) => matches!(b.as_str(), "open" | "input" | "exec" | "eval"),
-            Callee::Method(m) => !self.m.lang.is_js() && effects::method_io(m).is_some(),
+            Callee::Method(m) => self.m.lang == Lang::Python && effects::method_io(m).is_some()
+                // `x.gelu()`, `att.softmax(…)` in a network: a layer of its own.
+                || self.cx.domains[self.mi].ml && matches!(vocabulary::ml_category(m), Some("activation" | "dropout")),
             Callee::Super | Callee::Unknown => false,
         }
     }
@@ -3303,11 +3481,14 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             Expr::Named(n) => {
                 let vals = self.collect(&n.value, g, fold);
-                if let Expr::Name(t) = &*n.target {
-                    if let Some(v) = vals.first() {
-                        let st = v.style;
-                        let srcs = v.srcs.clone();
-                        self.bind(&t.id, Bind::Src(srcs, st));
+                // `(m := f())`, and Rust's `if let Some((a, b)) = f()`.
+                let mut names = vec![];
+                walk::target_names(&n.target, &mut names);
+                if let Some(v) = vals.first() {
+                    let st = v.style;
+                    let srcs: Vec<Id> = vals.iter().flat_map(|v| v.srcs.clone()).collect();
+                    for t in names {
+                        self.bind(&t, Bind::Src(srcs.clone(), st));
                     }
                 }
                 vals
@@ -3412,7 +3593,12 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let info = &self.cx.ix.funcs[*f];
                 let owner = info.class.map(|k| self.cx.ix.classes[k].name.clone()).unwrap_or_default();
                 let cat = self.cx.category(self.mi, &[&info.name]).unwrap_or("function");
-                (info.name.clone(), owner, cat, Some(info.node))
+                // `Connection::new(socket)` makes a Connection.
+                if info.kind == FnKind::StaticMethod && is_constructor_name(&info.name) && !owner.is_empty() {
+                    (owner, info.name.clone(), self.cx.category(self.mi, &[&info.name]).unwrap_or("class"), Some(info.node))
+                } else {
+                    (info.name.clone(), owner, cat, Some(info.node))
+                }
             }
             Callee::Ctor(k) => {
                 let cls = &self.cx.ix.classes[*k];
@@ -3448,11 +3634,17 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if self.top && ((frameworks::APPS.contains(&resolved.as_str()) && !resolved.is_empty()) || p.ends_with("NestFactory.create")) {
                     self.cx.app[self.mi] = true;
                 }
-                let (prefix, last) = match func_text.rsplit_once('.') {
+                let split = match func_text.rfind("::").max(func_text.rfind('.')) {
+                    Some(i) => Some((&func_text[..i], func_text[i..].trim_start_matches([':', '.']))),
+                    None => None,
+                };
+                let (prefix, last) = match split {
                     // `<Dialog.Root>`: a namespaced element is named by its whole tag.
                     Some(_) if c.kind == ast::CallKind::Jsx => (String::new(), func_text.clone()),
-                    Some((a, b)) => (a.to_string(), b.to_string()),
-                    None => (String::new(), func_text.clone()),
+                    // `Semaphore::new(n)` makes a Semaphore.
+                    Some((a, b)) if is_constructor_name(b) && self.m.lang == Lang::Rust => (b.to_string(), a.rsplit("::").next().unwrap_or(a).to_string()),
+                    Some((a, b)) => (a.to_string(), b.trim_end_matches('!').to_string()),
+                    None => (String::new(), func_text.trim_end_matches('!').to_string()),
                 };
                 let cat = if effects::io_of(p, c, src).is_some() || effects::ext_effect(p).is_some_and(|e| e.contains("network") || e.contains("file")) {
                     "io"
@@ -3483,7 +3675,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                     Expr::Attribute(a) => Namer::plain(src).code(&a.value, 20),
                     _ => String::new(),
                 };
-                (m.clone(), recv, if !self.m.lang.is_js() && effects::method_io(m).is_some() { "io" } else { "op" }, None)
+                let cat = if self.m.lang == Lang::Python && effects::method_io(m).is_some() { "io" } else { self.cx.category(self.mi, &[m]).unwrap_or("op") };
+                (m.trim_end_matches('!').to_string(), recv, cat, None)
             }
             Callee::ExecFile(m) => {
                 let path = self.cx.ix.modules[*m].path.clone();
@@ -3491,7 +3684,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                 node_effects.insert("executes code".into());
                 (path.rsplit('/').next().unwrap_or(&path).to_string(), "exec".into(), "config", Some(self.cx.file_nodes[*m]))
             }
-            Callee::Super | Callee::Unknown => (func_text.clone(), String::new(), "op", None),
+            // A macro is named without its `!`.
+            Callee::Super | Callee::Unknown => (func_text.trim_end_matches('!').to_string(), String::new(), "op", None),
         };
         // I/O: effects and the files touched.
         let mut files: Vec<String> = vec![];
@@ -3528,7 +3722,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             Callee::Ext(p) => effects::io_of(p, c, src).map(|(_, io)| io),
             Callee::Builtin(b) if b == "open" => Some(effects::open_mode(c)),
             // File handles: Python's `f.write(…)`. JavaScript does file I/O through `fs`.
-            Callee::Method(m) if !self.m.lang.is_js() => effects::method_io(m),
+            Callee::Method(m) if self.m.lang == Lang::Python => effects::method_io(m),
             _ => None,
         };
         if let Some(io) = io {
@@ -3837,6 +4031,35 @@ impl<'c, 'p> Fb<'c, 'p> {
             let namer = self.namer();
             naming::name(&namer.step(e), dest, &namer.code(e, naming::CAPTION_MAX))
         };
+        // `Router::new().route("/users", get(list))…`: a table of the routes it registers.
+        if self.m.lang == Lang::Rust {
+            let mut found = vec![];
+            frameworks::chain_routes(e, self.fid.and_then(|f| self.cx.routes.prefixes.get(&f)).map(String::as_str).unwrap_or(""), &mut found, &mut vec![]);
+            if !found.is_empty() {
+                let rows: Vec<Row> = found
+                    .iter()
+                    .map(|r| Row { key: format!("{} {}", r.verb, r.path), value: match frameworks::handler_of(r.handler) {
+                        Expr::Lambda(_) | Expr::Function(_) => "inline handler".into(),
+                        h => self.namer().code(h, 30),
+                    }, note: String::new(), heading: false })
+                    .collect();
+                if !self.cx.handlers[self.mi].contains(&Handler::Route) {
+                    self.cx.handlers[self.mi].push(Handler::Route);
+                }
+                let id = self.add(Kind::Table, Shape::Box, "routes");
+                let span = src.span(e.range());
+                let n = self.cx.b.get_mut(id);
+                n.subtitle = naming::count(rows.len(), "route");
+                n.category = "endpoint";
+                n.rows = rows;
+                n.code = compact(src.of(e), 200);
+                n.span = Some(span);
+                for v in &vals {
+                    self.link(v, id);
+                }
+                return id;
+            }
+        }
         // `router.route("/:id").get(…).patch(…)`: the routes it defines.
         let (name, endpoint) = match self.route_chain(e) {
             Some(title) => (naming::Name { title, caption: name.caption }, true),
@@ -3936,6 +4159,7 @@ pub fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, 
     let (mi, node, def, class, kind) = (info.module, info.node, info.def, info.class, info.kind);
     let top = class.is_none() && matches!(cx.ix.defs_at.get(&(mi, u32::from(def.range.start()))), Some(Sym::Func(f)) if *f == fid);
     let mut fb = Fb::new(cx, mi, node);
+    fb.fid = Some(fid);
     fb.top = top;
     fb.types = types;
     fb.outer = outer;
@@ -3957,9 +4181,9 @@ pub fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, 
         fb.cx.b.get_mut(port).category = "port";
         fb.regions[0].env.insert(p.clone(), Bind::Src(vec![port], Style::Data));
         let annotation = def.args.iter().filter(|a| matches!(a.kind, ast::ParamKind::Positional | ast::ParamKind::KeywordOnly)).find(|a| a.name == *p).and_then(|a| a.annotation.as_ref());
-        match annotation.map(|a| fb.cx.ix.infer(mi, a, &TypesView(&fb.types))) {
-            Some(Ty::Class(k)) => {
-                fb.types.insert(p.clone(), Ty::Inst(k));
+        match annotation.map(|a| fb.cx.ix.annotated(mi, a, &TypesView(&fb.types))) {
+            Some(t @ (Ty::Inst(_) | Ty::List(..))) => {
+                fb.types.insert(p.clone(), t);
             }
             _ => {
                 fb.types.remove(p);
@@ -3995,6 +4219,11 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
     let modules: &'p [Module] = cx.ix.modules;
     let src = &modules[mi].src;
     let ext_base = cx.ix.external_base(cid);
+    // An extension (`impl Foo` in another module) leads to the type it extends.
+    let extends = match (def.kind, cx.ix.classes[cid].bases.first()) {
+        (ast::ClassKind::Extension, Some(Ty::Class(t))) => Some(cx.ix.classes[*t].node),
+        _ => None,
+    };
     let project_bases: Vec<String> = cx.ix.classes[cid].bases.iter().filter_map(|b| if let Ty::Class(k) = b { Some(cx.ix.classes[*k].name.clone()) } else { None }).collect();
     {
         let name = cx.ix.classes[cid].name.clone();
@@ -4014,16 +4243,35 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
             sub.push(e.clone());
         }
         n.subtitle = sub.join(", ");
+        // A Rust type lists the traits it implements: `Display, Error, From`.
+        if modules[mi].lang == Lang::Rust {
+            let mut traits: Vec<String> = vec![];
+            for b in class_bases(def) {
+                let t = squash(src.of(b));
+                let head = t.split('<').next().unwrap_or(&t);
+                let name = head.rsplit("::").next().unwrap_or(head).to_string();
+                if !name.is_empty() && !traits.contains(&name) {
+                    traits.push(name);
+                }
+            }
+            n.subtitle = naming::list(&traits, 36);
+        }
         match def.kind {
             ast::ClassKind::Namespace => n.subtitle = "namespace".into(),
             ast::ClassKind::Object if n.subtitle.is_empty() => n.subtitle = "object".into(),
+            ast::ClassKind::Trait => n.subtitle = if n.subtitle.is_empty() { "trait".into() } else { format!("trait: {}", n.subtitle) },
+            // `impl Display for Frame`: the title says it all.
+            ast::ClassKind::Extension => {
+                n.subtitle.clear();
+                n.link = extends;
+            }
             _ => {}
         }
         n.category = if data { "config" } else { category.unwrap_or("class") };
         n.doc = doc;
         n.span = Some(span);
         for d in &def.decorators {
-            n.badges.extend(super::frameworks::tag(d, |e| Namer::plain(src).code(e, 20)));
+            n.badges.extend(super::frameworks::tag(d, modules[mi].lang, |e| Namer::plain(src).code(e, 20)));
         }
         // ORM models are the database's tables: SQLModel `table=True`,
         // Django `models.Model`, SQLAlchemy declarative bases.
@@ -4043,7 +4291,11 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         for s in &def.body {
             match s {
                 Stmt::AnnAssign(a) => rows.push(Row {
-                    key: Namer::plain(src).code(&a.target, 30),
+                    // A declared field is keyed by its name (`this.x`, `self.0`).
+                    key: match &*a.target {
+                        Expr::Attribute(x) => x.attr.to_string(),
+                        t => Namer::plain(src).code(t, 30),
+                    },
                     value: match &a.value {
                         Some(v) => format!("{} = {}", Namer::plain(src).code(&a.annotation, 16), Namer::plain(src).code(v, 30)),
                         None => Namer::plain(src).code(&a.annotation, 30),
@@ -4160,8 +4412,10 @@ fn component_node(cx: &mut Ctx, mi: usize, parent: Id, name: &str, ty: &Ty, ctor
 
 fn is_component(t: &Ty) -> bool {
     match t {
-        // A `Map` or `Date` held by an object is state, not a component.
-        Ty::ExtInst(p) => !p.starts_with("globals."),
+        // A `Map` or `Date` held by an object is state, not a component, as
+        // is a `PathBuf` or `Duration` from Rust's standard library, or a
+        // channel or lock that only coordinates tasks.
+        Ty::ExtInst(p) => !["globals.", "std.", "core.", "alloc.", "tokio.sync.", "parking_lot.", "crossbeam", "flume.", "async_channel.", "futures.channel.", "bytes."].iter().any(|s| p.starts_with(s)),
         Ty::Inst(_) => true,
         Ty::Ext(p) => p == "buffer",
         Ty::Dict(f) => f.iter().any(|(_, t)| is_component(t)),
@@ -4447,6 +4701,7 @@ fn is_plumbing(s: &Stmt) -> bool {
 fn comment_title(comments: &[&super::source::Comment]) -> Option<String> {
     let prose: Vec<&str> = comments
         .iter()
+        .filter(|c| !c.doc)
         .map(|c| c.text.trim())
         .filter(|t| t.chars().any(|c| c.is_alphanumeric()) && !is_directive(t))
         .collect();
@@ -4512,8 +4767,8 @@ fn is_path_expr(e: &Expr) -> bool {
 
 fn callee_name(c: &Callee, fb: &Fb) -> String {
     match c {
-        Callee::Ext(p) => p.rsplit('.').next().unwrap_or(p).to_string(),
-        Callee::Builtin(b) | Callee::Method(b) => b.clone(),
+        Callee::Ext(p) => p.rsplit('.').next().unwrap_or(p).trim_end_matches('!').to_string(),
+        Callee::Builtin(b) | Callee::Method(b) => b.trim_end_matches('!').to_string(),
         Callee::Func(f) => fb.cx.ix.funcs[*f].name.clone(),
         _ => String::new(),
     }
@@ -4539,6 +4794,22 @@ fn g_strings_files(fb: &Fb, e: &Expr) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Names of functions that make a value of their type (`Vec::new`,
+/// `Config::default`, `Vec::with_capacity`).
+fn is_constructor_name(name: &str) -> bool {
+    matches!(name, "new" | "default") || name.starts_with("new_") || name.starts_with("with_")
+}
+
+/// Rust's printing macros.
+fn is_print_macro(name: &str) -> bool {
+    matches!(name, "println!" | "print!" | "eprintln!" | "eprint!" | "dbg!")
+}
+
+/// Logging macros of Rust's `log` and `tracing` crates.
+fn is_log_macro(name: &str) -> bool {
+    matches!(name, "info!" | "debug!" | "warn!" | "error!" | "trace!" | "event!" | "info_span!" | "debug_span!" | "trace_span!")
 }
 
 /// Calls that run their function argument once per item.

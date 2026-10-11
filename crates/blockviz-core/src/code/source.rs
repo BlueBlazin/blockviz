@@ -13,6 +13,8 @@ pub struct Comment {
     pub text: String,
     /// The comment is alone on its line (not trailing code).
     pub own_line: bool,
+    /// Documentation of the item below it (Rust's `///`), not a heading.
+    pub doc: bool,
 }
 
 pub struct Source {
@@ -43,10 +45,20 @@ impl Source {
             let line = s.line_of(start);
             let line_start = s.line_starts[(line - 1) as usize];
             let own_line = s.text.get(line_start..start).is_some_and(|t| t.trim().is_empty());
-            found.push(Comment { line, text: body.clone(), own_line });
+            found.push(Comment { line, text: body.clone(), own_line, doc: false });
         }
         s.comments = found;
         s
+    }
+
+    /// Marks the comments starting at these offsets as documentation.
+    pub fn mark_docs(&mut self, starts: &[usize]) {
+        let lines: std::collections::HashSet<u32> = starts.iter().map(|&o| self.line_of(o)).collect();
+        for c in &mut self.comments {
+            if lines.contains(&c.line) {
+                c.doc = true;
+            }
+        }
     }
 
     /// 1-based line of a byte offset.

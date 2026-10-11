@@ -133,6 +133,9 @@ export function pastedProject(filename: string, text: string): Project {
  *  uses JavaScript's syntax, TypeScript if it has type annotations, JSX if it
  *  returns elements. */
 export function guessFilename(text: string): string {
+  // Rust: items with Rust's keywords (`fn`, `impl`, `use x::y`, `pub struct`, `let mut`).
+  const rust = /^\s*(pub(\([\w:]+\))?\s+)?(async\s+)?(fn\s+\w+\s*[<(]|impl(<[^>]*>)?\s+\w|mod\s+\w+\s*[;{]|use\s+[\w:{}*, ]+::|(struct|enum|trait)\s+\w+)|\blet\s+mut\s|#\[derive\(|^\s*#!\[/m.test(text);
+  if (rust) return /^\s*(pub\s+)?(async\s+)?fn\s+main\s*\(/m.test(text) ? 'main.rs' : 'lib.rs';
   const python = /^\s*(def \w+\(|class \w+(\(.*\))?:\s*$|from [\w.]+ import |import [\w.]+(\s+as \w+)?\s*$|if __name__ ==)/m.test(text);
   const js = /^\s*(import\s[^\n]*from\s*['"]|import\s+['"]|export\s|const\s|let\s|var\s|function\*?\s|module\.exports|(async\s+)?function\s)|=>|\brequire\(['"]/m.test(text);
   if (!js || (python && !/[;{}]\s*$/m.test(text))) return 'main.py';

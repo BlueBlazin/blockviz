@@ -144,6 +144,65 @@ pub fn role(d: &Expr, function: &str, prefixes: &HashMap<String, String>, class_
     }
 }
 
+/// The trait a Rust method implements, as written in its `impl` (`Display`,
+/// `From<io::Error>`), without the module path.
+pub fn implemented_trait(decorators: &[ast::Decorator], text: impl Fn(&Expr) -> String) -> Option<String> {
+    decorators.iter().find_map(|d| match &d.expression {
+        Expr::Call(c) if matches!(&*c.func, Expr::Name(n) if n.id == "impl") => {
+            let t = text(c.arguments.args.first()?);
+            let head = t.split('<').next().unwrap_or(&t);
+            let cut = head.rfind("::").map(|i| i + 2).unwrap_or(0);
+            Some(t[cut..].to_string())
+        }
+        _ => None,
+    })
+}
+
+/// What a Rust attribute says about an item: derives that make a type a
+/// command-line interface, a database row or an error; tests; tracing.
+/// Derives of standard traits and helper attributes (`#[serde(…)]`) say
+/// nothing worth a badge.
+fn rust_tag(d: &ast::Decorator, func: &Expr) -> Option<String> {
+    let name = dotted(func)?;
+    let last = name.rsplit('.').next().unwrap_or(&name);
+    match last {
+        "derive" => {
+            let Expr::Call(c) = &d.expression else { return None };
+            let derived: Vec<&str> = c.arguments.args.iter().map(last_segment).collect();
+            let any = |names: &[&str]| derived.iter().any(|d| names.contains(d));
+            if any(&["Parser", "StructOpt"]) {
+                Some("command line".into())
+            } else if any(&["Subcommand"]) {
+                Some("subcommands".into())
+            } else if any(&["Args", "ValueEnum"]) {
+                Some("arguments".into())
+            } else if any(&["FromRow", "Queryable", "Insertable", "Selectable", "AsChangeset", "DeriveEntityModel", "Identifiable", "Model", "SimpleObject"]) {
+                Some("DB row".into())
+            } else if any(&["Error", "Diagnostic"]) {
+                Some("error type".into())
+            } else if any(&["Component", "Resource", "Bundle", "Event", "Message", "States"]) {
+                Some(derived.iter().find(|d| matches!(**d, "Component" | "Resource" | "Bundle" | "Event" | "Message" | "States")).map(|d| d.to_ascii_lowercase()).unwrap_or_default())
+            } else if any(&["Serialize", "Deserialize"]) {
+                Some("serializable".into())
+            } else {
+                None
+            }
+        }
+        // `#[cfg(unix)]`: the platform or feature the item exists for.
+        "cfg" => match &d.expression {
+            Expr::Call(c) => c.arguments.args.first().and_then(string_literal).map(str::to_string),
+            _ => None,
+        },
+        "test" | "rstest" | "quickcheck" | "proptest" => Some("test".into()),
+        "bench" => Some("benchmark".into()),
+        "instrument" => Some("traced".into()),
+        // The trait a method implements is its subtitle, not a badge; helper
+        // attributes of derives (`#[serde(…)]`, `#[arg(…)]`) and anything
+        // else unknown say nothing a reader needs on the diagram.
+        _ => None,
+    }
+}
+
 /// `@Controller("users")` → `users`.
 pub fn controller_prefix(decorators: &[ast::Decorator]) -> Option<String> {
     decorators.iter().find_map(|d| match &d.expression {
@@ -219,13 +278,234 @@ pub fn mounts(modules: &[super::Module], ix: &super::index::Index) -> HashMap<us
     out
 }
 
+/// A route a router builder registers: the method, the full path and the
+/// handler expression.
+pub struct Registered<'e> {
+    pub verb: String,
+    pub path: String,
+    pub handler: &'e Expr,
+}
+
+/// The routes a router-building expression registers, by shape: axum's
+/// `.route("/users", get(list).post(create))` with `.nest("/api", …)` and
+/// `.merge(…)`; actix-web's `.route("/x", web::get().to(h))`,
+/// `web::resource("/x").route(web::post().to(h))` and `.to(h)`, and
+/// `web::scope("/api")`. `nested` collects what is nested under a prefix
+/// (`.nest("/api", api::router())`), so routes built elsewhere get it too.
+pub fn chain_routes<'e>(e: &'e Expr, prefix: &str, out: &mut Vec<Registered<'e>>, nested: &mut Vec<(String, &'e Expr)>) {
+    let Expr::Call(c) = e else { return };
+    let Expr::Attribute(a) = &*c.func else { return };
+    let args = &c.arguments.args[..];
+    chain_routes(&a.value, prefix, out, nested);
+    let here = match scope_path(&a.value) {
+        Some(p) => join_path(prefix, p),
+        None => prefix.to_string(),
+    };
+    match (a.attr.as_str(), args) {
+        ("route" | "at", [path, router]) if string_literal(path).is_some() => method_router(router, &join_path(&here, string_literal(path).unwrap()), out),
+        ("route", [router]) => {
+            if let Some(p) = resource_path(&a.value) {
+                method_router(router, &join_path(&here, p), out);
+            }
+        }
+        ("to", [handler]) => {
+            if let Some(p) = resource_path(&a.value) {
+                out.push(Registered { verb: "ANY".into(), path: join_path(&here, p), handler });
+            }
+        }
+        ("nest" | "nest_service", [path, inner]) if string_literal(path).is_some() => {
+            let p = join_path(&here, string_literal(path).unwrap());
+            chain_routes(inner, &p, out, nested);
+            nested.push((p, inner));
+        }
+        ("merge", [inner]) => {
+            chain_routes(inner, &here, out, nested);
+            nested.push((here.clone(), inner));
+        }
+        ("service" | "configure", [inner]) => chain_routes(inner, &here, out, nested),
+        _ => {}
+    }
+}
+
+fn verb_name(name: &str) -> Option<String> {
+    // `post_service(…)` routes a service the way `post(…)` routes a handler.
+    let lower = name.trim_end_matches("_service").to_ascii_lowercase();
+    (HTTP.contains(&lower.as_str()) || lower == "any").then(|| lower.to_uppercase())
+}
+
+/// The handler a route is given, under the layers wrapped around it
+/// (`kv_get.layer(…)`, `handler.with_state(…)`).
+pub fn handler_of(e: &Expr) -> &Expr {
+    let mut cur = e;
+    while let Expr::Call(c) = cur {
+        match &*c.func {
+            Expr::Attribute(a) if matches!(a.attr.as_str(), "layer" | "with_state" | "route_layer" | "into_service") => cur = &a.value,
+            _ => break,
+        }
+    }
+    cur
+}
+
+/// `get(list).post(create)`, `web::get().to(h)`, `post(h)`.
+fn method_router<'e>(e: &'e Expr, path: &str, out: &mut Vec<Registered<'e>>) {
+    let Expr::Call(c) = e else { return };
+    let args = &c.arguments.args[..];
+    match (&*c.func, args) {
+        (Expr::Name(n), [handler]) => {
+            if let Some(v) = verb_name(&n.id) {
+                out.push(Registered { verb: v, path: path.to_string(), handler });
+            }
+        }
+        (Expr::Attribute(a), [handler]) if a.attr == "to" => {
+            let verb = match &*a.value {
+                Expr::Call(inner) if inner.arguments.args.is_empty() => verb_name(last_segment(&inner.func)),
+                _ => None,
+            };
+            out.push(Registered { verb: verb.unwrap_or_else(|| "ANY".into()), path: path.to_string(), handler });
+        }
+        (Expr::Attribute(a), [handler]) => {
+            if let Some(v) = verb_name(&a.attr) {
+                // `routing::get(h)` is a call of the verb; `get(a).post(b)` chains them.
+                if !matches!(&*a.value, Expr::Call(_)) {
+                    out.push(Registered { verb: v, path: path.to_string(), handler });
+                    return;
+                }
+                method_router(&a.value, path, out);
+                out.push(Registered { verb: v, path: path.to_string(), handler });
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The path of an actix-web resource a chain starts from: `web::resource("/x")`.
+fn resource_path(e: &Expr) -> Option<&str> {
+    match e {
+        Expr::Call(c) if last_segment(&c.func) == "resource" => c.arguments.args.first().and_then(string_literal),
+        Expr::Call(c) => match &*c.func {
+            Expr::Attribute(a) => resource_path(&a.value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The prefix of an actix-web scope a chain starts from: `web::scope("/api")`.
+fn scope_path(e: &Expr) -> Option<&str> {
+    match e {
+        Expr::Call(c) if last_segment(&c.func) == "scope" => c.arguments.args.first().and_then(string_literal),
+        Expr::Call(c) => match &*c.func {
+            Expr::Attribute(a) => scope_path(&a.value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Calls that start a method chain, anywhere in a body, closures included
+/// (`HttpServer::new(|| App::new().route(…))`).
+pub fn chain_tops<'e>(stmts: &'e [Stmt], f: &mut impl FnMut(&'e Expr)) {
+    fn visit<'e>(e: &'e Expr, receiver: bool, f: &mut impl FnMut(&'e Expr)) {
+        if !receiver && matches!(e, Expr::Call(_)) {
+            f(e);
+        }
+        match e {
+            Expr::Call(c) => {
+                match &*c.func {
+                    Expr::Attribute(a) => visit(&a.value, true, f),
+                    other => visit(other, false, f),
+                }
+                for a in c.arguments.args.iter().chain(c.arguments.keywords.iter().map(|k| &k.value)) {
+                    visit(a, false, f);
+                }
+            }
+            Expr::Function(d) => chain_tops(&d.body, f),
+            other => {
+                let mut kids = vec![];
+                super::walk::children(other, &mut kids);
+                for k in kids {
+                    visit(k, false, f);
+                }
+            }
+        }
+    }
+    super::walk::stmt_exprs(stmts, true, &mut |root| visit(root, false, f));
+}
+
+/// Routes registered by router builders across the project: the label of
+/// each handler function (`GET /api/articles`), and the prefix each
+/// router-building function is nested under.
+pub struct Routes {
+    pub handlers: HashMap<usize, String>,
+    pub prefixes: HashMap<usize, String>,
+}
+
+pub fn routes(modules: &[super::Module], ix: &super::index::Index) -> Routes {
+    use super::index::{NoLocals, Ty};
+    // (function, nested prefix, nested function) and (function, verb, path, handler).
+    let mut nests: Vec<(usize, String, usize)> = vec![];
+    let mut regs: Vec<(usize, String, String, usize)> = vec![];
+    for (fid, f) in ix.funcs.iter().enumerate() {
+        let mi = f.module;
+        if modules[mi].lang != ast::Lang::Rust {
+            continue;
+        }
+        let func_of = |e: &Expr| -> Option<usize> {
+            let mut target = handler_of(e);
+            if let Expr::Call(c) = target {
+                target = &c.func;
+            }
+            match ix.infer(mi, target, &NoLocals) {
+                Ty::Func(g) => Some(g),
+                _ => None,
+            }
+        };
+        chain_tops(f.def.body, &mut |e| {
+            let mut out = vec![];
+            let mut nested = vec![];
+            chain_routes(e, "", &mut out, &mut nested);
+            for r in out {
+                if let Some(h) = func_of(r.handler) {
+                    // A registration inside `.service(…)` is also met on its own.
+                    let reg = (fid, r.verb, r.path, h);
+                    if !regs.contains(&reg) {
+                        regs.push(reg);
+                    }
+                }
+            }
+            for (p, inner) in nested {
+                if let Some(g) = func_of(inner) {
+                    nests.push((fid, p, g));
+                }
+            }
+        });
+    }
+    let mut prefixes: HashMap<usize, String> = HashMap::new();
+    for _ in 0..4 {
+        for (from, p, to) in &nests {
+            let parent = prefixes.get(from).cloned().unwrap_or_default();
+            prefixes.insert(*to, join_path(&parent, p));
+        }
+    }
+    let mut handlers: HashMap<usize, String> = HashMap::new();
+    for (fid, verb, path, h) in regs {
+        let full = join_path(prefixes.get(&fid).map(String::as_str).unwrap_or(""), &path);
+        let label = format!("{verb} {full}");
+        handlers.entry(h).and_modify(|l| *l = format!("{l}, {label}")).or_insert(label);
+    }
+    Routes { handlers, prefixes }
+}
+
 /// A short tag for decorators without a framework role, or `None` for
 /// decorators that are plumbing (`@functools.wraps(f)`, `@override`).
-pub fn tag(d: &ast::Decorator, text: impl Fn(&Expr) -> String) -> Option<String> {
+pub fn tag(d: &ast::Decorator, lang: ast::Lang, text: impl Fn(&Expr) -> String) -> Option<String> {
     let func = match &d.expression {
         Expr::Call(c) => &*c.func,
         e => e,
     };
+    if lang == ast::Lang::Rust {
+        return rust_tag(d, func);
+    }
     // Any expression is a decorator since 3.9 (`@buttons[0].cache`).
     let name = dotted(func).unwrap_or_else(|| text(func));
     let last = name.rsplit('.').next().unwrap_or(&name);

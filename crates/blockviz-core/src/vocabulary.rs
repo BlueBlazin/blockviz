@@ -25,9 +25,11 @@ impl Domains {
 /// Top-level library names (Python packages and npm packages).
 const ML: &[&str] = &[
     "torch", "jax", "flax", "haiku", "equinox", "optax", "tensorflow", "keras", "mlx", "paddle", "mindspore", "tinygrad", "transformers", "diffusers", "timm", "lightning", "pytorch_lightning", "accelerate", "deepspeed", "triton", "einops", "xformers", "flash_attn", "torchvision", "torchaudio", "peft", "trl", "vllm", "megatron", "apex", "@tensorflow/tfjs", "@tensorflow/tfjs-node", "onnxruntime-web", "onnxruntime-node", "@xenova/transformers", "@huggingface/transformers",
+    "candle", "candle_core", "candle_nn", "candle_transformers", "tch", "burn", "burn_tensor", "burn_core", "dfdx", "ort", "tract_onnx", "rust_bert", "mistralrs", "luminal",
 ];
 const DATABASE: &[&str] = &[
     "sqlalchemy", "sqlmodel", "sqlite3", "psycopg", "psycopg2", "asyncpg", "aiosqlite", "aiomysql", "pymysql", "mysql", "MySQLdb", "pymongo", "motor", "mongoengine", "beanie", "odmantic", "peewee", "pony", "tortoise", "django", "databases", "duckdb", "redis", "aioredis", "cassandra", "neo4j", "edgedb", "prisma", "supabase", "sqlite_utils", "records", "dataset", "pg", "mysql2", "better-sqlite3", "mongoose", "mongodb", "@prisma/client", "typeorm", "sequelize", "knex", "drizzle-orm", "kysely", "ioredis", "@supabase/supabase-js",
+    "sqlx", "diesel", "diesel_async", "sea_orm", "rusqlite", "tokio_rusqlite", "tokio_postgres", "postgres", "mysql_async", "deadpool_postgres", "deadpool_redis", "bb8", "r2d2", "sled", "rocksdb", "surrealdb", "scylla", "tiberius", "libsql", "fred", "rbatis", "lancedb", "qdrant_client",
 ];
 
 /// The domains a library belongs to, by its top-level name.
@@ -125,6 +127,8 @@ pub fn is_metadata(name: &str) -> bool {
 /// cursor or ORM manager.
 const DB_VERBS: &[&str] = &[
     "execute", "executemany", "executescript", "commit", "rollback", "add", "add_all", "delete", "merge", "flush", "refresh", "query", "get", "exec", "scalar", "scalars", "fetchone", "fetchall", "fetchmany", "filter", "filter_by", "exclude", "all", "first", "create", "get_or_create", "update_or_create", "bulk_create", "bulk_update", "update", "insert_one", "insert_many", "find", "find_one", "update_one", "update_many", "delete_one", "delete_many", "aggregate", "count", "values", "values_list", "order_by", "select_related", "prefetch_related", "annotate", "findMany", "findUnique", "findFirst", "upsert", "insert", "select", "where",
+    // Rust: sqlx, diesel, rusqlite, sea-orm.
+    "fetch_one", "fetch_all", "fetch_optional", "fetch", "query_row", "query_map", "execute_batch", "get_result", "get_results", "load", "one",
 ];
 
 /// Methods that query or change a database (or an ORM model).

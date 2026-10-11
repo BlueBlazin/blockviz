@@ -60,6 +60,7 @@ export default function App() {
       if (!result.ok) throw new Error(result.error);
       setSelected(null);
       setSelectedPath(null);
+      setView({ path: [], zoom: 1 });
       const model = new SceneModel(result.scene, project);
       setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed: result.elapsed });
       setDialog(null);
@@ -162,7 +163,8 @@ export default function App() {
 
   const crumbs = useMemo(() => {
     if (!loaded) return [];
-    return view.path.map((id, i) => ({ id, i, title: loaded.model.node(id).title })).filter(c => c.title);
+    // A path left from the previous project may name nodes this one lacks.
+    return view.path.map((id, i) => ({ id, i, title: loaded.model.node(id)?.title ?? '' })).filter(c => c.title);
   }, [view.path, loaded]);
 
   const node = loaded && selected !== null ? loaded.model.node(selected) : null;

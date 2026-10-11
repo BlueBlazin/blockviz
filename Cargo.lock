@@ -82,12 +82,14 @@ dependencies = [
  "oxc_parser",
  "oxc_span",
  "oxc_syntax",
+ "proc-macro2",
  "regex-lite",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "wasm-bindgen",
 ]
 

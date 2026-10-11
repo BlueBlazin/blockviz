@@ -4,7 +4,7 @@
 //! instead of cutting text.
 
 use super::source::Source;
-use super::syntax::{self as ast, CompKind, Expr, TemplateKind, TemplatePart};
+use super::syntax::{self as ast, CompKind, Expr, Ranged, TemplateKind, TemplatePart};
 use crate::naming::{self, Collection, Dest, Step};
 use crate::text::squash;
 
@@ -161,19 +161,35 @@ impl<'a> Namer<'a> {
         squash(self.src.of(e))
     }
 
+    /// `a.b.c` for a chain of names, with Rust's `::` where the code has it
+    /// (`Command::Get`, `self.db`).
+    pub fn path(&self, e: &Expr) -> Option<String> {
+        match e {
+            Expr::Name(n) => Some(n.id.to_string()),
+            Expr::Attribute(a) => {
+                let base = self.path(&a.value)?;
+                let gap = self.src.text.get(usize::from(a.value.range().end())..usize::from(a.range.end())).unwrap_or("");
+                let sep = if gap.trim_start().starts_with("::") { "::" } else { "." };
+                Some(format!("{base}{sep}{}", a.attr))
+            }
+            _ => None,
+        }
+    }
+
     /// A word for what an expression is: `items` for `len(items)`,
     /// `listdir` for `os.listdir(d)`, `{http, https}` for a dict display.
     pub fn brief(&self, e: &Expr) -> String {
         match e {
-            Expr::Name(n) => n.id.to_string(),
-            Expr::Attribute(a) => match dotted(e) {
+            // A Rust macro is named without its `!`.
+            Expr::Name(n) => n.id.trim_end_matches('!').to_string(),
+            Expr::Attribute(a) => match self.path(e) {
                 Some(d) if d.chars().count() <= 20 => d,
-                _ => a.attr.to_string(),
+                _ => a.attr.trim_end_matches('!').to_string(),
             },
             Expr::Call(c) => match &*c.func {
                 Expr::Name(n) if WRAPPERS.contains(&n.id.as_str()) && !c.arguments.args.is_empty() => self.brief(&c.arguments.args[0]),
-                Expr::Name(n) => n.id.to_string(),
-                Expr::Attribute(a) => a.attr.to_string(),
+                Expr::Name(n) => n.id.trim_end_matches('!').to_string(),
+                Expr::Attribute(a) => a.attr.trim_end_matches('!').to_string(),
                 f => self.brief(f),
             },
             // `state["epoch"]` is the epoch.
@@ -182,6 +198,15 @@ impl<'a> Namer<'a> {
                 _ => self.brief(&s.value),
             },
             Expr::Await(a) => self.brief(&a.value),
+            // A Rust range `0..n`.
+            Expr::Slice(_) => {
+                let t = self.text(e);
+                if t.chars().count() <= 14 {
+                    t
+                } else {
+                    "range".into()
+                }
+            }
             Expr::Starred(s) => self.brief(&s.value),
             Expr::Named(n) => self.brief(&n.target),
             Expr::StringLiteral(_) | Expr::BytesLiteral(_) => {
@@ -231,11 +256,26 @@ impl<'a> Namer<'a> {
                 }
             }
             Expr::Slice(_) => "…".into(),
+            // `let Some(top) = …` (Rust), `(m := …)` (Python).
+            Expr::Named(n) => {
+                let target = self.code(&n.target, max / 2);
+                if self.src.lang == ast::Lang::Rust {
+                    format!("let {target} = {}", self.code(&n.value, max.saturating_sub(len(&target) + 7)))
+                } else if self.src.lang.is_js() {
+                    format!("{target} = {}", self.code(&n.value, max.saturating_sub(len(&target) + 3)))
+                } else {
+                    format!("({target} := {})", self.code(&n.value, max.saturating_sub(len(&target) + 6)))
+                }
+            }
             Expr::BoolOp(b) => {
                 let op = format!(" {} ", b.op.as_str());
                 let mut out = String::new();
                 for v in &b.values {
-                    let part = self.code(v, max.saturating_sub(len(&out) + op.len() + 1).max(8));
+                    // `a and (b or c)`: a nested test keeps its parentheses
+                    // (Rust's `let` in a condition needs none).
+                    let nested = matches!(v, Expr::BoolOp(_) | Expr::If(_)) || matches!(v, Expr::Named(_)) && self.src.lang != ast::Lang::Rust;
+                    let part = self.code(v, max.saturating_sub(len(&out) + op.len() + 1 + if nested { 2 } else { 0 }).max(8));
+                    let part = if nested && !(part.starts_with('(') && part.ends_with(')')) { format!("({part})") } else { part };
                     let next = if out.is_empty() { part } else { format!("{out}{op}{part}") };
                     if len(&next) > max {
                         return if out.is_empty() { "…".into() } else { format!("{out}{op}…") };
@@ -252,7 +292,13 @@ impl<'a> Namer<'a> {
                     ast::UnaryOp::Delete => "delete ",
                     other => other.as_str(),
                 };
-                format!("{op}{}", self.code(&u.operand, max.saturating_sub(op.len())))
+                let inner = self.code(&u.operand, max.saturating_sub(op.len()));
+                // `!(a && b)`, `not (a or b)`: the operator applies to the whole.
+                if matches!(&*u.operand, Expr::BoolOp(_) | Expr::Compare(_) | Expr::BinOp(_) | Expr::If(_)) && !(inner.starts_with('(') && inner.ends_with(')')) {
+                    format!("{op}({inner})")
+                } else {
+                    format!("{op}{inner}")
+                }
             }
             Expr::Compare(c) => {
                 let half = max.saturating_sub(4) / 2;
@@ -276,7 +322,7 @@ impl<'a> Namer<'a> {
             Expr::Call(c) if c.kind == ast::CallKind::Jsx => {
                 let tag = match &*c.func {
                     Expr::StringLiteral(s) => s.value.clone(),
-                    f => dotted(f).unwrap_or_else(|| self.brief(f)),
+                    f => self.path(f).unwrap_or_else(|| self.brief(f)),
                 };
                 if c.arguments.args.is_empty() {
                     format!("<{tag} …/>")
@@ -293,8 +339,8 @@ impl<'a> Namer<'a> {
                 }
             }
             // A dotted path keeps its last segments: `args.output_file_specified`.
-            Expr::Attribute(a) if dotted(e).is_some() => {
-                let q = naming::qualifier(&dotted(e).unwrap(), max);
+            Expr::Attribute(a) if self.path(e).is_some() => {
+                let q = naming::qualifier(&self.path(e).unwrap(), max);
                 if q.is_empty() {
                     a.attr.to_string()
                 } else {
@@ -304,7 +350,7 @@ impl<'a> Namer<'a> {
             Expr::Attribute(a) => {
                 let base = match &*a.value {
                     v @ (Expr::Call(_) | Expr::Subscript(_)) => self.code(v, max.saturating_sub(a.attr.len() + 1)),
-                    v => match dotted(v) {
+                    v => match self.path(v) {
                         Some(d) => naming::qualifier(&d, max.saturating_sub(a.attr.len() + 1)),
                         None => "…".into(),
                     },
@@ -318,7 +364,7 @@ impl<'a> Namer<'a> {
             // A string key is what the lookup is about: keep it, shorten the base.
             Expr::Subscript(s) if string_value(&s.slice).is_some() => {
                 let key = self.code(&s.slice, max);
-                let base = match dotted(&s.value) {
+                let base = match self.path(&s.value) {
                     Some(d) => d.rsplit('.').next().unwrap_or(&d).to_string(),
                     None => self.code(&s.value, max.saturating_sub(len(&key) + 2)),
                 };
@@ -343,6 +389,8 @@ impl<'a> Namer<'a> {
                 Some(t) => format!("\"{}\"", naming::shorten(&t, max.saturating_sub(2))),
                 None => "…".into(),
             },
+            // Rust awaits after the value: `read_buf(…).await`.
+            Expr::Await(a) if self.src.lang == ast::Lang::Rust => format!("{}.await", self.code(&a.value, max.saturating_sub(6))),
             Expr::Await(a) => format!("await {}", self.code(&a.value, max.saturating_sub(6))),
             Expr::Dict(_) => self.brief(e),
             Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) => {
@@ -502,24 +550,27 @@ impl<'a> Namer<'a> {
     fn calls(&self, e: &Expr) -> Step {
         let mut names = vec![];
         let mut cur = e;
+        let mut path = false;
         let receiver = loop {
             match cur {
                 // `<section>…</section>`: an element is named by its tag.
                 Expr::Call(c) if c.kind == ast::CallKind::Jsx => {
                     let tag = match &*c.func {
                         Expr::StringLiteral(s) => s.value.clone(),
-                        f => dotted(f).unwrap_or_else(|| self.brief(f)),
+                        f => self.path(f).unwrap_or_else(|| self.brief(f)),
                     };
                     names.push(format!("<{tag}>"));
                     break None;
                 }
                 Expr::Call(c) if std::ptr::eq(cur, e) || !(self.is_block)(c) => match &*c.func {
                     Expr::Attribute(a) => {
-                        names.push(a.attr.to_string());
+                        names.push(a.attr.trim_end_matches('!').to_string());
+                        let gap = self.src.text.get(usize::from(a.value.range().end())..usize::from(a.range.end())).unwrap_or("");
+                        path = gap.trim_start().starts_with("::");
                         cur = &a.value;
                     }
                     Expr::Name(n) => {
-                        names.push(n.id.to_string());
+                        names.push(n.id.trim_end_matches('!').to_string());
                         break None;
                     }
                     f => {
@@ -532,8 +583,8 @@ impl<'a> Namer<'a> {
             }
         };
         names.reverse();
-        let receiver = receiver.map(|r| dotted(r).unwrap_or_else(|| self.code(r, 20))).unwrap_or_default();
-        Step::Calls { names, receiver, reads: super::walk::loads(e) }
+        let receiver = receiver.map(|r| self.path(r).unwrap_or_else(|| self.code(r, 20))).unwrap_or_default();
+        Step::Calls { names, receiver, reads: super::walk::loads(e), path }
     }
 
     /// Where an assignment target stores its result.
@@ -558,7 +609,7 @@ impl<'a> Namer<'a> {
     }
 
     fn owner(&self, e: &Expr) -> String {
-        dotted(e).unwrap_or_else(|| self.code(e, 24))
+        self.path(e).unwrap_or_else(|| self.code(e, 24))
     }
 }
 

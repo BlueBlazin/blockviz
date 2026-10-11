@@ -36,7 +36,7 @@ pub struct Outline {
     pub symbols: Vec<OSym>,
     pub rows: Vec<Row>,
     pub doc: String,
-    /// Module specifiers this file imports, as written (`./camera`, `crate::ir`, `util.h`).
+    /// Module specifiers this file imports, as written (`./camera`, `util.h`).
     pub imports: Vec<String>,
 }
 
@@ -138,11 +138,6 @@ fn definitions(lang: &str) -> Vec<(&'static Regex, &'static str, usize, usize)> 
             (rx!(r"(?m)^(?:template\s*<[^>\n]*>\s*)?(?:(?:static|inline|extern|virtual|constexpr|__global__|__device__|__host__|__forceinline__|kernel|const|unsigned|signed|struct)\s+)*[A-Za-z_][\w:<>\*&, ]*?[\s\*&]+\**([A-Za-z_][\w:~]*)\s*\("), "function", 1, 0),
             (rx!(r"(?m)^\s*(?:typedef\s+)?(class|struct|union|enum|namespace)\s+([A-Za-z_]\w*)[^;\n]*\{?\s*$"), "", 2, 1),
         ],
-        "Rust" => vec![
-            (rx!(r#"(?m)^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?(?:extern\s+"[^"]*"\s+)?fn\s+([A-Za-z_]\w*)"#), "function", 1, 0),
-            (rx!(r"(?m)^(?:pub(?:\([^)]*\))?\s+)?(struct|enum|trait|union|mod)\s+([A-Za-z_]\w*)"), "", 2, 1),
-            (rx!(r"(?m)^impl(?:<[^>\n]*>)?\s+(?:[\w:<>, &']+?\s+for\s+)?([A-Za-z_][\w:]*)"), "impl", 1, 0),
-        ],
         "Go" => vec![
             (rx!(r"(?m)^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[\(\[]"), "function", 1, 0),
             (rx!(r"(?m)^type\s+([A-Za-z_]\w*)\s+(struct|interface)"), "", 1, 2),
@@ -185,7 +180,7 @@ fn definitions(lang: &str) -> Vec<(&'static Regex, &'static str, usize, usize)> 
 const KEYWORDS: &[&str] = &["if", "for", "while", "switch", "return", "sizeof", "else", "catch", "do", "case", "new", "delete", "throw", "defined", "elif", "foreach", "using", "typedef", "operator"];
 
 fn brace_language(lang: &str) -> bool {
-    matches!(lang, "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" | "Rust" | "Go" | "JavaScript" | "TypeScript" | "Vue" | "Svelte" | "Java" | "Kotlin" | "Swift" | "Scala" | "C#" | "Dart" | "PHP" | "Shell" | "PowerShell" | "R" | "Zig")
+    matches!(lang, "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" | "Go" | "JavaScript" | "TypeScript" | "Vue" | "Svelte" | "Java" | "Kotlin" | "Swift" | "Scala" | "C#" | "Dart" | "PHP" | "Shell" | "PowerShell" | "R" | "Zig")
 }
 
 /// End of a `{ ... }` body starting at the first brace after `from`, skipping
@@ -517,14 +512,6 @@ pub fn imports(lang: &str, text: &str) -> Vec<String> {
                 push(&c[1]);
             }
         }
-        "Rust" => {
-            for c in rx!(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*;").captures_iter(text) {
-                push(&format!("mod:{}", &c[1]));
-            }
-            for c in rx!(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+crate::([A-Za-z_]\w*)").captures_iter(text) {
-                push(&format!("crate:{}", &c[1]));
-            }
-        }
         "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" => {
             for c in rx!(r#"(?m)^\s*#\s*(?:include|import)\s*"([^"]+)""#).captures_iter(text) {
                 push(&c[1]);
@@ -552,12 +539,10 @@ mod tests {
         assert_eq!(o.symbols[0].kind, "kernel");
     }
     #[test]
-    fn typescript_and_rust() {
+    fn typescript_outline() {
+        // `.vue` and `.svelte` files are outlined with TypeScript's rules.
         let ts = outline("TypeScript", "export function a() {}\nexport const b = (x: number) => x;\nclass C {}\ninterface D {}\n");
         assert_eq!(ts.symbols.len(), 4);
-        let rs = outline("Rust", "pub fn a() {}\nstruct B;\nimpl B {\n  fn c() {}\n}\n");
-        assert!(rs.symbols.iter().any(|s| s.name == "a" && s.kind == "function"));
-        assert!(rs.symbols.iter().any(|s| s.name == "B" && s.kind == "struct"));
     }
     #[test]
     fn env_values_are_masked() {

@@ -16,6 +16,7 @@ pub mod notebook;
 pub mod outline;
 pub mod project;
 pub mod python;
+pub mod rust;
 pub mod text;
 pub mod vocabulary;
 

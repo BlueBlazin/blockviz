@@ -125,6 +125,12 @@ fn looks_like_code(t: &str) -> bool {
     if t.starts_with(">>>") || t.starts_with("$ ") || t.starts_with("import ") || t.starts_with("from ") {
         return true;
     }
+    // A command line: a program, then its flags (`vivid --color-mode 8-bit …`).
+    let words: Vec<&str> = t.split_whitespace().collect();
+    let program = words.first().is_some_and(|w| w.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_./".contains(c)));
+    if program && words.iter().skip(1).take(2).any(|w| w.len() > 2 && w.starts_with("--") && w[2..].starts_with(|c: char| c.is_ascii_alphabetic())) {
+        return true;
+    }
     let ident_end = t
         .char_indices()
         .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '.' || *c == '[' || *c == ']' || *c == '\''))
@@ -153,6 +159,11 @@ pub fn summary(doc: &str) -> String {
     let mut end = text.len();
     for (i, c) in text.char_indices() {
         if (c == '.' || c == '!' || c == '?') && text[i + 1..].starts_with(' ') && i > 12 {
+            // `i.e.`, `e.g.`, `etc.` do not end a sentence.
+            let word = text[..i].rsplit(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("");
+            if c == '.' && (word.contains('.') || matches!(word.to_ascii_lowercase().as_str(), "e.g" | "i.e" | "etc" | "vs" | "cf" | "approx" | "incl" | "resp" | "viz" | "al")) {
+                continue;
+            }
             end = i + 1;
             break;
         }

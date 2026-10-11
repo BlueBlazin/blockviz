@@ -14,6 +14,9 @@ describe('pasted code', () => {
     expect(guessFilename('export interface User { id: string }\nexport function f(u: User): string { return u.id; }\n')).toBe('main.ts');
     expect(guessFilename("export function Card({ title }) {\n  return <div className=\"card\">{title}</div>;\n}\n")).toBe('main.jsx');
     expect(guessFilename('type Props = { title: string };\nexport const Card = ({ title }: Props) => <h1>{title}</h1>;\n')).toBe('main.tsx');
+    expect(guessFilename('use std::collections::HashMap;\n\npub struct Db {\n    map: HashMap<String, u32>,\n}\n')).toBe('lib.rs');
+    expect(guessFilename('#[tokio::main]\nasync fn main() {\n    let mut x = 1;\n}\n')).toBe('main.rs');
+    expect(guessFilename('impl Display for Frame {\n    fn fmt(&self, f: &mut Formatter) -> fmt::Result { Ok(()) }\n}\n')).toBe('lib.rs');
   });
 
   it('names the project after the file', () => {

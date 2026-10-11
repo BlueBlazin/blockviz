@@ -11,7 +11,7 @@ npm run dev          # http://127.0.0.1:5173 (run `npm run wasm` once first)
 npm test             # vitest + cargo test
 ```
 
-Open a GitHub repository (`#github=owner/repo` in the URL works too), a local folder (picker or drag-and-drop), or paste a single file. The bundled example is [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) (MIT), which also serves as the main test fixture. `tests/corpus.rs` checks the abstractions on trimmed snapshots of a FastAPI app, httpx, nanochat, Flask, a Django site and HTTPie; `tests/corpus_js.rs` does the same for an Express API, a Next.js app, a NestJS service, a React/Vite app, ky, serve and a Turborepo workspace. `cargo test --test audit -- --ignored --nocapture` reports the blocks most likely to read badly (code-like titles, guard tags, empty branch arms) across both corpora.
+Open a GitHub repository (`#github=owner/repo` in the URL works too), a local folder (picker or drag-and-drop), or paste a single file. The bundled example is [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) (MIT), which also serves as the main test fixture. `tests/corpus.rs` checks the abstractions on trimmed snapshots of a FastAPI app, httpx, nanochat, Flask, a Django site and HTTPie; `tests/corpus_js.rs` does the same for an Express API, a Next.js app, a NestJS service, a React/Vite app, ky, serve and a Turborepo workspace; `tests/corpus_rust.rs` for mini-redis, fd, ripgrep's core crate, a workspace of axum examples and llama2.rs. `cargo test --test audit -- --ignored --nocapture` reports the blocks most likely to read badly (code-like titles, guard tags, empty branch arms) across all three corpora.
 
 A command-line view of the same analysis helps when tuning abstractions:
 
@@ -72,9 +72,23 @@ The same rules apply, read through JavaScript's idioms.
 * An object a module creates once (`const users = new UsersService()`) is known in every function of that module, including those written above it.
 * Python's words are not used for JavaScript: `switch`, `catch`, `this`, objects and arrays.
 
+### Rust
+
+The same rules again, read through Rust's idioms.
+
+* A struct or enum is drawn with the methods of its `impl` blocks; an `impl` in another module is drawn where it is written and leads to its type, and its methods are found from calls anywhere. The traits a type implements are its subtitle, and each trait method says which trait it belongs to (`fmt — Display`, `from — From<io::Error>`). A trait lists its required methods and draws its provided ones.
+* Fields typed by project or library types are components (`blocks: Block × n_layer`, `listener: TcpListener`); wrappers are looked through (`Arc<Mutex<Db>>` is a `Db`), and standard types and synchronisation primitives are state, not components. `self.ln_1.forward(x)` calls the component, as `self.ln_1(x)` does in PyTorch, so a candle or burn model reads like nanoGPT.
+* Values computed by `if`, `match` and blocks go where they are sent: `let x = match …` is a match whose arms set `x`, and a function's last expression is its result. `Ok(x)` and `Some(x)` are `x`; an `Err` handed back is an exit tagged `returns error`; `?` passes values on. `let … else` is a guard (`return · unless Some(path)`).
+* Match arms are their patterns, with their guards (`Mode::Search(mode) if threads == 1`); names a pattern binds come from the matched value, and a value unpacked from an enum variant has the variant's type, so `match self { Get(cmd) => cmd.apply(…) }` reaches `Get::apply`. `_ => {}` arms are not drawn.
+* Macros are what they stand for: `format!` and `println!` are formatted text (prints), `vec![x; n]` is `[x] * n`, `assert!` an assertion, `panic!`, `bail!` and `unreachable!` exits; logging macros are effects; a macro whose body is not Rust (`json!`) reads the variables it names.
+* Glue that only borrows, clones, converts or unwraps (`&x`, `.clone()`, `.unwrap()`, `.into()`, `.iter()`, `as`) is left out, and `xs.iter().map(|x| f(x)).collect()` is a comprehension (`each of xs`).
+* Modules resolve the way Cargo and rustc do: crate roots from `Cargo.toml` (libraries, binaries, `src/bin`, examples, tests, benches, build scripts, workspaces), `mod` declarations with `#[path]`, and `crate::`, `super::`, `self::` and other crates of the workspace. A module depends on what its code uses: a crate root that only re-exports (`pub use db::Db`) is not drawn between its modules and their users.
+* Routes come from router builders by shape: axum's `.route("/users", get(list).post(create))` with `.nest` and `.merge`, actix-web's `web::resource`, `web::scope` and `#[get("/…")]` (and Rocket's attributes). Handlers are named by their routes and routers are route tables. Derives say what a type is for (`command line` for clap, `DB row`, `error type`), `sqlx`, diesel and sea-orm queries are database steps, and `#[cfg(unix)]`, `#[cfg(feature = "x")]` variants are tagged with their condition.
+* Files are binaries (entry points), libraries, examples, tests, benchmarks or build scripts by their crate.
+
 ### Other languages
 
-Every text file is handled. Notebooks are analyzed as Python (cells become sections titled by the markdown above them). Other source files get an outline: their definitions, calls between definitions in brace languages, and imports resolved to files for Rust and C/C++. Config files become key/value tables (`.env` values are masked), docs become heading lists, and READMEs describe their folder. Binary files appear as assets.
+Every text file is handled. Notebooks are analyzed as Python (cells become sections titled by the markdown above them). Other source files get an outline: their definitions, calls between definitions in brace languages, and imports resolved to files for C/C++. Config files become key/value tables (`.env` values are masked), docs become heading lists, and READMEs describe their folder. Binary files appear as assets.
 
 ## Architecture
 
@@ -91,6 +105,8 @@ crates/blockviz-core/          Rust → WebAssembly
   src/code/frameworks.rs       routes, commands, tasks, components from decorators and calls
   src/python/                  Ruff's tree → syntax tree
   src/js/                      oxc's tree → syntax tree; import resolution (tsconfig, workspaces)
+  src/rust/                    syn's tree → syntax tree; module resolution (Cargo manifests,
+                               `mod` declarations); a small lexer for comments
   src/invocations.rs           commands in scripts and manifests that run project code
   src/compose.rs               Docker Compose services
   src/outline.rs               outlines and imports for other languages
@@ -117,6 +133,8 @@ Python parsing uses [Ruff's parser](https://github.com/astral-sh/ruff) (`ruff_py
 
 JavaScript and TypeScript are parsed by [oxc](https://github.com/oxc-project/oxc) (`oxc_parser`): ES2025 (import attributes, `using` declarations, regexp `v` flag, top-level await), current TypeScript (decorators, `accessor`, `satisfies`, `const` type parameters, `asserts` guards) and JSX in `.jsx`/`.tsx`. `tests/js_syntax.rs` covers each, plus CommonJS and UMD modules. Where oxc gives up at a syntax error, the statement holding it is blanked out and the file parsed again, so the rest still renders. vuejs/core (about 160k lines of TypeScript) analyzes in under a second natively.
 
+Rust is parsed by [syn](https://github.com/dtolnay/syn) with span locations: editions 2015 to 2024, including `let … else`, `if let` chains, async closures, `use<…>` capture lists, `&raw` references, inline `const` blocks, C string literals and `unsafe extern` blocks. `tests/rust_syntax.rs` covers each on a small crate with every kind of target. syn does not recover from syntax errors, so on an error the body of the function holding it (or the top-level item) is blanked out and the file parsed again. ripgrep (about 56k lines) analyzes in under half a second natively.
+
 ## Limits
 
-This is static analysis: arrows show likely dataflow and dependencies, not a runtime trace. Dynamic dispatch, code passed through strings and monkey-patching are invisible. TypeScript types are read only as far as naming a class; longer types are shown elided by their brackets (`{ [K in keyof T as `…`]: () => T[K] }`). Very large repositories work but get heavy in the browser (the full CPython standard library, about 330k lines, produces a 64 MB scene).
+This is static analysis: arrows show likely dataflow and dependencies, not a runtime trace. Dynamic dispatch, code passed through strings and monkey-patching are invisible. TypeScript types are read only as far as naming a class; longer types are shown elided by their brackets (`{ [K in keyof T as `…`]: () => T[K] }`). Rust trait objects and generic parameters are not resolved to implementations (a call through `dyn Trait` or `T: Trait` is a plain step), and macros are read by their name and arguments, not expanded. Very large repositories work but get heavy in the browser (the full CPython standard library, about 330k lines, produces a 64 MB scene).

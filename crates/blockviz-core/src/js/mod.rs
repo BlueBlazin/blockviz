@@ -89,7 +89,7 @@ fn comments(text: &str, list: &[oxc_ast::ast::Comment]) -> (Vec<(TextRange, Stri
 }
 
 /// The comment block that opens a file, minus licence and tool headers.
-fn header(src: &Source, first_code_line: u32) -> String {
+pub(crate) fn header(src: &Source, first_code_line: u32) -> String {
     // Comment lines before the code, in blocks of consecutive lines.
     let mut blocks: Vec<Vec<(u32, &str)>> = vec![];
     for l in 1..first_code_line {
@@ -150,7 +150,7 @@ fn recover(text: &str, st: SourceType) -> Option<String> {
 /// Blanks the top-level statement around `offset`: from the last line at or
 /// before it that starts at the margin, to the next line after it that starts
 /// at the margin and does not close a bracket. `None` when nothing changes.
-fn blank_statement(text: &str, offset: usize) -> Option<String> {
+pub(crate) fn blank_statement(text: &str, offset: usize) -> Option<String> {
     let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).filter(|&i| i < text.len()).collect();
     let line = starts.partition_point(|&s| s <= offset).saturating_sub(1);
     let opens = |l: usize| text[starts[l]..].starts_with(|c: char| !c.is_whitespace() && !matches!(c, '}' | ')' | ']'));
