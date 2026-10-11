@@ -12,6 +12,8 @@ use crate::code::syntax::*;
 use oxc_ast::ast as js;
 use oxc_span::{GetSpan, Span};
 
+mod objects;
+
 pub struct Lower<'s> {
     pub text: &'s str,
     /// `require("x")` and `import("x")` met inside expressions: (specifier, span).
@@ -193,19 +195,34 @@ impl<'s> Lower<'s> {
     // ----- statements ---------------------------------------------------------
 
     pub fn program(&self, p: &js::Program) -> Vec<Stmt> {
-        self.stmts(&p.body)
+        // Objects and constructor functions that own functions become classes.
+        let owners = objects::Owners::scan(&p.body);
+        let mut out = vec![];
+        for s in &p.body {
+            if owners.folds(s) {
+                continue;
+            }
+            let lowered = self.owner_definition(s, &owners).unwrap_or_else(|| self.stmt(s));
+            out.extend(lowered);
+            self.required_imports(&mut out);
+        }
+        out
     }
 
     fn stmts(&self, list: &[js::Statement]) -> Vec<Stmt> {
         let mut out = vec![];
         for s in list {
             out.extend(self.stmt(s));
-            // `require()`/`import()` inside an expression still depends on the module.
-            for (spec, span) in self.required.borrow_mut().drain(..) {
-                out.push(Stmt::Import(StmtImport { names: vec![Alias { name: spec.clone(), asname: None, range: end(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(&spec), range: end(span) }));
-            }
+            self.required_imports(&mut out);
         }
         out
+    }
+
+    /// `require()`/`import()` inside an expression still depends on the module.
+    fn required_imports(&self, out: &mut Vec<Stmt>) {
+        for (spec, span) in self.required.borrow_mut().drain(..) {
+            out.push(Stmt::Import(StmtImport { names: vec![Alias { name: spec.clone(), asname: None, range: end(span) }], style: ModuleStyle::Path, resolved: (self.resolve)(&spec), range: end(span) }));
+        }
     }
 
     fn body_of(&self, s: &js::Statement) -> Vec<Stmt> {

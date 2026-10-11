@@ -82,6 +82,8 @@ fn typescript_declarations() {
     assert_eq!(rows(find(&s, "Color")), [("Red", ""), ("Green", ""), ("Blue", "")]);
     let types = find(&s, "Types");
     assert!(rows(types).iter().any(|r| r.0 == "Point"), "{types:?}");
+    // A long type is elided by its brackets, never to nothing.
+    assert!(rows(types).contains(&("Mapped", "{ [K in keyof T as `…`]: () => T[K] }")), "{:?}", rows(types));
     // A namespace groups its functions.
     let geometry = find(&s, "Geometry");
     assert_eq!(geometry.subtitle, "namespace");

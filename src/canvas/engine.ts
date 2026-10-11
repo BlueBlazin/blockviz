@@ -32,6 +32,8 @@ export class Engine {
   private press: { x: number; y: number; moved: boolean } | null = null;
   private lastEmit = 0;
   private disposed = false;
+  /** Still showing the initial whole-project framing (nothing has moved the camera). */
+  private framed = true;
   private observer: ResizeObserver;
 
   constructor(private canvas: HTMLCanvasElement, private model: SceneModel, private events: EngineEvents, insets?: Insets) {
@@ -182,6 +184,7 @@ export class Engine {
   // ----- frame loop ------------------------------------------------------------------
 
   private animate(plan: { duration: number; step: (t: number) => void }) {
+    this.framed = false;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
       plan.step(1);
       this.changed();
@@ -200,12 +203,20 @@ export class Engine {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
-    this.camera.pan((this.width - oldW) / 2, (this.height - oldH) / 2);
-    this.camera.reanchor(this.width, this.height);
+    // A canvas created before it had a size (a collapsed pane, a hidden frame)
+    // framed the project in one pixel; until the view is moved, keep it framed.
+    if (oldW <= 1 || oldH <= 1 || this.framed) {
+      this.flight = null;
+      this.camera.fitRoot(this.width, this.height);
+    } else {
+      this.camera.pan((this.width - oldW) / 2, (this.height - oldH) / 2);
+      this.camera.reanchor(this.width, this.height);
+    }
     this.invalidate();
   }
 
   private changed() {
+    this.framed = false;
     this.camera.reanchor(this.width, this.height);
     this.invalidate();
   }

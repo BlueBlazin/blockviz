@@ -2633,9 +2633,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                 None => badges.extend(frameworks::tag(d, |e| namer.code(e, 24))),
             }
         }
+        // An object's functions are all its own: none is "static".
+        let object = info.class.is_some_and(|k| self.cx.ix.classes[k].def.kind == ast::ClassKind::Object);
         match kind {
             FnKind::ClassMethod => badges.push("classmethod".into()),
-            FnKind::StaticMethod => badges.push("static".into()),
+            FnKind::StaticMethod if !object => badges.push("static".into()),
             FnKind::Property if !self.m.lang.is_js() => badges.push("property".into()),
             _ => {}
         }
@@ -3006,7 +3008,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     return Callee::Method(attr.into());
                 }
                 match self.ty(&a.value) {
-                    Ty::Module(m) => match self.cx.ix.sym_ty(m, attr, 0) {
+                    Ty::Module(m) => match self.cx.ix.module_member(m, attr) {
                         Ty::Class(k) => Callee::Ctor(k),
                         Ty::Func(f) => Callee::Func(f),
                         Ty::Ext(p) => Callee::Ext(p),
@@ -4012,8 +4014,10 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
             sub.push(e.clone());
         }
         n.subtitle = sub.join(", ");
-        if def.kind == ast::ClassKind::Namespace {
-            n.subtitle = "namespace".into();
+        match def.kind {
+            ast::ClassKind::Namespace => n.subtitle = "namespace".into(),
+            ast::ClassKind::Object if n.subtitle.is_empty() => n.subtitle = "object".into(),
+            _ => {}
         }
         n.category = if data { "config" } else { category.unwrap_or("class") };
         n.doc = doc;

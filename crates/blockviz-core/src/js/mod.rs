@@ -90,13 +90,31 @@ fn comments(text: &str, list: &[oxc_ast::ast::Comment]) -> (Vec<(TextRange, Stri
 
 /// The comment block that opens a file, minus licence and tool headers.
 fn header(src: &Source, first_code_line: u32) -> String {
-    let mut lines = vec![];
+    // Comment lines before the code, in blocks of consecutive lines.
+    let mut blocks: Vec<Vec<(u32, &str)>> = vec![];
     for l in 1..first_code_line {
         if let Some(c) = src.comments_above(l + 1).last().filter(|c| c.line == l) {
-            let t = c.text.trim();
+            match blocks.last_mut() {
+                Some(b) if b.last().is_some_and(|(prev, _)| *prev + 1 == l) => b.push((l, c.text.trim())),
+                _ => blocks.push(vec![(l, c.text.trim())]),
+            }
+        }
+    }
+    let mut lines = vec![];
+    for block in blocks {
+        // A licence header is not a description, its first line (the package name) included.
+        if block.iter().any(|(_, t)| {
             let lower = t.to_ascii_lowercase();
-            // Licence headers, tool directives and `/// <reference …/>` lines are not a description.
-            if t.starts_with('@') || t.starts_with('/') || lower.contains("copyright") || lower.contains("license") || lower.starts_with("eslint") || lower.starts_with("prettier") || lower.starts_with("tslint") || lower.starts_with("biome") || is_directive(t) || t.starts_with('#') {
+            lower.contains("copyright") || lower.contains("license") || lower.contains("licence")
+        }) {
+            continue;
+        }
+        for (_, t) in block {
+            // `@file Helpers for …` describes the file.
+            let t = ["@fileoverview", "@file", "@module"].iter().find_map(|tag| t.strip_prefix(tag).filter(|rest| rest.starts_with(' ')).map(str::trim)).unwrap_or(t);
+            let lower = t.to_ascii_lowercase();
+            // Tool directives and `/// <reference …/>` lines are not a description.
+            if t.starts_with('@') || t.starts_with('/') || lower.starts_with("eslint") || lower.starts_with("prettier") || lower.starts_with("tslint") || lower.starts_with("biome") || is_directive(t) || t.starts_with('#') {
                 continue;
             }
             lines.push(t.to_string());
@@ -187,6 +205,14 @@ pub fn parse(b: &mut Builder, inputs: Vec<JsInput>, resolver: &Resolver, diagnos
             None => first,
         };
         let (comment_lines, docs) = comments(&input.text, &ret.program.comments);
+        // A doc comment directly above the first statement documents that
+        // statement, not the file, unless it says so (`@file`, `@module`).
+        let line_of = |offset: u32| input.text[..(offset as usize).min(input.text.len())].bytes().filter(|c| *c == b'\n').count() as u32 + 1;
+        let first_start = ret.program.body.first().map(|s| oxc_span::GetSpan::span(s).start);
+        let statement_doc = first_start
+            .and_then(|f| docs.iter().find(|d| input.text.get(d.1 as usize..f as usize).is_some_and(|between| between.trim().is_empty())))
+            .filter(|d| !input.text.get(d.0 as usize..d.1 as usize).is_some_and(|raw| raw.contains("@file") || raw.contains("@module")))
+            .map(|d| line_of(d.0));
         let stem = {
             let base = input.path.rsplit('/').next().unwrap_or(&input.path);
             let stem = base.split('.').next().unwrap_or(base);
@@ -207,7 +233,8 @@ pub fn parse(b: &mut Builder, inputs: Vec<JsInput>, resolver: &Resolver, diagnos
         let (dotted, package) = dotted(&input.path);
         let mut src = Source::new(input.text, input.file, &comment_lines);
         src.lang = lang;
-        headers.push(header(&src, first_code_line.min(src.text.lines().count() as u32 + 1)));
+        let header_end = first_code_line.min(statement_doc.unwrap_or(u32::MAX));
+        headers.push(header(&src, header_end.min(src.text.lines().count() as u32 + 1)));
         // React Server Components: where a module's code runs.
         let tags = directives
             .iter()

@@ -610,6 +610,24 @@ impl<'p> Index<'p> {
         }
     }
 
+    /// A member of a module: one of its names, or, for a JavaScript module
+    /// that exports one object (`module.exports = app`), that object's.
+    pub fn module_member(&self, m: usize, attr: &str) -> Ty {
+        let ty = self.sym_ty(m, attr, 0);
+        if ty != Ty::Unknown || !self.modules[m].lang.is_js() {
+            return ty;
+        }
+        let mut whole = self.sym_ty(m, "default", 0);
+        for _ in 0..4 {
+            match whole {
+                Ty::Module(next) => whole = self.sym_ty(next, "default", 0),
+                Ty::Class(c) | Ty::Inst(c) => return self.method(c, attr).map(Ty::Func).unwrap_or(Ty::Unknown),
+                _ => break,
+            }
+        }
+        Ty::Unknown
+    }
+
     pub fn method(&self, c: usize, name: &str) -> Option<usize> {
         self.method_depth(c, name, 0)
     }
@@ -669,7 +687,7 @@ impl<'p> Index<'p> {
                         let sub = format!("{}.{}", self.modules[m].dotted, attr);
                         match self.by_dotted.get(&sub) {
                             Some(&s) => Ty::Module(s),
-                            None => self.sym_ty(m, attr, 0),
+                            None => self.module_member(m, attr),
                         }
                     }
                     Ty::Ext(p) => Ty::Ext(format!("{p}.{attr}")),

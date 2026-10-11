@@ -28,6 +28,101 @@ pub fn dotted(e: &Expr) -> Option<String> {
 /// about `items`.
 const WRAPPERS: &[&str] = &["len", "int", "float", "str", "bool", "list", "tuple", "set", "frozenset", "sorted", "reversed", "repr", "abs", "round", "iter", "next", "enumerate", "any", "all", "type", "id", "bytes"];
 
+/// Shortens code known only as text by eliding the contents of bracketed
+/// groups, deepest first, then longest, until it fits:
+/// `{ [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] }` →
+/// `{ [K in keyof T as `…`]: () => T[K] }`. `None` if no elision fits.
+fn elide_groups(text: &str, max: usize) -> Option<String> {
+    let mut s: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    loop {
+        if s.chars().count() <= max {
+            return Some(s);
+        }
+        let chars: Vec<char> = s.chars().collect();
+        // (open, close, depth) of each group whose contents are not yet elided.
+        let mut groups: Vec<(usize, usize, usize)> = vec![];
+        let mut stack: Vec<(char, usize)> = vec![];
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            let prev = if i > 0 { chars[i - 1] } else { ' ' };
+            let in_template = stack.last().is_some_and(|t| t.0 == '`');
+            match c {
+                '\'' | '"' if !in_template => {
+                    // Skip a quoted literal.
+                    let close = chars[i + 1..].iter().position(|&x| x == c).map(|p| i + 1 + p).unwrap_or(chars.len() - 1);
+                    i = close + 1;
+                    continue;
+                }
+                '`' if in_template => {
+                    let (_, open) = stack.pop().unwrap();
+                    groups.push((open, i, stack.len() + 1));
+                }
+                '`' => stack.push(('`', i)),
+                '$' if in_template && chars.get(i + 1) == Some(&'{') => {
+                    stack.push(('{', i + 1));
+                    i += 2;
+                    continue;
+                }
+                '(' | '[' | '{' => stack.push((c, i)),
+                '<' if prev.is_alphanumeric() || prev == '_' => stack.push(('<', i)),
+                ')' | ']' | '}' | '>' => {
+                    let opener = match c {
+                        ')' => '(',
+                        ']' => '[',
+                        '}' => '{',
+                        _ => '<',
+                    };
+                    // `=>` is an arrow, not a closing bracket.
+                    if c == '>' && (prev == '=' || stack.last().is_none_or(|t| t.0 != '<')) {
+                        i += 1;
+                        continue;
+                    }
+                    if let Some(pos) = stack.iter().rposition(|t| t.0 == opener) {
+                        stack.truncate(pos + 1);
+                        let (_, open) = stack.pop().unwrap();
+                        groups.push((open, i, stack.len() + 1));
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        // Only groups whose elision shortens the text.
+        let best = groups.iter().filter(|g| g.1 - g.0 > 2).max_by_key(|g| (g.2, g.1 - g.0));
+        match best {
+            Some(&(open, close, _)) => s = chars[..=open].iter().collect::<String>() + "…" + &chars[close..].iter().collect::<String>(),
+            // `T | Ref<T> | ShallowRef<T> | …`, `T extends U ? …`: whole leading parts.
+            None => return top_level_prefix(&chars, &groups, max),
+        }
+    }
+}
+
+/// The longest run of whole top-level parts (split at ` | `, ` & `, ` ? `,
+/// ` : ` or `, `) that fits with a trailing `…`.
+fn top_level_prefix(chars: &[char], groups: &[(usize, usize, usize)], max: usize) -> Option<String> {
+    let nested = |i: usize| groups.iter().any(|g| g.0 < i && i < g.1);
+    let text: String = chars.iter().collect();
+    let mut best: Option<String> = None;
+    for (i, _) in chars.iter().enumerate() {
+        let rest: String = chars[i..].iter().take(3).collect();
+        let sep = match rest.as_str() {
+            " | " | " & " | " ? " | " : " => rest.trim().to_string(),
+            r if r.starts_with(", ") => ",".to_string(),
+            _ => continue,
+        };
+        if nested(i) {
+            continue;
+        }
+        let head: String = text.chars().take(i).collect();
+        let candidate = if sep == "," { format!("{head}, …") } else { format!("{head} {sep} …") };
+        if candidate.chars().count() <= max {
+            best = Some(candidate);
+        }
+    }
+    best
+}
+
 fn string_value(e: &Expr) -> Option<String> {
     match e {
         Expr::StringLiteral(s) => Some(s.value.clone()),
@@ -262,6 +357,8 @@ impl<'a> Namer<'a> {
                 Step::Map { over, .. } => format!("each of {over}"),
                 _ => "…".into(),
             },
+            // Kept as text (TypeScript types): elide by its brackets.
+            Expr::Other(_) => elide_groups(&text, max).unwrap_or_else(|| "…".into()),
             _ => "…".into(),
         }
     }
@@ -465,3 +562,21 @@ impl<'a> Namer<'a> {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::elide_groups;
+
+    #[test]
+    fn elides_types_by_their_brackets() {
+        let mapped = "{ [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] }";
+        assert_eq!(elide_groups(mapped, 40).as_deref(), Some("{ [K in keyof T as `…`]: () => T[K] }"));
+        assert_eq!(elide_groups("Ref<T, S> & { [ShallowRefMarker]?: true }", 30).as_deref(), Some("Ref<T, S> & { […]?: true }"));
+        // Arrows and comparisons are not brackets.
+        assert_eq!(elide_groups("(value: string) => Promise<Map<string, number>>", 34).as_deref(), Some("(value: string) => Promise<Map<…>>"));
+        assert_eq!(elide_groups("a_very_long_identifier_without_any_groups", 10), None);
+        // Unions and conditionals keep whole leading parts.
+        assert_eq!(elide_groups("T | Ref<T> | ShallowRef<T> | WritableComputedRef<T>", 40).as_deref(), Some("T | Ref<T> | ShallowRef<T> | …"));
+        assert_eq!(elide_groups("T extends readonly any[] ? number extends T['length'] ? `${number}` : never : never", 40).as_deref(), Some("T extends readonly any[] ? …"));
+    }
+}

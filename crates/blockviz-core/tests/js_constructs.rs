@@ -425,8 +425,133 @@ export class Store {
 "#,
     )]);
     assert_eq!(find(&s, "isRef").doc, "Checks if a value is a ref object.");
+    // A file's description is neither its licence nor its first statement's documentation.
+    let s2 = analyze(&[
+        ("lib/router.js", "/*!\n * router\n * Copyright(c) 2013 Roman Shtylman\n * MIT Licensed\n */\n\n/**\n * Module dependencies.\n */\nvar debug = require('debug');\nexports.route = function route(path) { debug(path); };\n"),
+        ("lib/util.js", "/**\n * @file Helpers shared by the router.\n */\n\nexports.noop = function noop() {};\n"),
+        ("lib/first.js", "/** Parses a path. */\nexport function parse(p) { return p.split('/'); }\n"),
+    ]);
+    let doc = |t: &str| s2.nodes.iter().find(|n| n.kind == Kind::File && n.title.ends_with(t)).unwrap().doc.clone();
+    assert_eq!(doc("router.js"), "");
+    assert_eq!(doc("util.js"), "Helpers shared by the router.");
+    assert_eq!(doc("first.js"), "");
+    assert_eq!(find(&s2, "parse").doc, "Parses a path.");
     assert_eq!(find(&s, "RefImpl").doc, "");
     // Overload signatures are one method.
     let store = find(&s, "Store");
     assert_eq!(descendants(&s, store).iter().filter(|n| n.title == "get").count(), 1);
+}
+
+#[test]
+fn objects_and_prototypes_own_their_functions() {
+    let s = analyze(&[
+        (
+            "app.js",
+            r#"
+var http = require('node:http');
+var View = require('./view');
+
+/** Application prototype. */
+var app = exports = module.exports = {};
+
+app.init = function init() {
+  this.settings = {};
+  this.defaultConfiguration();
+};
+
+app.defaultConfiguration = function defaultConfiguration() {
+  this.set('etag', 'weak');
+};
+
+app.set = function set(setting, val) {
+  this.settings[setting] = val;
+  return this;
+};
+
+app.render = function render(name, options, callback) {
+  var view = new View(name, { root: this.get('views') });
+  view.render(options, callback);
+};
+
+app.listen = function listen() {
+  var server = http.createServer(this);
+  return server.listen.apply(server, arguments);
+};
+"#,
+        ),
+        (
+            "view.js",
+            r#"
+var fs = require('node:fs');
+var path = require('node:path');
+
+module.exports = View;
+
+/** A view to render. */
+function View(name, options) {
+  this.name = name;
+  this.root = options.root;
+  this.path = this.lookup(name);
+}
+
+View.prototype.lookup = function lookup(name) {
+  return this.resolve(this.root, name);
+};
+
+View.prototype.render = function render(options, callback) {
+  fs.readFile(this.path, 'utf8', callback);
+};
+
+View.prototype.resolve = function resolve(dir, file) {
+  return path.join(dir, file);
+};
+
+View.cache = function cache() { return {}; };
+"#,
+        ),
+        (
+            "api.ts",
+            r#"
+export const api = {
+  base: '/api',
+  async getUser(id: string) { return this.request(`/users/${id}`); },
+  saveUser: async (u: { id: string }) => fetch('/users', { method: 'POST', body: JSON.stringify(u) }),
+  request(url: string) { return fetch(this.base + url).then((r) => r.json()); },
+};
+export const style = { color: 'red', width: 3 };
+"#,
+        ),
+        ("server.js", "var app = require('./app');\napp.init();\napp.listen(3000);\n"),
+    ]);
+    let method = |owner: &str, name: &str| {
+        let o = s.nodes.iter().find(|n| n.kind == Kind::Class && n.title == owner).unwrap_or_else(|| panic!("no {owner}"));
+        o.children.iter().map(|&c| &s.nodes[c as usize]).find(|n| n.kind == Kind::Function && n.title == name).unwrap_or_else(|| panic!("no {owner}.{name}"))
+    };
+    // An object with functions attached is one thing; `this` inside them is it.
+    let app = find(&s, "app");
+    assert_eq!((app.kind, app.subtitle.as_str(), app.doc.as_str()), (Kind::Class, "object", "Application prototype."));
+    let init = method("app", "init");
+    assert!(descendants(&s, init).iter().any(|n| n.title == "defaultConfiguration" && n.reference == Some(method("app", "defaultConfiguration").id)));
+    assert!(descendants(&s, method("app", "defaultConfiguration")).iter().any(|n| n.title == "set" && n.reference == Some(method("app", "set").id)));
+    assert!(!method("app", "listen").badges.contains(&"static".to_string()));
+    // Defining `listen` does not make the library an app; calling it does.
+    let file = |t: &str| s.nodes.iter().find(|n| n.kind == Kind::File && n.title == t).unwrap();
+    assert!(!file("app.js").badges.contains(&"entry point".to_string()));
+    let server = file("server.js");
+    assert!(descendants(&s, server).iter().any(|n| n.title == "listen" && n.reference == Some(method("app", "listen").id)));
+    // A constructor function with prototype methods is a class.
+    let view = find(&s, "View");
+    assert_eq!(view.kind, Kind::Class);
+    assert_eq!(view.doc, "A view to render.");
+    let ctor = method("View", "constructor");
+    assert_eq!((ctor.subtitle.as_str(), ctor.doc.as_str()), ("(name, options)", ""));
+    assert!(descendants(&s, ctor).iter().any(|n| n.reference == Some(method("View", "lookup").id)));
+    assert!(descendants(&s, method("View", "lookup")).iter().any(|n| n.reference == Some(method("View", "resolve").id)));
+    assert!(method("View", "cache").badges.contains(&"static".to_string()));
+    let render = method("app", "render");
+    assert!(descendants(&s, render).iter().any(|n| n.kind == Kind::Call && n.link == Some(view.id)), "new View(…) constructs the class");
+    // An object literal of methods, arrows included; a literal of values stays data.
+    assert!(descendants(&s, method("api", "getUser")).iter().any(|n| n.reference == Some(method("api", "request").id)));
+    assert_eq!(method("api", "saveUser").inputs, ["u"]);
+    assert_eq!(find(&s, "style").kind, Kind::Table);
 }

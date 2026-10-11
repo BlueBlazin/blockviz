@@ -60,7 +60,8 @@ The goal is blocks a reader would name, not a syntax tree.
 
 The same rules apply, read through JavaScript's idioms.
 
-* Functions are functions in every spelling: `function f()`, `const f = () => …`, `exports.f = function …`, class methods, getters and setters (tagged). A wrapped function (`catchAsync(async (req, res) => …)`, `memo(Card)`) is the function it wraps, tagged with the wrapper. A function that returns a function draws the returned one inside it.
+* Functions are functions in every spelling: `function f()`, `const f = () => …`, `exports.f = function …`, class methods, getters and setters (tagged).
+* Objects that own functions are drawn like classes, and `this` inside their functions is the object: a constructor function with prototype methods (`function View() {}`, `View.prototype.render = …`), an object with functions attached (`var app = {}`, `app.listen = function …`, or `Object.create(proto)`), and an object literal of methods. Calling into a module that exports such an object (`require("./app").listen()`) reaches its function. A wrapped function (`catchAsync(async (req, res) => …)`, `memo(Card)`) is the function it wraps, tagged with the wrapper. A function that returns a function draws the returned one inside it.
 * A function handed to a call is drawn inside that call: `router.get("/:id", …)` is the endpoint `GET /v1/users/:id` (mount prefixes from `app.use("/v1/users", router)` included), `addEventListener("click", …)` is `click`. Short arrows registered under a name count too.
 * Promise chains pass values on the way `await` does: `fetch(url).then(r => r.json()).then(onData)` is `fetch → onData`, with no block for the chain.
 * Blocks inside callbacks say when they run: `each` for `map`, `forEach` and `filter`; `on click` for an `onClick` handler, even inside a list.
@@ -118,4 +119,4 @@ JavaScript and TypeScript are parsed by [oxc](https://github.com/oxc-project/oxc
 
 ## Limits
 
-This is static analysis: arrows show likely dataflow and dependencies, not a runtime trace. Dynamic dispatch, code passed through strings and monkey-patching are invisible. In JavaScript, `this` is known inside classes but not inside functions attached to a plain object (`app.init = function () { this.set(…) }`), and TypeScript types are read only as far as naming a class. Very large repositories work but get heavy in the browser (the full CPython standard library, about 330k lines, produces a 64 MB scene).
+This is static analysis: arrows show likely dataflow and dependencies, not a runtime trace. Dynamic dispatch, code passed through strings and monkey-patching are invisible. TypeScript types are read only as far as naming a class; longer types are shown elided by their brackets (`{ [K in keyof T as `…`]: () => T[K] }`). Very large repositories work but get heavy in the browser (the full CPython standard library, about 330k lines, produces a 64 MB scene).

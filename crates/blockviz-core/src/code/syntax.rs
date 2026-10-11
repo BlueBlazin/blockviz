@@ -552,6 +552,8 @@ pub enum ClassKind {
     Enum,
     /// A TypeScript namespace: functions and constants grouped under a name.
     Namespace,
+    /// A JavaScript object that owns functions (`var app = {}; app.listen = …`).
+    Object,
 }
 
 #[derive(Clone, Debug)]
