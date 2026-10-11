@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/blockviz-core"]
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true

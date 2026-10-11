@@ -1,0 +1,27 @@
+{
+  "name": "blockviz",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "wasm": "wasm-pack build crates/blockviz-core --target web --out-dir ../../src/wasm --release",
+    "build": "npm run wasm && npm run build:web",
+    "build:web": "tsc -b && vite build",
+    "test": "vitest run && cargo test --workspace",
+    "preview": "vite preview --host 127.0.0.1",
+    "cli": "cargo run --release --bin blockviz --"
+  },
+  "dependencies": {
+    "lucide-react": "^1.55.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^4.1.11"
+  }
+}
