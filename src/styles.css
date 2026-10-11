@@ -176,7 +176,6 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .open-options button:hover { background: var(--hover); border-color: var(--line-strong); color: var(--ink); }
 .open-options strong { display: block; color: var(--ink); font-weight: 600; font-size: 12.5px; }
 .open-options small { display: block; color: var(--faint); font-size: 11.5px; margin-top: 1px; }
-.py-mark { font: 700 10px var(--mono); border: 1.4px solid currentColor; border-radius: 4px; padding: 1px 3px; }
 .paste { display: grid; gap: 8px; margin-top: 12px; }
 .paste input, .paste textarea { border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; font: 12.5px var(--mono); outline: none; }
 .paste textarea { min-height: 200px; resize: vertical; }

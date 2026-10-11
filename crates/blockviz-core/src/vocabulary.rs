@@ -108,6 +108,12 @@ fn ml_word(w: &str) -> Option<&'static str> {
 /// content (its size, shape, type or existence), and clock readings. Their
 /// results are metadata and their inputs are used only for that property, so
 /// those edges are drawn lightly, with settings.
+/// Attributes that are a property of a value rather than its content:
+/// `x.shape`, `x.device`, `items.length`.
+pub fn is_metadata_attr(name: &str) -> bool {
+    matches!(name, "shape" | "ndim" | "dtype" | "device" | "is_cuda" | "size" | "length" | "byteLength" | "itemsize" | "nbytes")
+}
+
 pub fn is_metadata(name: &str) -> bool {
     matches!(
         name,
@@ -120,6 +126,11 @@ pub fn is_metadata(name: &str) -> bool {
 const DB_VERBS: &[&str] = &[
     "execute", "executemany", "executescript", "commit", "rollback", "add", "add_all", "delete", "merge", "flush", "refresh", "query", "get", "exec", "scalar", "scalars", "fetchone", "fetchall", "fetchmany", "filter", "filter_by", "exclude", "all", "first", "create", "get_or_create", "update_or_create", "bulk_create", "bulk_update", "update", "insert_one", "insert_many", "find", "find_one", "update_one", "update_many", "delete_one", "delete_many", "aggregate", "count", "values", "values_list", "order_by", "select_related", "prefetch_related", "annotate", "findMany", "findUnique", "findFirst", "upsert", "insert", "select", "where",
 ];
+
+/// Methods that query or change a database (or an ORM model).
+pub fn is_database_verb(method: &str) -> bool {
+    DB_VERBS.contains(&method) || matches!(method, "save" | "remove" | "deleteOne" | "deleteMany" | "updateOne" | "updateMany" | "findOne" | "findById" | "findByIdAndUpdate" | "findByIdAndDelete" | "findOneAndUpdate" | "findOneAndDelete" | "countDocuments" | "insertMany" | "paginate" | "populate" | "findUnique" | "findFirst" | "findMany" | "createMany" | "upsert" | "transaction" | "raw" | "aggregate" | "bulkWrite")
+}
 
 /// A database call by the shape of its receiver (`session.commit()`,
 /// `Item.objects.filter()`, `conn.execute()`). Only meaningful in modules that

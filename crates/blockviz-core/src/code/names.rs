@@ -129,7 +129,11 @@ impl<'a> Namer<'a> {
             Expr::Name(_) => text,
             Expr::If(x) => {
                 let third = max.saturating_sub(10) / 3;
-                format!("{} if {} else {}", self.code(&x.body, third), self.code(&x.test, third), self.code(&x.orelse, third))
+                if self.src.lang.is_js() {
+                    format!("{} ? {} : {}", self.code(&x.test, third), self.code(&x.body, third), self.code(&x.orelse, third))
+                } else {
+                    format!("{} if {} else {}", self.code(&x.body, third), self.code(&x.test, third), self.code(&x.orelse, third))
+                }
             }
             Expr::Slice(_) => "…".into(),
             Expr::BoolOp(b) => {
@@ -172,6 +176,18 @@ impl<'a> Namer<'a> {
                 let left = self.code(&b.left, max.saturating_sub(4) / 2);
                 let right = self.code(&b.right, max.saturating_sub(len(&left) + 3));
                 format!("{left} {} {right}", b.op.as_str())
+            }
+            // `<Spinner …/>`, `<div>…</div>`
+            Expr::Call(c) if c.kind == ast::CallKind::Jsx => {
+                let tag = match &*c.func {
+                    Expr::StringLiteral(s) => s.value.clone(),
+                    f => dotted(f).unwrap_or_else(|| self.brief(f)),
+                };
+                if c.arguments.args.is_empty() {
+                    format!("<{tag} …/>")
+                } else {
+                    format!("<{tag}>…</{tag}>")
+                }
             }
             Expr::Call(c) => {
                 let func = self.code(&c.func, max.saturating_sub(3));
@@ -323,6 +339,7 @@ impl<'a> Namer<'a> {
 
     /// What kind of step an expression is.
     pub fn step(&self, e: &Expr) -> Step {
+        let js = self.src.lang.is_js();
         let mut subjects = vec![];
         if let Some(template) = self.template(e) {
             return Step::Format { template };
@@ -356,9 +373,10 @@ impl<'a> Namer<'a> {
                 }
                 Step::Choose { subjects }
             }
-            Expr::Dict(d) => Step::Pack { kind: Collection::Map, keys: d.items.iter().filter_map(|i| i.key.as_ref().and_then(string_value)).collect() },
+            Expr::Dict(d) => Step::Pack { kind: if js { Collection::Object } else { Collection::Map }, keys: d.items.iter().filter_map(|i| i.key.as_ref().and_then(string_value)).collect() },
             Expr::List(ast::ExprSeq { elts, .. }) | Expr::Tuple(ast::ExprSeq { elts, .. }) | Expr::Set(ast::ExprSeq { elts, .. }) => {
                 let kind = match e {
+                    Expr::List(_) if js => Collection::Array,
                     Expr::List(_) => Collection::List,
                     Expr::Set(_) => Collection::Set,
                     _ => Collection::Tuple,
@@ -389,6 +407,15 @@ impl<'a> Namer<'a> {
         let mut cur = e;
         let receiver = loop {
             match cur {
+                // `<section>…</section>`: an element is named by its tag.
+                Expr::Call(c) if c.kind == ast::CallKind::Jsx => {
+                    let tag = match &*c.func {
+                        Expr::StringLiteral(s) => s.value.clone(),
+                        f => dotted(f).unwrap_or_else(|| self.brief(f)),
+                    };
+                    names.push(format!("<{tag}>"));
+                    break None;
+                }
                 Expr::Call(c) if std::ptr::eq(cur, e) || !(self.is_block)(c) => match &*c.func {
                     Expr::Attribute(a) => {
                         names.push(a.attr.to_string());

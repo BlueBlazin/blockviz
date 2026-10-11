@@ -1,6 +1,7 @@
 import type { InputFile, Project } from './types';
 
-const IGNORED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.idea', '.vscode', '.ipynb_checkpoints', 'dist', 'build', 'target', '.next', '.cache', 'site-packages', '.eggs']);
+// Keep in step with `IGNORED_DIRS` in crates/blockviz-core/src/project.rs.
+const IGNORED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.idea', '.vscode', '.ipynb_checkpoints', 'dist', 'build', 'target', '.next', '.cache', 'site-packages', '.eggs', '.turbo', '.nuxt', '.svelte-kit', '.output', '.vercel', '.parcel-cache', '.yarn', 'bower_components', 'storybook-static']);
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|tiff?|pdf|zip|tar|gz|tgz|7z|bz2|xz|pt|pth|bin|ckpt|safetensors|onnx|h5|pkl|npy|npz|parquet|arrow|mp3|wav|flac|ogg|mp4|mov|webm|ttf|otf|woff2?|so|dylib|dll|exe|o|a|class|jar|pyc|db|sqlite)$/i;
 const MAX_FILE = 2_000_000;
 const MAX_FILES = 4000;
@@ -124,6 +125,18 @@ export async function githubProject(input: string, progress: Progress): Promise<
 }
 
 export function pastedProject(filename: string, text: string): Project {
-  const name = filename.trim() || 'untitled.py';
-  return { name: name.replace(/\.py$/, ''), files: [{ path: name, text, bytes: text.length }], source: 'pasted code' };
+  const name = filename.trim() || guessFilename(text);
+  return { name: name.replace(/\.[^./]+$/, ''), files: [{ path: name, text, bytes: text.length }], source: 'pasted code' };
+}
+
+/** A file name for pasted code, by what the code looks like: Python unless it
+ *  uses JavaScript's syntax, TypeScript if it has type annotations, JSX if it
+ *  returns elements. */
+export function guessFilename(text: string): string {
+  const python = /^\s*(def \w+\(|class \w+(\(.*\))?:\s*$|from [\w.]+ import |import [\w.]+(\s+as \w+)?\s*$|if __name__ ==)/m.test(text);
+  const js = /^\s*(import\s[^\n]*from\s*['"]|import\s+['"]|export\s|const\s|let\s|var\s|function\*?\s|module\.exports|(async\s+)?function\s)|=>|\brequire\(['"]/m.test(text);
+  if (!js || (python && !/[;{}]\s*$/m.test(text))) return 'main.py';
+  const ts = /^\s*(export\s+)?(interface|type|enum|namespace)\s+\w+|\)\s*:\s*[\w<[{]|\b(let|const)\s+\w+\s*:\s*\w|\bas const\b|\bimplements\s/m.test(text);
+  const jsx = /return\s*\(?\s*<[A-Za-z>]|=>\s*\(?\s*<[A-Za-z>]|<\/[A-Za-z][\w.]*>|<[A-Z][\w.]*[^>]*\/>/.test(text);
+  return `main.${ts ? 'ts' : 'js'}${jsx ? 'x' : ''}`;
 }

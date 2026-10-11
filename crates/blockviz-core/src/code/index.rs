@@ -25,6 +25,8 @@ pub struct Module {
     pub ast: Vec<Stmt>,
     pub notebook: bool,
     pub lang: Lang,
+    /// Badges the front end found (`client` for a React "use client" module).
+    pub tags: Vec<String>,
     /// First syntax error (the parser recovered and the tree is still usable).
     pub error: Option<String>,
 }
@@ -152,7 +154,14 @@ pub struct FuncInfo<'p> {
 
 pub struct Index<'p> {
     pub modules: &'p [Module],
+    /// Python modules by dotted name.
     pub by_dotted: HashMap<String, usize>,
+    /// Every module by repository path.
+    pub by_path: HashMap<String, usize>,
+    /// Modules whose names a module re-exports wholesale (`export * from "./x"`).
+    pub stars: Vec<Vec<usize>>,
+    /// Non-code project files a module imports (`import "./styles.css"`).
+    pub assets: Vec<Vec<String>>,
     pub syms: Vec<HashMap<String, Sym>>,
     pub classes: Vec<ClassInfo<'p>>,
     pub funcs: Vec<FuncInfo<'p>>,
@@ -191,6 +200,11 @@ pub fn is_builtin(name: &str) -> bool {
     BUILTINS.contains(&name)
 }
 
+/// JavaScript globals of browsers and Node: library calls, not project code.
+pub const JS_GLOBALS: &[&str] = &[
+    "console", "process", "fetch", "JSON", "Math", "Object", "Array", "Promise", "Number", "String", "Boolean", "Symbol", "Date", "RegExp", "Error", "TypeError", "RangeError", "SyntaxError", "Map", "Set", "WeakMap", "WeakSet", "Reflect", "Proxy", "Intl", "URL", "URLSearchParams", "Buffer", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "queueMicrotask", "structuredClone", "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI", "atob", "btoa", "document", "window", "globalThis", "navigator", "location", "history", "localStorage", "sessionStorage", "crypto", "performance", "require", "module", "exports", "__dirname", "__filename", "AbortController", "Headers", "Request", "Response", "FormData", "Blob", "File", "FileReader", "WebSocket", "EventSource", "TextEncoder", "TextDecoder", "Uint8Array", "ArrayBuffer", "BigInt", "alert", "confirm", "requestAnimationFrame", "addEventListener", "removeEventListener", "Event", "CustomEvent", "MutationObserver", "IntersectionObserver", "ResizeObserver", "Worker",
+];
+
 /// Last segment of a count expression: `config.n_layer` → `n_layer`.
 pub fn count_text(e: &str) -> String {
     let s = squash(e);
@@ -202,12 +216,16 @@ impl<'p> Index<'p> {
     /// Builds symbols for all modules. `alloc` creates a detached IR node for each definition.
     pub fn build(modules: &'p [Module], mut alloc: impl FnMut(&str, bool) -> Id) -> Self {
         let mut by_dotted = HashMap::new();
-        for (i, m) in modules.iter().enumerate() {
+        for (i, m) in modules.iter().enumerate().filter(|(_, m)| m.lang == Lang::Python) {
             by_dotted.insert(m.dotted.clone(), i);
         }
+        let by_path = modules.iter().enumerate().map(|(i, m)| (m.path.clone(), i)).collect();
         let mut ix = Index {
             modules,
             by_dotted,
+            by_path,
+            stars: vec![vec![]; modules.len()],
+            assets: vec![vec![]; modules.len()],
             syms: vec![HashMap::new(); modules.len()],
             classes: vec![],
             funcs: vec![],
@@ -223,6 +241,9 @@ impl<'p> Index<'p> {
         for (mi, m) in modules.iter().enumerate() {
             ix.collect_imports(mi, &m.ast, true);
         }
+        for (mi, m) in modules.iter().enumerate() {
+            ix.collect_exports(mi, &m.ast);
+        }
         for c in 0..ix.classes.len() {
             let def = ix.classes[c].def;
             let m = ix.classes[c].module;
@@ -232,6 +253,29 @@ impl<'p> Index<'p> {
         for c in 0..ix.classes.len() {
             let fields = ix.infer_fields(c);
             ix.classes[c].fields = fields;
+        }
+        // Objects a module creates once (`const users = new UsersService()`) are
+        // known everywhere in it, including in functions written above them.
+        for (mi, m) in modules.iter().enumerate() {
+            let mut seen: HashMap<&str, usize> = HashMap::new();
+            for s in &m.ast {
+                if let Stmt::Assign(a) = s {
+                    if let [Expr::Name(n)] = &a.targets[..] {
+                        *seen.entry(n.id.as_str()).or_default() += 1;
+                    }
+                }
+            }
+            for s in &m.ast {
+                let Stmt::Assign(a) = s else { continue };
+                let [Expr::Name(n)] = &a.targets[..] else { continue };
+                if seen[n.id.as_str()] != 1 || !matches!(&*a.value, Expr::Call(_)) {
+                    continue;
+                }
+                let ty = ix.infer(mi, &a.value, &NoLocals);
+                if matches!(ty, Ty::Inst(_) | Ty::ExtInst(_)) {
+                    ix.var_types.borrow_mut().insert((mi, n.id.clone()), ty);
+                }
+            }
         }
         ix
     }
@@ -315,7 +359,11 @@ impl<'p> Index<'p> {
             matches!(tail, "NamedTuple" | "TypedDict" | "BaseModel" | "Enum" | "IntEnum" | "StrEnum" | "BaseSettings")
         });
         let behaviour = methods.iter().any(|(n, _)| !n.starts_with("__"));
-        self.classes[cid].data = (data_decorator || data_base) && !behaviour;
+        // TypeScript interfaces and enums describe data, as does a JavaScript
+        // class of field declarations only (a DTO).
+        let fields_only = self.modules[mi].lang.is_js() && methods.is_empty() && c.body.iter().any(|s| matches!(s, Stmt::AnnAssign(_) | Stmt::Assign(_)));
+        let declared = matches!(c.kind, ast::ClassKind::Interface | ast::ClassKind::Enum) || fields_only;
+        self.classes[cid].data = declared || (data_decorator || data_base) && !behaviour;
         self.classes[cid].methods = methods;
         cid
     }
@@ -323,6 +371,11 @@ impl<'p> Index<'p> {
     fn collect_imports(&mut self, mi: usize, body: &'p [Stmt], top: bool) {
         for s in body {
             match s {
+                Stmt::Import(x) if x.style == ast::ModuleStyle::Path => self.path_import(mi, x.resolved.as_deref(), &x.names[0].name, x.names.iter().map(|a| (None, a.asname.clone())).collect(), top),
+                Stmt::ImportFrom(x) if x.style == ast::ModuleStyle::Path => {
+                    let names = x.names.iter().map(|a| (Some(a.name.clone()), Some(a.asname.clone().unwrap_or_else(|| a.name.clone())))).collect();
+                    self.path_import(mi, x.resolved.as_deref(), x.module.as_deref().unwrap_or(""), names, top)
+                }
                 Stmt::Import(x) => {
                     for a in &x.names {
                         let full = a.name.to_string();
@@ -411,6 +464,75 @@ impl<'p> Index<'p> {
         }
     }
 
+    /// An import by path or package (JavaScript): `names` are (imported name,
+    /// local name); an imported name of `None` binds the whole module, `*`
+    /// re-exports it, and `default` is a default export.
+    fn path_import(&mut self, mi: usize, resolved: Option<&str>, spec: &str, names: Vec<(Option<String>, Option<String>)>, top: bool) {
+        let target = resolved.and_then(|p| self.by_path.get(p).copied());
+        if target.is_none() {
+            match resolved {
+                // A stylesheet, image or data file in the project.
+                Some(p) => {
+                    if !self.assets[mi].iter().any(|a| a == p) {
+                        self.assets[mi].push(p.to_string());
+                    }
+                }
+                None if !spec.starts_with('.') && !spec.starts_with('/') => {
+                    let (package, _) = crate::js::resolve::package_name(spec);
+                    self.externals[mi].insert(package.to_string());
+                }
+                None => {}
+            }
+        }
+        // A project file that is missing or is not code (`./data.json`) is
+        // known by its file name; a package by its specifier.
+        let relative = spec.starts_with('.') || spec.starts_with('/');
+        let spec = if relative { spec.rsplit('/').next().unwrap_or(spec).split('.').next().unwrap_or(spec) } else { spec };
+        let mut used = vec![];
+        for (imported, local) in names {
+            let sym = match (target, imported.as_deref()) {
+                (Some(t), None) => Sym::Module(t),
+                (Some(t), Some("*")) => {
+                    if !self.stars[mi].contains(&t) {
+                        self.stars[mi].push(t);
+                    }
+                    used.push("*".to_string());
+                    continue;
+                }
+                (Some(t), Some(name)) => {
+                    used.push(name.to_string());
+                    Sym::Member(t, name.to_string())
+                }
+                // A package's default export is the package itself.
+                (None, None | Some("default") | Some("*")) => Sym::Ext(spec.to_string()),
+                (None, Some(name)) => Sym::Ext(format!("{spec}.{name}")),
+            };
+            if let Some(local) = local {
+                if top || !self.syms[mi].contains_key(&local) {
+                    self.syms[mi].insert(local, sym);
+                }
+            }
+        }
+        if let Some(t) = target {
+            self.note_import(mi, t, used.into_iter().filter(|n| n != "*").collect());
+        }
+    }
+
+    /// `export { a as b }`, `export default x`: exported names refer to local ones.
+    fn collect_exports(&mut self, mi: usize, body: &[Stmt]) {
+        for s in body {
+            if let Stmt::Export(x) = s {
+                for (local, exported) in &x.names {
+                    if local != exported {
+                        if let Some(sym) = self.syms[mi].get(local).cloned() {
+                            self.syms[mi].entry(exported.clone()).or_insert(sym);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn note_import(&mut self, mi: usize, target: usize, names: Vec<String>) {
         if target == mi {
             return;
@@ -469,6 +591,20 @@ impl<'p> Index<'p> {
             Some(Sym::Ext(p)) => Ty::Ext(p.clone()),
             Some(Sym::Member(m, n)) => self.sym_ty(*m, n, depth + 1),
             Some(Sym::Var) => self.var_types.borrow().get(&(mi, name.to_string())).cloned().unwrap_or(Ty::Unknown),
+            None if self.modules[mi].lang.is_js() => {
+                // Names re-exported wholesale from another module.
+                if let Some(t) = self.stars[mi].iter().copied().find(|&t| self.syms[t].contains_key(name) || !self.stars[t].is_empty()) {
+                    let ty = self.sym_ty(t, name, depth + 1);
+                    if ty != Ty::Unknown {
+                        return ty;
+                    }
+                }
+                if JS_GLOBALS.contains(&name) {
+                    Ty::Ext(format!("globals.{name}"))
+                } else {
+                    Ty::Unknown
+                }
+            }
             None if is_builtin(name) => Ty::Ext(format!("builtins.{name}")),
             None => Ty::Unknown,
         }
@@ -692,6 +828,10 @@ impl<'p> Index<'p> {
         let mut fields: Vec<Field> = vec![];
         let mut methods: Vec<usize> = cls.methods.iter().map(|(_, f)| *f).collect();
         methods.sort_by_key(|&f| self.funcs[f].name != "__init__");
+        // JavaScript fields declared in the class body (`users = new Map()`).
+        if self.modules[mi].lang.is_js() {
+            self.collect_self_fields(mi, src, &cls.def.body, "this", &mut HashMap::new(), &mut fields);
+        }
         for f in methods {
             let def = self.funcs[f].def;
             let params = def.params();
@@ -729,9 +869,18 @@ impl<'p> Index<'p> {
                     }
                 }
                 Stmt::AnnAssign(a) => {
-                    if let (Expr::Attribute(attr), Some(v)) = (&*a.target, &a.value) {
+                    if let Expr::Attribute(attr) = &*a.target {
                         if matches!(&*attr.value, Expr::Name(n) if n.id.as_str() == this) && !fields.iter().any(|f| f.name == attr.attr.as_str()) {
-                            let ty = self.infer(mi, v, locals);
+                            // `this.users: UsersService = users`: the annotation types the field.
+                            let value = a.value.as_deref().map(|v| self.infer(mi, v, locals)).unwrap_or(Ty::Unknown);
+                            let ty = match value {
+                                Ty::Unknown => match self.infer(mi, &a.annotation, locals) {
+                                    Ty::Class(k) => Ty::Inst(k),
+                                    Ty::Ext(p) if self.modules[mi].lang.is_js() => Ty::ExtInst(p),
+                                    _ => Ty::Unknown,
+                                },
+                                t => t,
+                            };
                             fields.push(Field { name: attr.attr.to_string(), ty, ctor: String::new(), range: a.range });
                         }
                     }

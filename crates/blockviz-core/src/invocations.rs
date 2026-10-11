@@ -67,6 +67,17 @@ pub fn runs(lang: &str, path: &str, text: &str) -> Vec<Run> {
                     let cmds: Vec<String> = scripts.values().filter_map(|s| s.as_str().map(str::to_string)).collect();
                     script(&cmds, &mut out);
                 }
+                // Commands the package installs: `"bin": {"tool": "./bin/tool.js"}`.
+                let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
+                let bins: Vec<(String, String)> = match v.get("bin") {
+                    Some(serde_json::Value::String(p)) => vec![(name.clone(), p.clone())],
+                    Some(serde_json::Value::Object(m)) => m.iter().filter_map(|(k, p)| p.as_str().map(|p| (k.clone(), p.to_string()))).collect(),
+                    _ => vec![],
+                };
+                for (cmd, p) in bins {
+                    let p = p.trim_start_matches("./").to_string();
+                    out.push(Run { target: Target::Path(p), cwd: String::new(), label: format!("installs `{cmd}`"), command: cmd.clone(), summary: format!("command `{cmd}`") });
+                }
             }
         }
         "TOML" if base == "pyproject.toml" => console_scripts(text, &mut out),
@@ -238,7 +249,7 @@ fn program(words: &[String]) -> Option<Target> {
                 }
             }
             i += 1;
-        } else if matches!(w, "sudo" | "exec" | "time" | "nohup" | "env" | "nice" | "command" | "xvfb-run" | "stdbuf" | "caffeinate" | "npx" | "bunx") {
+        } else if matches!(w, "sudo" | "exec" | "time" | "nohup" | "env" | "nice" | "command" | "xvfb-run" | "stdbuf" | "caffeinate" | "npx" | "bunx" | "cross-env" | "env-cmd" | "dotenv") {
             i = after_options(words, i + 1, &["-u", "-n"]);
         } else if w == "timeout" {
             i = after_options(words, i + 1, &["-s", "-k"]) + 1;
@@ -291,7 +302,7 @@ fn program(words: &[String]) -> Option<Target> {
         let j = after_options(rest, 0, &["-c"]);
         return rest.get(j).filter(|w| !w.contains(' ')).map(|w| Target::Path(w.clone()));
     }
-    if matches!(name, "node" | "bun" | "deno" | "ts-node" | "tsx" | "esno") {
+    if matches!(name, "node" | "bun" | "deno" | "ts-node" | "tsx" | "esno" | "nodemon" | "node-dev" | "ts-node-dev" | "vite-node" | "jiti") {
         return first_with(&[".js", ".mjs", ".cjs", ".ts", ".mts"]);
     }
     if matches!(name, "uvicorn" | "gunicorn" | "hypercorn" | "daphne" | "granian") {

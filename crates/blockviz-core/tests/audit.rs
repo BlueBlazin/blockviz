@@ -20,7 +20,8 @@ fn load(dir: &Path, root: &Path, out: &mut Vec<blockviz_core::project::InFile>) 
 }
 
 fn scene(name: &str) -> (Scene, Vec<blockviz_core::project::InFile>) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corpus").join(name);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let root = if fixtures.join("corpus").join(name).exists() { fixtures.join("corpus").join(name) } else { fixtures.join("corpus-js").join(name) };
     let mut files = vec![];
     load(&root, &root, &mut files);
     let s = blockviz_core::analyze(name, files);
@@ -38,14 +39,18 @@ fn line(s: &Scene, files: &[blockviz_core::project::InFile], n: &blockviz_core::
 }
 
 fn codeish(t: &str) -> bool {
-    t.contains('…') || t.chars().any(|c| "()[]{}=<>+*/%\"'!".contains(c)) || t.contains(" and ") || t.contains(" or ") || t.contains(" if ") || t.contains(" not ")
+    // `<div>`, `<Dialog.Root>`: an element is named by its tag.
+    let tag = t.starts_with('<') && t.ends_with('>') && t[1..t.len() - 1].chars().all(|c| c.is_alphanumeric() || ".:-_".contains(c));
+    !tag && (t.contains('…') || t.chars().any(|c| "()[]{}=<>+*/%\"'!".contains(c)) || t.contains(" and ") || t.contains(" or ") || t.contains(" if ") || t.contains(" not "))
 }
 
 #[test]
 #[ignore]
 fn audit() {
     let only = std::env::var("AUDIT").ok();
-    for name in ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"] {
+    let python = ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"];
+    let javascript = ["express-api", "nextjs-app", "nestjs-cats", "react-vite", "ky", "serve", "turborepo-basic"];
+    for name in python.into_iter().chain(javascript) {
         if only.as_deref().is_some_and(|o| o != name) {
             continue;
         }

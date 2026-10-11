@@ -28,6 +28,8 @@ pub struct CodeFile {
     pub entry: bool,
     pub doc: String,
     pub imports: Vec<(u32, Vec<String>)>,
+    /// Project files that are not code it imports: stylesheets, data, images.
+    pub assets: Vec<String>,
     pub externals: BTreeSet<String>,
     pub error: Option<String>,
     /// Creates the application object a server or CLI runs (`app = FastAPI()`).
@@ -50,7 +52,7 @@ pub struct CodeResult {
 pub fn failed_file(b: &mut Builder, file: u32, path: &str, lang: Lang, notebook: bool, why: String) -> CodeFile {
     let node = b.add(None, if notebook { Kind::Notebook } else { Kind::File }, Shape::Box, path.rsplit('/').next().unwrap_or(path));
     b.get_mut(node).badges.push("too complex".into());
-    CodeFile { file, node, lang, entry: false, doc: String::new(), imports: vec![], externals: BTreeSet::new(), error: Some(why), app: false, handlers: vec![] }
+    CodeFile { file, node, lang, entry: false, doc: String::new(), imports: vec![], assets: vec![], externals: BTreeSet::new(), error: Some(why), app: false, handlers: vec![] }
 }
 
 /// Builds diagrams for every module. `headers` are the comment blocks that
@@ -70,6 +72,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
             if m.error.is_some() {
                 n.badges.push("syntax error".into());
             }
+            n.badges.extend(m.tags.iter().cloned());
             id
         })
         .collect();
@@ -87,8 +90,26 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
     // A module works in the domains of the libraries it imports, and of those
     // its project imports use (views that call a `db.py` work with a database).
     let direct: Vec<Domains> = ix.externals.iter().map(|ext| ext.iter().fold(Domains::default(), |d, e| d.union(vocabulary::library_domains(e)))).collect();
-    let domains: Vec<Domains> = (0..n).map(|mi| ix.imports[mi].iter().fold(direct[mi], |d, (t, _)| d.union(direct[*t]))).collect();
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), domains };
+    // Modules that only re-export (`index.js` barrels) pass their modules' domains through.
+    let barrel: Vec<bool> = modules.iter().map(|m| !m.ast.is_empty() && m.ast.iter().all(|s| matches!(s, syntax::Stmt::Import(_) | syntax::Stmt::ImportFrom(_) | syntax::Stmt::Export(_)))).collect();
+    let reach = |mi: usize| {
+        let mut d = direct[mi];
+        let mut stack: Vec<usize> = ix.imports[mi].iter().map(|(t, _)| *t).collect();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) || seen.len() > 64 {
+                continue;
+            }
+            d = d.union(direct[t]);
+            if barrel[t] {
+                stack.extend(ix.imports[t].iter().map(|(u, _)| *u));
+            }
+        }
+        d
+    };
+    let domains: Vec<Domains> = (0..n).map(reach).collect();
+    let mounts = frameworks::mounts(&modules, &ix);
+    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains };
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }
@@ -101,6 +122,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
             entry: cx.entry[mi],
             doc: cx.b.get(cx.file_nodes[mi]).doc.clone(),
             imports: cx.ix.imports[mi].iter().map(|(t, names)| (modules[*t].file, names.clone())).collect(),
+            assets: cx.ix.assets[mi].clone(),
             externals: cx.ix.externals[mi].clone(),
             error: m.error.clone(),
             app: cx.app[mi],

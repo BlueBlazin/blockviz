@@ -130,10 +130,21 @@ pub struct Arguments {
     pub keywords: Vec<Keyword>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallKind {
+    Call,
+    /// `new X(…)`.
+    New,
+    /// A JSX element: `func` is the component (or a string for an intrinsic
+    /// element like `div`), props are keywords and children are arguments.
+    Jsx,
+}
+
 #[derive(Clone, Debug)]
 pub struct ExprCall {
     pub func: Box<Expr>,
     pub arguments: Arguments,
+    pub kind: CallKind,
     pub range: TextRange,
 }
 
@@ -539,6 +550,8 @@ pub enum ClassKind {
     /// A TypeScript interface or object type: fields only.
     Interface,
     Enum,
+    /// A TypeScript namespace: functions and constants grouped under a name.
+    Namespace,
 }
 
 #[derive(Clone, Debug)]
@@ -673,6 +686,9 @@ pub enum ForKind {
     Of,
     /// JavaScript `for (const k in obj)`: over keys.
     Keys,
+    /// A counting loop, `for (let i = 0; i < n; i++)`: `target` is the counter
+    /// and `iter` the condition.
+    Count,
 }
 
 #[derive(Clone, Debug)]
@@ -728,9 +744,9 @@ pub struct StmtTry {
 
 #[derive(Clone, Debug)]
 pub struct MatchCase {
-    /// The pattern as written (`case {"k": v}`, `case 'GET':`); `None` for a
-    /// JavaScript `default:`.
-    pub pattern: Option<TextRange>,
+    /// The patterns as written (`case {"k": v}`; `case 'GET': case 'HEAD':`
+    /// sharing one body); empty for a JavaScript `default:`.
+    pub patterns: Vec<TextRange>,
     pub guard: Option<Box<Expr>>,
     pub body: Vec<Stmt>,
     pub range: TextRange,
@@ -765,6 +781,8 @@ pub enum ModuleStyle {
 pub struct StmtImport {
     pub names: Vec<Alias>,
     pub style: ModuleStyle,
+    /// The project file the module resolves to, when the front end resolved it.
+    pub resolved: Option<String>,
     pub range: TextRange,
 }
 
@@ -776,6 +794,8 @@ pub struct StmtImportFrom {
     pub names: Vec<Alias>,
     pub level: u32,
     pub style: ModuleStyle,
+    /// The project file the module resolves to, when the front end resolved it.
+    pub resolved: Option<String>,
     pub range: TextRange,
 }
 

@@ -11,7 +11,7 @@ npm run dev          # http://127.0.0.1:5173 (run `npm run wasm` once first)
 npm test             # vitest + cargo test
 ```
 
-Open a GitHub repository (`#github=owner/repo` in the URL works too), a local folder (picker or drag-and-drop), or paste a single file. The bundled example is [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) (MIT), which also serves as the main test fixture; `tests/corpus.rs` checks the abstractions on trimmed snapshots of a FastAPI app, httpx, nanochat, Flask, a Django site and HTTPie, and `cargo test --test audit -- --ignored --nocapture` reports the blocks most likely to read badly (code-like titles, guard tags, empty branch arms).
+Open a GitHub repository (`#github=owner/repo` in the URL works too), a local folder (picker or drag-and-drop), or paste a single file. The bundled example is [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) (MIT), which also serves as the main test fixture. `tests/corpus.rs` checks the abstractions on trimmed snapshots of a FastAPI app, httpx, nanochat, Flask, a Django site and HTTPie; `tests/corpus_js.rs` does the same for an Express API, a Next.js app, a NestJS service, a React/Vite app, ky, serve and a Turborepo workspace. `cargo test --test audit -- --ignored --nocapture` reports the blocks most likely to read badly (code-like titles, guard tags, empty branch arms) across both corpora.
 
 A command-line view of the same analysis helps when tuning abstractions:
 
@@ -56,9 +56,24 @@ The goal is blocks a reader would name, not a syntax tree.
 * Database access (sessions, cursors, ORM managers) is marked as I/O, ORM models are tagged as tables, and views link to the templates they render.
 * Meanings guessed from names apply only where the code shows the domain: architecture-figure colours (attention, norm, linear…) in modules that import an ML framework, database access in modules that use a database library (directly or through a project module). Names match by whole words from the head noun back, so `attn_dropout` is a dropout and `headers` is not a projection head.
 
+### JavaScript and TypeScript
+
+The same rules apply, read through JavaScript's idioms.
+
+* Functions are functions in every spelling: `function f()`, `const f = () => …`, `exports.f = function …`, class methods, getters and setters (tagged). A wrapped function (`catchAsync(async (req, res) => …)`, `memo(Card)`) is the function it wraps, tagged with the wrapper. A function that returns a function draws the returned one inside it.
+* A function handed to a call is drawn inside that call: `router.get("/:id", …)` is the endpoint `GET /v1/users/:id` (mount prefixes from `app.use("/v1/users", router)` included), `addEventListener("click", …)` is `click`. Short arrows registered under a name count too.
+* Promise chains pass values on the way `await` does: `fetch(url).then(r => r.json()).then(onData)` is `fetch → onData`, with no block for the chain.
+* Blocks inside callbacks say when they run: `each` for `map`, `forEach` and `filter`; `on click` for an `onClick` handler, even inside a list.
+* React: a capitalised function that returns JSX is a component and `useX` is a hook; elements are named by tag (`<Dialog.Root>`) and library elements given only literal props are decoration; `"use client"` modules are tagged. Next.js files get their roles (page, layout, route handler), NestJS controllers their `@Controller` prefixes, and Express apps their route tables.
+* Schemas (zod, yup, joi, valibot, TypeBox, Mongoose) and DTO classes are tables of fields; interfaces, enums and type aliases are data; a namespace groups its functions; overload signatures are one function.
+* Imports resolve the way bundlers and `tsc` do: `tsconfig`/`jsconfig` paths, `baseUrl` and `extends`, the `@/` alias, workspace packages by name, `.js` specifiers that name `.ts` files, `index` files, `require()` and `import()`. Node builtins are not listed as packages, and stylesheet imports link to their files.
+* Database access is found by where an object comes from: a model defined next to Mongoose, a query through a service that extends `PrismaClient`.
+* An object a module creates once (`const users = new UsersService()`) is known in every function of that module, including those written above it.
+* Python's words are not used for JavaScript: `switch`, `catch`, `this`, objects and arrays.
+
 ### Other languages
 
-Every text file is handled. Notebooks are analyzed as Python (cells become sections titled by the markdown above them). Other source files get an outline: their definitions, calls between definitions in brace languages, and imports resolved to files for JavaScript/TypeScript, Rust and C/C++. Config files become key/value tables (`.env` values are masked), docs become heading lists, and READMEs describe their folder. Binary files appear as assets.
+Every text file is handled. Notebooks are analyzed as Python (cells become sections titled by the markdown above them). Other source files get an outline: their definitions, calls between definitions in brace languages, and imports resolved to files for Rust and C/C++. Config files become key/value tables (`.env` values are masked), docs become heading lists, and READMEs describe their folder. Binary files appear as assets.
 
 ## Architecture
 
@@ -68,12 +83,16 @@ crates/blockviz-core/          Rust → WebAssembly
   src/naming.rs                block titles from a language-neutral description of each step
   src/vocabulary.rs            what names and libraries mean: domains, NN categories, metadata,
                                database calls
-  src/python/                  source + comments, symbol index and type inference, flow builder, effects
-  src/python/names.rs          Python expressions described for naming; structural shortening
-  src/python/frameworks.rs     routes, commands and tasks from framework decorators
+  src/code/syntax.rs           the language-neutral syntax tree every front end lowers into
+  src/code/                    analysis over it: source + comments, symbol index and type
+                               inference, flow builder, effects
+  src/code/names.rs            expressions described for naming; structural shortening
+  src/code/frameworks.rs       routes, commands, tasks, components from decorators and calls
+  src/python/                  Ruff's tree → syntax tree
+  src/js/                      oxc's tree → syntax tree; import resolution (tsconfig, workspaces)
   src/invocations.rs           commands in scripts and manifests that run project code
   src/compose.rs               Docker Compose services
-  src/outline.rs               non-Python outlines and imports
+  src/outline.rs               outlines and imports for other languages
   src/highlight/               syntax classes for the source view: Ruff's tokens and tree for
                                Python, table-driven lexers for other languages and formats
   src/project.rs               repository tree, cross-file relations, artifacts, edge lifting
@@ -91,10 +110,12 @@ src/
 
 **Rendering** is immediate-mode Canvas 2D, driven only by invalidation. Each frame walks what is visible; boxes open smoothly as their interior becomes large enough to show something; text fades in by on-screen size. The camera is anchored to the deepest container that fills the viewport and every transform is derived from it, so precision does not degrade however deep you zoom.
 
-## Python versions
+## Language versions
 
-Parsing uses [Ruff's parser](https://github.com/astral-sh/ruff) (`ruff_python_parser`), which follows the current grammar: PEP 701 f-strings and PEP 695 type parameters (3.12), type parameter defaults (3.13), t-strings and unparenthesized `except A, B:` (3.14), and `lazy import`, unpacking in comprehensions and `case +0:` (3.15). `tests/python_syntax.rs` covers each release from 3.8 to 3.15. The whole CPython 3.15.0rc3 `Lib/` (2,052 files, test suite included) parses with no errors apart from the one file CPython keeps deliberately invalid. The parser recovers from syntax errors, so a file with a typo still renders everything around the error.
+Python parsing uses [Ruff's parser](https://github.com/astral-sh/ruff) (`ruff_python_parser`), which follows the current grammar: PEP 701 f-strings and PEP 695 type parameters (3.12), type parameter defaults (3.13), t-strings and unparenthesized `except A, B:` (3.14), and `lazy import`, unpacking in comprehensions and `case +0:` (3.15). `tests/python_syntax.rs` covers each release from 3.8 to 3.15. The whole CPython 3.15.0rc3 `Lib/` (2,052 files, test suite included) parses with no errors apart from the one file CPython keeps deliberately invalid. The parser recovers from syntax errors, so a file with a typo still renders everything around the error.
+
+JavaScript and TypeScript are parsed by [oxc](https://github.com/oxc-project/oxc) (`oxc_parser`): ES2025 (import attributes, `using` declarations, regexp `v` flag, top-level await), current TypeScript (decorators, `accessor`, `satisfies`, `const` type parameters, `asserts` guards) and JSX in `.jsx`/`.tsx`. `tests/js_syntax.rs` covers each, plus CommonJS and UMD modules. Where oxc gives up at a syntax error, the statement holding it is blanked out and the file parsed again, so the rest still renders. vuejs/core (about 160k lines of TypeScript) analyzes in under a second natively.
 
 ## Limits
 
-This is static analysis: arrows show likely dataflow and dependencies, not a runtime trace. Dynamic dispatch, code passed through strings and monkey-patching are invisible. Very large repositories work but get heavy in the browser (the full CPython standard library, about 330k lines, produces a 64 MB scene).
+This is static analysis: arrows show likely dataflow and dependencies, not a runtime trace. Dynamic dispatch, code passed through strings and monkey-patching are invisible. In JavaScript, `this` is known inside classes but not inside functions attached to a plain object (`app.init = function () { this.set(…) }`), and TypeScript types are read only as far as naming a class. Very large repositories work but get heavy in the browser (the full CPython standard library, about 330k lines, produces a 64 MB scene).

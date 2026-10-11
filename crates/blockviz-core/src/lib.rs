@@ -8,6 +8,7 @@ pub mod code;
 pub mod compose;
 pub mod highlight;
 pub mod invocations;
+pub mod js;
 pub mod ir;
 pub mod layout;
 pub mod naming;

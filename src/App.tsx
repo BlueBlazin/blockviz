@@ -275,7 +275,7 @@ export default function App() {
             <p>Calls into your own code, sub-modules, library operations and I/O. Glue such as reshapes and arithmetic on sizes is folded into the step it feeds; prints and asserts become side-effect tags. Comment-headed paragraphs in long scripts become sections, and runs of constants become settings tables.</p>
             <h2>Limits</h2>
             {loaded?.scene.diagnostics.map((d, i) => <p key={i} className="dim">{d}</p>)}
-            <p className="dim">Non-Python files are outlined (definitions, keys, headings) rather than analyzed for dataflow.</p>
+            <p className="dim">Python, JavaScript and TypeScript are analyzed for dataflow; other files are outlined (definitions, keys, headings).</p>
           </section>
         </div>
       )}

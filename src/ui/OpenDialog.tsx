@@ -1,4 +1,5 @@
-import { FolderOpen, Link2, Sparkles, X } from 'lucide-react';
+import { FileCode, FolderOpen, Link2, Sparkles, X } from 'lucide-react';
+import { guessFilename } from '../core/loaders';
 import { useEffect, useRef, useState } from 'react';
 
 export type OpenRequest =
@@ -12,6 +13,8 @@ export function OpenDialog({ onOpen, onClose, canClose, lastUrl }: { onOpen: (r:
   const [paste, setPaste] = useState(false);
   const [text, setText] = useState('');
   const [filename, setFilename] = useState('main.py');
+  // The file name follows the pasted code's language until it is edited.
+  const [named, setNamed] = useState(false);
   const folder = useRef<HTMLInputElement>(null);
   const urlInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -43,14 +46,14 @@ export function OpenDialog({ onOpen, onClose, canClose, lastUrl }: { onOpen: (r:
             <span><strong>Local folder…</strong><small>or drop a folder anywhere</small></span>
           </button>
           <button onClick={() => setPaste(p => !p)} aria-expanded={paste}>
-            <span className="py-mark">py</span>
+            <FileCode size={17} />
             <span><strong>Paste code</strong><small>a single file</small></span>
           </button>
         </div>
         {paste && (
           <div className="paste">
-            <input value={filename} onChange={e => setFilename(e.target.value)} aria-label="Filename" spellCheck={false} />
-            <textarea value={text} onChange={e => setText(e.target.value)} placeholder="Paste Python here…" spellCheck={false} aria-label="Code" />
+            <input value={filename} onChange={e => { setFilename(e.target.value); setNamed(true); }} aria-label="Filename" spellCheck={false} />
+            <textarea value={text} onChange={e => { setText(e.target.value); if (!named) setFilename(guessFilename(e.target.value)); }} placeholder="Paste Python, JavaScript or TypeScript here…" spellCheck={false} aria-label="Code" />
             <button className="primary" disabled={!text.trim()} onClick={() => onOpen({ kind: 'paste', filename, text })}>Visualize</button>
           </div>
         )}

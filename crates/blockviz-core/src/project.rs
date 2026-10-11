@@ -18,18 +18,21 @@ pub struct InFile {
     pub bytes: u64,
 }
 
-const IGNORED_DIRS: &[&str] = &[".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".ipynb_checkpoints", "dist", "build", "target", ".next", ".cache", "site-packages", ".eggs"];
+/// Keep in step with `IGNORED` in src/core/loaders.ts.
+const IGNORED_DIRS: &[&str] = &[".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".ipynb_checkpoints", "dist", "build", "target", ".next", ".cache", "site-packages", ".eggs", ".turbo", ".nuxt", ".svelte-kit", ".output", ".vercel", ".parcel-cache", ".yarn", "bower_components", "storybook-static"];
 const MAX_TEXT: usize = 2_000_000;
 
 /// Test code: `tests/…`, `test_*.py`, `*_test.py`, `conftest.py`.
 pub fn is_test_path(path: &str) -> bool {
     let base = path.rsplit('/').next().unwrap_or(path);
-    path.split('/').rev().skip(1).any(|d| matches!(d, "tests" | "test" | "testing" | "__tests__" | "spec" | "specs"))
+    path.split('/').rev().skip(1).any(|d| matches!(d, "tests" | "test" | "testing" | "__tests__" | "spec" | "specs" | "e2e" | "__mocks__" | "test-d"))
         || base.starts_with("test_")
         || base.ends_with("_test.py")
         || base == "conftest.py"
         || base.contains(".test.")
         || base.contains(".spec.")
+        || base.contains("-spec.")
+        || base.contains(".e2e.")
 }
 
 pub fn ignored(path: &str) -> bool {
@@ -82,6 +85,19 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     let mut metas: Vec<FileMeta> = vec![];
     let mut entries: Vec<FileEntry> = vec![];
     let mut py_inputs = vec![];
+    let mut js_inputs = vec![];
+    // Import resolution reads TypeScript configs and package manifests.
+    let resolver = {
+        let listing: Vec<(&str, Option<&str>)> = files
+            .iter()
+            .map(|f| {
+                let base = f.path.rsplit('/').next().unwrap_or(&f.path);
+                let config = (base.starts_with("tsconfig") && base.ends_with(".json")) || base == "jsconfig.json" || base == "package.json";
+                (f.path.as_str(), if config { f.text.as_deref() } else { None })
+            })
+            .collect();
+        crate::js::Resolver::new(&listing)
+    };
     for (i, f) in files.into_iter().enumerate() {
         let (class, language) = outline::classify(&f.path);
         let text = f.text.filter(|t| t.len() <= MAX_TEXT && !t.contains('\0'));
@@ -89,8 +105,10 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             diagnostics.push(format!("Skipped {} ({} KB is over the per-file limit).", f.path, f.bytes / 1024));
         }
         let mut source = None;
+        let minified = f.path.contains(".min.") || f.path.ends_with(".bundle.js");
         match (class, &text) {
             (Class::Python, Some(t)) => py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: t.clone(), notebook: false }),
+            (Class::Code, Some(t)) if crate::js::lang_of(&f.path).is_some() && !minified => js_inputs.push(crate::js::JsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
             (Class::Notebook, Some(t)) => match crate::notebook::to_python(t) {
                 Some(py) => {
                     source = Some(py.clone());
@@ -116,7 +134,11 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     let mut b = Builder::default();
     let root = b.add(None, Kind::Repo, Shape::Box, title.clone());
     b.get_mut(root).category = "repo";
-    let (modules, headers, failed) = python::parse(&mut b, py_inputs, &mut diagnostics);
+    let (mut modules, mut headers, mut failed) = python::parse(&mut b, py_inputs, &mut diagnostics);
+    let (js_modules, js_headers, js_failed) = crate::js::parse(&mut b, js_inputs, &resolver, &mut diagnostics);
+    modules.extend(js_modules);
+    headers.extend(js_headers);
+    failed.extend(js_failed);
     let (b2, py) = code::analyze(b, modules, headers, failed);
     let mut b = b2;
     let mut py_by_file: HashMap<u32, &code::CodeFile> = HashMap::new();
@@ -243,12 +265,20 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         let handlers = |h: code::frameworks::Handler| pf.handlers.contains(&h);
         let route_table = b.get(node).children.iter().any(|&c| b.get(c).kind == Kind::Table && b.get(c).category == "endpoint");
         use code::frameworks::Handler;
+        let js = pf.lang.is_js();
+        // Tool configuration in code: `vite.config.ts`, `.eslintrc.js`, `jest.config.js`.
+        let tool_config = js && (base.contains(".config.") || base.starts_with(".eslintrc") || base.starts_with(".prettierrc") || base.starts_with("babel.config") || base == "gulpfile.js" || base == "Gruntfile.js");
+        let file_role = if js { framework_file_role(path) } else { None };
         let role = if pf.error.is_some() {
-            "Python"
+            pf.lang.name()
         } else if notebook {
             "notebook"
+        } else if tool_config {
+            "config"
         } else if test {
             "tests"
+        } else if let Some(r) = file_role.as_deref() {
+            r
         } else if pf.app {
             "app"
         } else if route_table {
@@ -261,6 +291,8 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             "commands"
         } else if handlers(Handler::Task) {
             "tasks"
+        } else if handlers(Handler::Component) && !runs {
+            "components"
         } else if runs {
             "script"
         } else {
@@ -431,6 +463,21 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             linked.insert((from, to));
         }
     }
+    // Stylesheets, data and images a module imports.
+    for pf in &py.files {
+        for path in &pf.assets {
+            if let Some(&t) = all_paths.get(path.as_str()) {
+                if skip(t as u32) || skip(pf.file) {
+                    continue;
+                }
+                let (a, c) = (entries[t].node, pf.node);
+                if linked.insert((a, c)) {
+                    let module = b.get(a).title.clone();
+                    lift_titled(&mut b, a, c, EdgeKind::Uses, "", &module, &mut ports);
+                }
+            }
+        }
+    }
     for (from, to) in &py.execs {
         if skip(*from) || skip(*to) {
             continue;
@@ -528,7 +575,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             .iter()
             .map(|(k, files)| Row { key: k.clone(), value: format!("{} file{}", files.len(), if files.len() == 1 { "" } else { "s" }), note: String::new(), heading: false })
             .collect();
-        n.doc = "Third-party packages imported by the Python code.".into();
+        n.doc = "Third-party packages the code imports.".into();
     }
 
     aggregate_effects(&mut b, root);
@@ -548,6 +595,41 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     diagnostics.push("Static analysis: arrows show likely dataflow and dependencies inferred from source, not a runtime trace. Dynamic dispatch and code passed through strings may be missed.".into());
     let stats = Stats { files: metas.len() as u32, python_files, lines, nodes: nodes.len() as u32, max_depth };
     Scene { version: 2, title, description, root: scene_root, nodes, files: metas, diagnostics, stats }
+}
+
+/// Roles a JavaScript framework gives a file by where it is: Next.js App
+/// Router pages, layouts and route handlers, and Pages Router pages and API
+/// routes.
+fn framework_file_role(path: &str) -> Option<String> {
+    let (dir, base) = path.rsplit_once('/').unwrap_or(("", path));
+    let stem = base.split('.').next().unwrap_or(base);
+    let app = code::frameworks::app_path(dir).filter(|_| dir.split('/').any(|p| p == "app"));
+    if let Some(route) = app {
+        return match stem {
+            "page" => Some(format!("page {route}")),
+            "layout" | "template" => Some(format!("layout {route}")),
+            "loading" | "error" | "not-found" | "global-error" | "default" => Some(stem.replace('-', " ")),
+            "route" => Some(format!("routes {route}")),
+            "middleware" => Some("middleware".into()),
+            _ => None,
+        };
+    }
+    let parts: Vec<&str> = dir.split('/').collect();
+    if let Some(at) = parts.iter().position(|p| *p == "pages") {
+        if stem.starts_with('_') {
+            return Some(format!("{stem} page"));
+        }
+        let mut route: Vec<&str> = parts[at + 1..].to_vec();
+        if stem != "index" {
+            route.push(stem);
+        }
+        let route = format!("/{}", route.join("/"));
+        return Some(if route.starts_with("/api") { format!("API route {route}") } else { format!("page {route}") });
+    }
+    if matches!(stem, "middleware" | "instrumentation") && !dir.contains('/') {
+        return Some(stem.to_string());
+    }
+    None
 }
 
 /// Drops a dependency A→C when A→…→C already holds through other siblings,
@@ -1082,10 +1164,11 @@ fn generic_effect(e: &str) -> String {
         "reads files".into()
     } else if e.starts_with("writes file") {
         "writes files".into()
-    } else if e.starts_with("mutates self") {
-        "mutates state".into()
     } else if e.starts_with("mutates global") {
         "mutates globals".into()
+    } else if e.starts_with("mutates ") {
+        // `mutates self.count`, `mutates this.#count`: the object's state.
+        "mutates state".into()
     } else if e.starts_with("logs metrics") {
         "network".into()
     } else {
@@ -1099,5 +1182,10 @@ const STDLIB: &[&str] = &[
 ];
 
 fn is_stdlib(name: &str) -> bool {
-    STDLIB.contains(&name)
+    STDLIB.contains(&name) || NODE_BUILTINS.contains(&name)
 }
+
+/// Node.js built-in modules (`node:fs` is reported as `fs`).
+const NODE_BUILTINS: &[&str] = &[
+    "fs", "path", "http", "https", "http2", "url", "os", "crypto", "child_process", "events", "stream", "util", "zlib", "net", "dns", "assert", "buffer", "readline", "worker_threads", "cluster", "process", "timers", "querystring", "tty", "v8", "vm", "perf_hooks", "module", "async_hooks", "string_decoder", "inspector", "diagnostics_channel", "dgram", "punycode", "constants", "test", "sqlite",
+];

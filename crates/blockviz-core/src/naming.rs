@@ -44,12 +44,34 @@ impl Dest {
     }
 }
 
+/// A collection literal, in its language's words: a Python `dict` is a
+/// JavaScript object, a `list` an array.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Collection {
     Map,
     List,
     Tuple,
     Set,
+    Object,
+    Array,
+}
+
+impl Collection {
+    /// Holds values by key.
+    pub fn keyed(self) -> bool {
+        matches!(self, Collection::Map | Collection::Object)
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Collection::Map => "dict",
+            Collection::List => "list",
+            Collection::Tuple => "tuple",
+            Collection::Set => "set",
+            Collection::Object => "object",
+            Collection::Array => "array",
+        }
+    }
 }
 
 /// What a step computes, by shape rather than syntax.
@@ -139,7 +161,7 @@ fn phrase(step: &Step) -> String {
     match step {
         Step::Calls { names, .. } => calls(names),
         Step::Format { template } => shorten(template, TITLE_MAX),
-        Step::Pack { kind: Collection::Map, keys } if !keys.is_empty() => format!("{{{}}}", list(keys, TITLE_MAX - 2)),
+        Step::Pack { kind, keys } if kind.keyed() && !keys.is_empty() => format!("{{{}}}", list(keys, TITLE_MAX - 2)),
         Step::Pack { keys, .. } if !keys.is_empty() => {
             let mut uniq: Vec<String> = vec![];
             for k in keys {
@@ -149,13 +171,7 @@ fn phrase(step: &Step) -> String {
             }
             list(&uniq, TITLE_MAX)
         }
-        Step::Pack { kind, .. } => match kind {
-            Collection::Map => "dict",
-            Collection::List => "list",
-            Collection::Tuple => "tuple",
-            Collection::Set => "set",
-        }
-        .to_string(),
+        Step::Pack { kind, .. } => kind.noun().to_string(),
         Step::Map { over, filtered: true } => format!("filter {over}"),
         Step::Map { over, .. } => format!("map {over}"),
         Step::Test { subjects } if !subjects.is_empty() => format!("check {}", some(subjects)),
@@ -173,7 +189,7 @@ fn phrase(step: &Step) -> String {
 fn kind(step: &Step) -> String {
     match step {
         Step::Format { template } => shorten(template, CAPTION_MAX),
-        Step::Pack { kind: Collection::Map, keys } if !keys.is_empty() => format!("{{{}}}", list(keys, CAPTION_MAX - 2)),
+        Step::Pack { kind, keys } if kind.keyed() && !keys.is_empty() => format!("{{{}}}", list(keys, CAPTION_MAX - 2)),
         Step::Map { .. } | Step::Pick { .. } | Step::Pack { .. } | Step::Calls { .. } => phrase(step),
         Step::Test { .. } => "test".into(),
         Step::Compute { .. } => "arithmetic".into(),
@@ -230,7 +246,8 @@ pub fn name(step: &Step, dest: &Dest, code: &str) -> Name {
                 return Name { title: calls(names), caption: qualifier(receiver, CAPTION_MAX) };
             }
             let title = match step {
-                Step::Format { .. } | Step::Pack { kind: Collection::Map, .. } => phrase(step),
+                Step::Format { .. } => phrase(step),
+                Step::Pack { kind, .. } if kind.keyed() => phrase(step),
                 _ if whole && fits(code, TITLE_MAX) => code.to_string(),
                 _ => phrase(step),
             };

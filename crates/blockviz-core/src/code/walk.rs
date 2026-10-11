@@ -276,12 +276,28 @@ pub fn free_names(params: &[String], body: &[Stmt]) -> Vec<String> {
     }
     let mut out: Vec<String> = vec![];
     stmt_exprs(body, true, &mut |e| {
-        for n in loads(e) {
+        for n in loads_deep(e) {
             if !local.contains(&n) && !out.contains(&n) {
                 out.push(n);
             }
         }
     });
+    out
+}
+
+/// Free names an expression reads, including inside the functions it
+/// contains (a callback reads what it closes over when it runs).
+pub fn loads_deep(e: &Expr) -> Vec<String> {
+    let mut out = loads(e);
+    let mut fns = vec![];
+    function_bodies(e, &mut fns);
+    for f in fns {
+        for n in free_names(&param_names(&f.params), &f.body) {
+            if !out.contains(&n) {
+                out.push(n);
+            }
+        }
+    }
     out
 }
 

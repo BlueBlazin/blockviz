@@ -59,7 +59,11 @@ pub fn clip(s: &str, max: usize) -> String {
         return s.to_string();
     }
     let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
-    out = out.trim_end().to_string();
+    // End at a word: "a single pro…" reads as a typo.
+    if let Some(i) = out.rfind(' ').filter(|&i| i > out.len() / 2) {
+        out.truncate(i);
+    }
+    out = out.trim_end().trim_end_matches([',', ';', ':']).to_string();
     out.push('…');
     out
 }
@@ -159,6 +163,15 @@ pub fn summary(doc: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clips_at_words() {
+        assert_eq!(clip("returns a reactive and mutable ref object", 30), "returns a reactive and…");
+        assert_eq!(clip("get_password_hash, verify_password", 30), "get_password_hash…");
+        assert_eq!(clip("short", 30), "short");
+        // A single long word is still cut.
+        assert_eq!(clip("abcdefghijklmnopqrstuvwxyz", 10), "abcdefghi…");
+    }
     #[test]
     fn headings_from_comments() {
         assert_eq!(heading("# model init").as_deref(), Some("Model init"));

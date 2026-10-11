@@ -1,0 +1,189 @@
+import type {HttpMethod} from './options.js';
+
+export type MutableRetryOptions = Omit<RetryOptions, 'methods' | 'statusCodes' | 'afterStatusCodes'> & {
+	methods?: HttpMethod[] | undefined;
+	statusCodes?: number[] | undefined;
+	afterStatusCodes?: number[] | undefined;
+};
+
+export type ShouldRetryState = {
+	/**
+	The error that caused the request to fail.
+	*/
+	error: Error;
+
+	/**
+	The number of retries attempted. Starts at 1 for the first retry.
+	*/
+	retryCount: number;
+};
+
+export type RetryOptions = {
+	/**
+	The number of times to retry failed requests.
+	Must be a finite, non-negative integer.
+
+	@default 2
+	*/
+	limit?: number | undefined;
+
+	/**
+	The HTTP methods allowed to retry.
+
+	@default ['get', 'put', 'head', 'delete', 'options', 'trace', 'query']
+	*/
+	methods?: readonly HttpMethod[] | undefined;
+
+	/**
+	The HTTP status codes allowed to retry.
+
+	`413 Payload Too Large` is only retried when the response includes a retry timing header, unless `shouldRetry` returns `true`.
+
+	@default [408, 413, 429, 500, 502, 503, 504]
+	*/
+	statusCodes?: readonly number[] | undefined;
+
+	/**
+	The retriable HTTP status codes that should respect retry timing headers. These status codes must also be included in `statusCodes`, unless `shouldRetry` returns `true`.
+
+	@default [413, 429, 503]
+	*/
+	afterStatusCodes?: readonly number[] | undefined;
+
+	/**
+	If the retry delay from a retry timing header is greater than `maxRetryAfter`, Ky will use `maxRetryAfter`.
+
+	@default Infinity
+	*/
+	maxRetryAfter?: number | undefined;
+
+	/**
+	The upper limit of the delay per retry in milliseconds, for the delay calculated by `retry.delay`.
+	To clamp the delay, set `backoffLimit` to 1000, for example.
+	A delay from a retry timing header is not subject to this limit; use `maxRetryAfter` to bound it.
+
+	By default, the delay is calculated in the following way:
+
+	```
+	0.3 * (2 ** (attemptCount - 1)) * 1000
+	```
+
+	The delay increases exponentially.
+
+	@default Infinity
+	*/
+	backoffLimit?: number | undefined;
+
+	/**
+	A function to calculate the delay in milliseconds between retries given `attemptCount` (starts from 1).
+
+	Must return a non-negative number or `Infinity`; anything else throws a `TypeError` rather than collapsing to a 1ms retry, and the error that was being retried is kept as its `cause` so `beforeError` can still reach it.
+
+	@default attemptCount => 0.3 * (2 ** (attemptCount - 1)) * 1000
+	*/
+	delay?: ((attemptCount: number) => number) | undefined;
+
+	/**
+	Add random jitter to retry delays to prevent thundering herd problems.
+
+	When many clients retry simultaneously (e.g., after hitting a rate limit), they can overwhelm the server again. Jitter adds randomness to break this synchronization.
+
+	Set to `true` to use full jitter, which randomizes the delay between 0 and the computed delay.
+
+	Alternatively, pass a function to implement custom jitter strategies.
+
+	Note: Jitter is not applied when the server provides a retry timing header, as the server's explicit timing should be respected.
+
+	@default undefined (no jitter)
+
+	@example
+	```
+	import ky from 'ky';
+
+	const json = await ky('https://example.com', {
+		retry: {
+			limit: 5,
+
+			// Full jitter (randomizes delay between 0 and computed value)
+			jitter: true
+
+			// Percentage jitter (80-120% of delay)
+			// jitter: delay => delay * (0.8 + Math.random() * 0.4)
+
+			// Absolute jitter (±100ms)
+			// jitter: delay => delay + (Math.random() * 200 - 100)
+		}
+	}).json();
+	```
+	*/
+	jitter?: boolean | ((delay: number) => number) | undefined;
+
+	/**
+	Whether to retry when the request times out before a response is returned. Timeouts while reading a response body through Ky shortcut methods are not retried because the response has already been received.
+
+	@default false
+
+	@example
+	```
+	import ky from 'ky';
+
+	const json = await ky('https://example.com', {
+		retry: {
+			limit: 3,
+			retryOnTimeout: true
+		}
+	}).json();
+	```
+	*/
+	retryOnTimeout?: boolean | undefined;
+
+	/**
+	A function to determine whether a retry should be attempted.
+
+	This function takes precedence over the default retry checks (`retryOnTimeout`, status code checks, etc.) for retriable methods. It is only called after the retry limit and method checks pass.
+
+	**Note:** This is different from the `beforeRetry` hook:
+	- `shouldRetry`: Controls WHETHER to retry (called before the retry decision is made)
+	- `beforeRetry`: Called AFTER retry is confirmed, allowing you to modify the request
+
+	Should return:
+	- `true` to force a retry (bypasses `retryOnTimeout`, status code checks, and other validations)
+	- `false` to prevent a retry (no retry will occur)
+	- `undefined` (or nothing) to use the default retry logic (`retryOnTimeout`, status codes, network errors). Unrecognized error types are not retried.
+
+	Returning `true` overrides retry eligibility, not timing. For HTTP errors with a status in `afterStatusCodes`, retry timing headers and `maxRetryAfter` still apply, without jitter. Otherwise, Ky uses the configured backoff delay.
+
+	@default undefined
+
+	@example
+	```
+	import ky, {HTTPError} from 'ky';
+
+	const json = await ky('https://example.com', {
+		retry: {
+			limit: 3,
+			shouldRetry: ({error, retryCount}) => {
+				// Retry on specific business logic errors from API
+				if (error instanceof HTTPError) {
+					const status = error.response.status;
+
+					// Retry on 429 (rate limit) but only for first 2 attempts
+					if (status === 429 && retryCount <= 2) {
+						return true;
+					}
+
+					// Don't retry on 4xx errors except rate limits
+					if (status >= 400 && status < 500) {
+						return false;
+					}
+				}
+
+				// Use default retry logic for other errors
+				return undefined;
+			}
+		}
+	}).json();
+	```
+	*/
+	shouldRetry?: ((state: ShouldRetryState) => boolean | void | Promise<boolean | void>) | undefined;
+};

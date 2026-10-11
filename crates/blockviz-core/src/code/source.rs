@@ -18,6 +18,8 @@ pub struct Comment {
 pub struct Source {
     pub text: String,
     pub file: u32,
+    /// Shortened code is written in the module's own syntax.
+    pub lang: super::syntax::Lang,
     line_starts: Vec<usize>,
     comments: Vec<Comment>,
     blank: Vec<bool>,
@@ -34,7 +36,7 @@ impl Source {
             }
         }
         let blank = text.split('\n').map(|l| l.trim().is_empty()).collect();
-        let mut s = Source { text, file, line_starts, comments: vec![], blank };
+        let mut s = Source { text, file, lang: super::syntax::Lang::Python, line_starts, comments: vec![], blank };
         let mut found = vec![];
         for (range, body) in comments {
             let start = usize::from(range.start());
@@ -88,6 +90,13 @@ impl Source {
         }
         out.reverse();
         out
+    }
+
+    /// The description in the comment block above a line: its prose, before
+    /// any `@param`-style tags.
+    pub fn prose_above(&self, line: u32) -> String {
+        let prose: Vec<&str> = self.comments_above(line).iter().map(|c| c.text.trim()).take_while(|t| !t.starts_with('@')).collect();
+        crate::text::summary(&prose.join(" "))
     }
 
     pub fn trailing_comment(&self, line: u32) -> Option<&str> {

@@ -69,7 +69,7 @@ pub fn parse(b: &mut Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String
         }
         let src = Source::new(input.text, input.file, &comments);
         headers.push(leading_comment(&src));
-        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: input.notebook, lang: Lang::Python, error });
+        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: input.notebook, lang: Lang::Python, tags: vec![], error });
     }
     (modules, headers, failed)
 }

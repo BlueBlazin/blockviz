@@ -74,7 +74,7 @@ pub fn open_mode(c: &ast::ExprCall) -> Io {
 pub fn io_of(path: &str, c: &ast::ExprCall, _src: &Source) -> Option<(String, Io)> {
     let last = path.rsplit('.').next().unwrap_or(path);
     let root = path.split('.').next().unwrap_or(path);
-    let io = match path {
+    let io = js_io(root.strip_prefix("node:").unwrap_or(root), last).or_else(|| match path {
         "torch.save" | "numpy.save" | "numpy.savez" | "numpy.savez_compressed" | "numpy.savetxt" | "pickle.dump" | "json.dump" | "yaml.dump" | "yaml.safe_dump" | "torch.jit.save" | "toml.dump" | "joblib.dump" | "matplotlib.pyplot.savefig" | "safetensors.torch.save_file" | "torch.onnx.export" => Some(Io::Write),
         "torch.load" | "numpy.load" | "numpy.fromfile" | "numpy.loadtxt" | "numpy.genfromtxt" | "pickle.load" | "json.load" | "yaml.load" | "yaml.safe_load" | "toml.load" | "tomllib.load" | "joblib.load" | "safetensors.torch.load_file" | "torch.jit.load" | "PIL.Image.open" => Some(Io::Read),
         "numpy.memmap" => Some(match mode_of(c, 2) {
@@ -85,7 +85,7 @@ pub fn io_of(path: &str, c: &ast::ExprCall, _src: &Source) -> Option<(String, Io
         _ if matches!(root, "requests" | "httpx" | "aiohttp" | "urllib" | "urllib3" | "http" | "socket" | "boto3" | "wget" | "huggingface_hub") => Some(Io::Network),
         _ if last == "from_pretrained" || last == "load_dataset" || last == "hf_hub_download" || path.starts_with("torch.hub.") => Some(Io::Network),
         _ => None,
-    }?;
+    })?;
     let text = match io {
         Io::Read => "reads file",
         Io::Write => "writes file",
@@ -94,10 +94,39 @@ pub fn io_of(path: &str, c: &ast::ExprCall, _src: &Source) -> Option<(String, Io
     Some((text.into(), io))
 }
 
+/// I/O by JavaScript modules and globals: Node's `fs`, HTTP clients, `fetch`.
+fn js_io(module: &str, last: &str) -> Option<Io> {
+    match module {
+        "fs" | "fs/promises" | "fs-extra" | "graceful-fs" => {
+            let l = last.trim_end_matches("Sync");
+            if matches!(l, "readFile" | "createReadStream" | "readdir" | "readJson" | "readJSON" | "stat" | "lstat" | "exists" | "access" | "opendir" | "readlink" | "glob") {
+                Some(Io::Read)
+            } else if matches!(l, "writeFile" | "appendFile" | "createWriteStream" | "mkdir" | "mkdtemp" | "rm" | "rmdir" | "unlink" | "copyFile" | "cp" | "rename" | "outputFile" | "writeJson" | "writeJSON" | "outputJson" | "remove" | "ensureDir" | "ensureFile" | "move" | "copy" | "emptyDir" | "symlink" | "truncate" | "chmod") {
+                Some(Io::Write)
+            } else {
+                None
+            }
+        }
+        "axios" | "got" | "node-fetch" | "ky" | "superagent" | "undici" | "https" | "ws" | "socket.io-client" | "cross-fetch" | "isomorphic-fetch" | "ofetch" | "graphql-request" => Some(Io::Network),
+        "http" if last != "createServer" => Some(Io::Network),
+        "globals" if matches!(last, "fetch" | "WebSocket" | "EventSource" | "XMLHttpRequest" | "sendBeacon") => Some(Io::Network),
+        _ => None,
+    }
+}
+
 /// Non-I/O effects worth surfacing.
 pub fn ext_effect(path: &str) -> Option<&'static str> {
     let last = path.rsplit('.').next().unwrap_or(path);
     let root = path.split('.').next().unwrap_or(path);
+    let root = root.strip_prefix("node:").unwrap_or(root);
+    match path {
+        "globals.process.exit" => return Some("exits process"),
+        _ if path.starts_with("globals.localStorage.") || path.starts_with("globals.sessionStorage.") => return Some("browser storage"),
+        _ => {}
+    }
+    if matches!(root, "child_process" | "execa" | "cross-spawn" | "zx") {
+        return Some("spawns process");
+    }
     match path {
         "random.seed" | "numpy.random.seed" | "torch.manual_seed" | "torch.cuda.manual_seed" | "torch.cuda.manual_seed_all" | "tensorflow.random.set_seed" => return Some("seeds RNG"),
         "os.makedirs" | "os.mkdir" | "os.remove" | "os.rename" | "os.unlink" | "os.rmdir" | "os.replace" => return Some("filesystem"),

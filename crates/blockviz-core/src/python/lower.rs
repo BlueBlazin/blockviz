@@ -135,7 +135,7 @@ fn stmt(s: &py::Stmt, in_class: bool) -> Stmt {
         }),
         py::Stmt::Match(x) => Stmt::Match(StmtMatch {
             subject: bx(&x.subject),
-            cases: x.cases.iter().map(|c| MatchCase { pattern: Some(Ranged::range(&c.pattern)), guard: opt(&c.guard), body: body(&c.body), range: c.range }).collect(),
+            cases: x.cases.iter().map(|c| MatchCase { patterns: vec![Ranged::range(&c.pattern)], guard: opt(&c.guard), body: body(&c.body), range: c.range }).collect(),
             range: x.range,
         }),
         py::Stmt::Raise(x) => Stmt::Raise(StmtRaise { exc: opt(&x.exc), cause: opt(&x.cause), range: x.range }),
@@ -151,12 +151,13 @@ fn stmt(s: &py::Stmt, in_class: bool) -> Stmt {
             range: x.range,
         }),
         py::Stmt::Assert(x) => Stmt::Assert(StmtAssert { test: bx(&x.test), msg: opt(&x.msg), range: x.range }),
-        py::Stmt::Import(x) => Stmt::Import(StmtImport { names: x.names.iter().map(alias).collect(), style: ModuleStyle::Dotted, range: x.range }),
+        py::Stmt::Import(x) => Stmt::Import(StmtImport { names: x.names.iter().map(alias).collect(), style: ModuleStyle::Dotted, resolved: None, range: x.range }),
         py::Stmt::ImportFrom(x) => Stmt::ImportFrom(StmtImportFrom {
             module: x.module.as_ref().map(|m| m.to_string()),
             names: x.names.iter().map(alias).collect(),
             level: x.level,
             style: ModuleStyle::Dotted,
+            resolved: None,
             range: x.range,
         }),
         py::Stmt::Global(x) => Stmt::Global(StmtNames { names: x.names.iter().map(|n| n.to_string()).collect(), range: x.range }),
@@ -286,7 +287,7 @@ pub fn expr(e: &py::Expr) -> Expr {
         py::Expr::Yield(x) => Expr::Yield(ExprYield { value: opt(&x.value), range: x.range }),
         py::Expr::YieldFrom(x) => Expr::YieldFrom(ExprInner { value: bx(&x.value), range: x.range }),
         py::Expr::Compare(x) => Expr::Compare(ExprCompare { ops: x.ops.iter().map(|o| cmp(*o)).collect(), operands: x.operands.iter().map(expr).collect(), range: x.range }),
-        py::Expr::Call(x) => Expr::Call(ExprCall { func: bx(&x.func), arguments: Arguments { args: exprs(&x.arguments.args), keywords: keywords(&x.arguments.keywords) }, range: Ranged::range(x) }),
+        py::Expr::Call(x) => Expr::Call(ExprCall { func: bx(&x.func), arguments: Arguments { args: exprs(&x.arguments.args), keywords: keywords(&x.arguments.keywords) }, kind: CallKind::Call, range: Ranged::range(x) }),
         py::Expr::FString(x) => {
             let mut parts = vec![];
             for part in x.value.iter() {
