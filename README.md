@@ -56,13 +56,15 @@ crates/blockviz-core/          Rust → WebAssembly
   src/ir.rs                    the scene: one tree of nested, laid-out diagrams
   src/python/                  source + comments, symbol index and type inference, flow builder, effects
   src/outline.rs               non-Python outlines and imports
+  src/highlight/               syntax classes for the source view: Ruff's tokens and tree for
+                               Python, table-driven lexers for other languages and formats
   src/project.rs               repository tree, cross-file relations, artifacts, edge lifting
   src/layout/                  bottom-up sizing; layered layout with shared trunks, PAV placement,
                                orthogonal routing with track allocation
 src/
   core/                        worker, analyzer, loaders (GitHub, folder, drop, paste)
   canvas/                      camera (anchored for unlimited depth), renderer, engine
-  ui/                          inspector, search, open dialog
+  ui/                          inspector (resizable, highlighted source), search, open dialog
 ```
 
 **One uniform scene model.** Every node lives in its parent's interior coordinates. A node with an interior (children, a table, or a `ref` to another node's interior) draws it inside its `inner` rectangle, scaled to fit. That single rule is what makes zoom unbounded: the renderer never needs to know what a node is to descend into it. A call borrows its callee's interior by reference, so the same definition appears wherever it is called without being duplicated.

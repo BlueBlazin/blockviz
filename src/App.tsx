@@ -6,11 +6,12 @@ import type { Project, Scene } from './core/types';
 import { Engine, type ViewState } from './canvas/engine';
 import { SceneModel } from './canvas/model';
 import { legend, swatch } from './canvas/theme';
-import { Inspector } from './ui/Inspector';
+import { Highlights } from './core/highlights';
+import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 
-interface Loaded { project: Project; scene: Scene; model: SceneModel; elapsed: number }
+interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
 
 const storage = {
   get(key: string) { try { return localStorage.getItem(key) ?? ''; } catch { return ''; } },
@@ -27,6 +28,7 @@ export default function App() {
   const [dialog, setDialog] = useState<'open' | 'search' | 'help' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [panel, setPanel] = useState<PanelSize>(() => clampPanel({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
   const analyzer = useRef(new Analyzer());
@@ -46,7 +48,8 @@ export default function App() {
       if (!result.ok) throw new Error(result.error);
       setSelected(null);
       setSelectedPath(null);
-      setLoaded({ project, scene: result.scene, model: new SceneModel(result.scene, project), elapsed: result.elapsed });
+      const model = new SceneModel(result.scene, project);
+      setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed: result.elapsed });
       setDialog(null);
       document.title = `${result.scene.title} · blockviz`;
     } catch (e) {
@@ -89,6 +92,17 @@ export default function App() {
   }, [loaded]);
 
   useEffect(() => engine.current?.select(selected), [selected]);
+
+  useEffect(() => {
+    const t = setTimeout(() => { storage.set('blockviz.panel.w', String(panel.w)); storage.set('blockviz.panel.h', String(panel.h)); }, 300);
+    return () => clearTimeout(t);
+  }, [panel]);
+
+  useEffect(() => {
+    const fit = () => setPanel(p => clampPanel(p));
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
 
   const goTo = useCallback((id: number) => {
     setSelected(id);
@@ -209,7 +223,10 @@ export default function App() {
       {node && loaded && (
         <Inspector
           model={loaded.model}
+          highlights={loaded.highlights}
           node={node}
+          size={panel}
+          onResize={setPanel}
           onClose={() => { setSelected(null); setSelectedPath(null); }}
           onZoom={() => selectedPath && engine.current?.flyTo(selectedPath)}
           onGo={goTo}

@@ -139,7 +139,7 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
 /// Rejects inputs that would recurse too deeply in the parser or analysis
 /// (generated code with hundreds of nested brackets or enormous statements).
 /// A small string- and comment-aware scan; it never recurses.
-fn too_complex(text: &str) -> Option<String> {
+pub(crate) fn too_complex(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let (mut depth, mut i, mut line_len) = (0i32, 0usize, 0usize);
     while i < bytes.len() {

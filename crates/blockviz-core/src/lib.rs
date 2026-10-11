@@ -4,6 +4,7 @@
 //! a fully laid-out scene out (JSON). Everything runs in a worker, so the UI
 //! thread only ever renders.
 
+pub mod highlight;
 pub mod ir;
 pub mod layout;
 pub mod notebook;
@@ -33,6 +34,13 @@ struct WireProject {
 
 pub fn analyze(name: &str, files: Vec<project::InFile>) -> ir::Scene {
     project::build(name, files)
+}
+
+/// Syntax classes for one file's text, as `[len, class, len, class, ...]`
+/// runs over its UTF-8 bytes (see `highlight::Hl` for the classes).
+#[wasm_bindgen]
+pub fn highlight_source(path: &str, text: &str) -> Vec<u32> {
+    highlight::highlight(path, text)
 }
 
 /// `{"name": "...", "files": [{"path", "text", "bytes"}]}` → `{"ok": true, "scene": ...}`.

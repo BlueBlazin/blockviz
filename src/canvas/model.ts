@@ -60,17 +60,22 @@ export class SceneModel {
   }
 
   source(span: Span): string | null {
-    const text = this.texts[span.file];
-    if (text === undefined) return null;
-    let bytes = this.encoded.get(span.file);
-    if (!bytes) {
-      bytes = new TextEncoder().encode(text);
-      this.encoded.set(span.file, bytes);
-    }
-    return new TextDecoder().decode(bytes.slice(span.start, span.end));
+    const bytes = this.fileBytes(span.file);
+    return bytes ? new TextDecoder().decode(bytes.subarray(span.start, span.end)) : null;
   }
 
-  /** Line text around a span's start, for context. */
+  /** A file's text as UTF-8, the encoding spans and syntax runs index. */
+  fileBytes(file: number): Uint8Array | null {
+    const text = this.texts[file];
+    if (text === undefined) return null;
+    let bytes = this.encoded.get(file);
+    if (!bytes) {
+      bytes = new TextEncoder().encode(text);
+      this.encoded.set(file, bytes);
+    }
+    return bytes;
+  }
+
   fileText(file: number): string | undefined {
     return this.texts[file];
   }
