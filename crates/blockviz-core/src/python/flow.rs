@@ -126,7 +126,7 @@ impl Locals for TypesView<'_> {
 
 const SECTION_MIN: usize = 12;
 const MINOR_EXT: &[&str] = &["os.path.", "math.", "operator.", "typing.", "functools.", "itertools.", "collections.", "copy.", "inspect.", "string.", "re.", "builtins.", "dataclasses.", "time.", "sys.exit"];
-const SCALAR_FNS: &[&str] = &["len", "int", "float", "bool", "str", "round", "abs", "min", "max", "sum", "size", "item", "numel", "dim", "time", "perf_counter", "sqrt", "log", "exp", "ceil", "floor", "isinstance", "hasattr", "exists", "join", "dirname", "basename"];
+const SCALAR_FNS: &[&str] = &["len", "int", "float", "bool", "str", "round", "abs", "min", "max", "sum", "size", "item", "numel", "dim", "time", "perf_counter", "sqrt", "log", "exp", "ceil", "floor", "isinstance", "hasattr", "exists"];
 
 pub struct Fb<'c, 'p> {
     cx: &'c mut Ctx<'p>,
@@ -558,6 +558,20 @@ impl<'c, 'p> Fb<'c, 'p> {
                 self.settings(&run, t, d);
                 i = j;
                 continue;
+            }
+            // `if c: …; return x` followed by more code is an if/else: what
+            // follows only runs otherwise, so it becomes the else branch.
+            if let Stmt::If(x) = &stmts[i] {
+                if x.elif_else_clauses.is_empty() && i + 1 < stmts.len() && matches!(x.body.last(), Some(Stmt::Return(_))) && self.units(&x.body) >= 1 {
+                    let tail = &stmts[i + 1..];
+                    let lanes = vec![
+                        (format!("if {}", compact(self.src().of(&*x.test), 40)), &x.body[..], Some(&*x.test), x.range),
+                        ("else".to_string(), tail, None, TextRange::new(tail[0].start(), tail[tail.len() - 1].end())),
+                    ];
+                    let whole = RangeOf(TextRange::new(x.range.start(), tail[tail.len() - 1].end()));
+                    self.branch(&whole, lanes, &suffix[stmts.len()]);
+                    break;
+                }
             }
             // `session.add(x); session.commit()` and `parser.add_argument(…)` × 12
             // say one thing to a reader: fuse runs of calls on one receiver.
@@ -1196,7 +1210,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             prev_end = Some(src.line_of(usize::from(s.end()).saturating_sub(1)));
             let name = src.of(target).trim().to_string();
-            rows.push(Row { key: name.clone(), value: compact(src.of(value), 40), note: src.trailing_comment(line).unwrap_or("").to_string(), heading: false });
+            rows.push(Row { key: name.clone(), value: compact(src.of(value), 40), note: src.trailing_comment(line).filter(|c| !is_directive(c)).unwrap_or("").to_string(), heading: false });
             names.push(name.clone());
             let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
             if ty != Ty::Unknown {
@@ -1355,7 +1369,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.set_span(id, s);
         }
         let line = self.src().line_of(usize::from(s.start()));
-        let comment = self.src().trailing_comment(line).map(|c| c.to_string());
+        let comment = self.src().trailing_comment(line).filter(|c| !is_directive(c)).map(|c| c.to_string());
         let n = self.cx.b.get_mut(id);
         n.effects.extend(g.effects.iter().cloned());
         n.effects.sort();
@@ -1810,6 +1824,16 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.link_condition(&cond, id);
             return;
         }
+        self.branch(s, lanes, later);
+    }
+
+    /// A branch drawn as side-by-side lanes, one per arm.
+    fn branch(&mut self, s: &impl Ranged, lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)>, later: &HashSet<String>) {
+        let mut cond: Vec<Val> = vec![];
+        for t in lanes.iter().filter_map(|l| l.2) {
+            cond.extend(self.condition_vals(t));
+        }
+        dedup_vals(&mut cond);
         let id = self.open_region(Kind::Branch, String::new(), s);
         self.cx.b.get_mut(id).hints.lanes = true;
         self.regions.last_mut().unwrap().merging = true;
@@ -2551,7 +2575,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 (last, clip(&sub, 28), cat, None)
             }
-            Callee::Builtin(b) => (b.clone(), String::new(), if b == "open" || b == "input" { "io" } else { "op" }, None),
+            // `open(path, mode)`: the arguments tell two calls of a builtin apart.
+            Callee::Builtin(b) => (b.clone(), args_text(c, src), if b == "open" || b == "input" { "io" } else { "op" }, None),
             Callee::Value(v) => (v.clone(), String::new(), "function", None),
             Callee::Method(m) => {
                 let recv = match &*c.func {
@@ -3399,6 +3424,12 @@ fn is_plumbing(s: &Stmt) -> bool {
     }
 }
 
+/// A call's arguments, compacted: `path, mode, encoding=encoding`.
+fn args_text(c: &ast::ExprCall, src: &super::source::Source) -> String {
+    let parts: Vec<String> = c.arguments.args.iter().map(|a| squash(src.of(a))).chain(c.arguments.keywords.iter().map(|k| squash(src.of(k)))).collect();
+    clip(&parts.join(", "), 34)
+}
+
 /// The title a comment block gives the code below it. One line is a heading
 /// (`# training loop`); a longer block is an explanation, titled only by a
 /// short first line (`# Optimizer\n# AdamW with weight decay on matrices`).
@@ -3524,14 +3555,11 @@ fn fused_label(e: &Expr, src: &super::source::Source, g: &Gather, target: &str) 
         }
         _ => {}
     }
-    // A lone method call names the object it acts on: `session.get`, not `get`.
+    // A lone call is named by what it calls, with the object it acts on:
+    // `session.get`, `os.path.join`, not `get` or a clipped line of code.
     if let Expr::Call(c) = e {
-        if let Expr::Attribute(a) = &*c.func {
-            if let Expr::Name(recv) = &*a.value {
-                if calls.len() <= 1 {
-                    return clip(&format!("{}.{}", recv.id, a.attr), 28);
-                }
-            }
+        if calls.len() <= 1 && !contains_call(&c.func) {
+            return clip(&squash(src.of(&*c.func)), 28);
         }
     }
     if !calls.is_empty() && calls.len() <= 3 && !matches!(e, Expr::BinOp(_) | Expr::Compare(_) | Expr::BoolOp(_)) {

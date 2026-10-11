@@ -189,7 +189,8 @@ export class Renderer {
     if (size < 4.2) return;
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
     const textAlpha = alpha * smoothstep(4.2, 7, size);
-    const ms = Math.max(10.5 * t.s, Math.min(size * 0.82, 10));
+    // The caption under a name is always smaller than the name.
+    const ms = Math.min(size * 0.82, Math.max(10.5 * t.s, 10));
     const twoLines = !!meta && b.h >= size + ms + 10;
     const cx = b.x + b.w / 2;
     const cy = b.y + b.h / 2;

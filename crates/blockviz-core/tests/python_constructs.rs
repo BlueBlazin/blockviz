@@ -98,3 +98,27 @@ fn pathological_nesting_is_skipped_not_crashed() {
     let s = analyze(&src);
     assert!(s.diagnostics.iter().any(|d| d.contains("nest")));
 }
+
+#[test]
+fn early_return_is_an_if_else() {
+    // `if c: return a` then more code: the rest only runs otherwise.
+    let s = analyze(
+        r#"
+import os
+
+def open_resource(root, resource, mode="rb", encoding="utf-8"):
+    path = os.path.join(root, resource)
+    if mode == "rb":
+        return open(path, mode)  # pyright: ignore
+    return open(path, mode, encoding=encoding)
+"#,
+    );
+    let f = s.nodes.iter().find(|n| n.title == "open_resource").unwrap();
+    let branch = f.children.iter().map(|&c| &s.nodes[c as usize]).find(|n| n.kind == blockviz_core::ir::Kind::Branch).expect("a branch");
+    let lanes: Vec<&blockviz_core::ir::Node> = branch.children.iter().map(|&c| &s.nodes[c as usize]).filter(|n| n.kind == blockviz_core::ir::Kind::Lane).collect();
+    assert_eq!(lanes.iter().map(|l| l.title.as_str()).collect::<Vec<_>>(), ["if mode == \"rb\"", "else"]);
+    let opens: Vec<&str> = lanes.iter().flat_map(|l| l.children.iter().map(|&c| &s.nodes[c as usize])).filter(|n| n.title == "open").map(|n| n.subtitle.as_str()).collect();
+    assert_eq!(opens, ["path, mode", "path, mode, encoding=encoding"], "arguments tell the calls apart");
+    assert!(s.nodes.iter().all(|n| !n.doc.contains("pyright")), "tool directives are not documentation");
+    assert!(s.nodes.iter().any(|n| n.title == "os.path.join"));
+}
