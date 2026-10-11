@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - run: npm ci
+
+      - name: Rust tests
+        run: cargo test --workspace --release
+
+      - name: Build (wasm core + web app)
+        run: npm run build
+
+      - name: Web tests
+        run: npx vitest run
