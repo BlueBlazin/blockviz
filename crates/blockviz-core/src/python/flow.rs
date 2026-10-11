@@ -30,6 +30,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 pub enum Relation {
     Exec { from: usize, to: usize },
     Artifact { module: usize, name: String, write: bool },
+    /// A view renders a template file: `render_template("blog/index.html")`.
+    Template { module: usize, name: String },
 }
 
 pub struct Ctx<'p> {
@@ -1363,7 +1365,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 n.doc = c;
             }
         }
-        if n.category == "op" && n.effects.iter().any(|e| e.starts_with("reads") || e.starts_with("writes") || e.contains("network")) {
+        if n.category == "op" && n.effects.iter().any(|e| e.starts_with("reads") || e.starts_with("writes") || e.contains("network") || e == "database") {
             n.category = "io";
         }
         for f in &g.reads {
@@ -2143,6 +2145,19 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
+    /// A database call by its receiver's name, unless that name is an import
+    /// from a library that is not a database (Flask's cookie `session`).
+    fn is_database(&self, a: &ast::ExprAttribute) -> bool {
+        if !effects::database(&squash(self.src().of(&*a.value)), a.attr.as_str()) {
+            return false;
+        }
+        let Some(root) = root_name(&a.value) else { return true };
+        match self.cx.ix.sym(self.mi, root) {
+            Some(Sym::Ext(p)) => ["sqlalchemy", "sqlmodel", "sqlite3", "psycopg", "psycopg2", "asyncpg", "pymongo", "motor", "peewee", "tortoise", "django.db", "databases", "duckdb", "mysql", "pymysql", "aiosqlite", "redis", "sqlglot", "pony"].iter().any(|l| p == l || p.starts_with(&format!("{l}."))),
+            _ => true,
+        }
+    }
+
     fn is_self(&self, e: &Expr) -> bool {
         matches!((e, &self.this), (Expr::Name(n), Some((this, _))) if n.id.as_str() == this)
     }
@@ -2324,6 +2339,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 if let Callee::Super = callee {
                     return vec![];
+                }
+                if let Expr::Attribute(a) = &*c.func {
+                    if self.is_database(a) {
+                        g.effects.insert("database".into());
+                    }
                 }
                 let name = callee_name(&callee, self);
                 let mut out = vec![];
@@ -2606,6 +2626,18 @@ impl<'c, 'p> Fb<'c, 'p> {
                 node_effects.insert(e.into());
             }
         }
+        let database = matches!(&*c.func, Expr::Attribute(a) if self.is_database(a));
+        let last = func_text.rsplit('.').next().unwrap_or(&func_text);
+        if matches!(last, "render_template" | "render" | "TemplateResponse" | "render_to_response" | "render_to_string" | "get_template" | "select_template" | "render_template_string") {
+            for a in c.arguments.args.iter().chain(c.arguments.keywords.iter().map(|k| &k.value)) {
+                if let Some(t) = string_literal(a).filter(|t| t.contains('.') && !t.contains(char::is_whitespace)) {
+                    self.cx.relations.push(Relation::Template { module: self.mi, name: t.to_string() });
+                }
+            }
+        }
+        if database {
+            node_effects.insert("database".into());
+        }
         if let Callee::Builtin(b) = callee {
             if b == "exec" || b == "eval" {
                 node_effects.insert("executes code".into());
@@ -2620,7 +2652,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let span = src.span(c.range());
             let n = self.cx.b.get_mut(id);
             n.subtitle = subtitle;
-            n.category = category;
+            n.category = if database && matches!(category, "op" | "library") { "io" } else { category };
             n.reference = reference;
             n.link = link.or(reference);
             n.code = compact(src.of(c), 200);
@@ -2990,7 +3022,18 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         n.doc = doc;
         n.span = Some(span);
         for d in &def.decorator_list {
-            n.badges.push(format!("@{}", compact(src.of(d), 20)));
+            n.badges.extend(super::frameworks::tag(d, |e| compact(src.of(e), 20)));
+        }
+        // ORM models are the database's tables: SQLModel `table=True`,
+        // Django `models.Model`, SQLAlchemy declarative bases.
+        let keywords = def.arguments.as_ref().map(|a| &a.keywords[..]).unwrap_or(&[]);
+        let table = keywords.iter().any(|k| k.arg.as_deref() == Some("table") && matches!(k.value, Expr::BooleanLiteral(ref b) if b.value))
+            || class_bases(def).iter().any(|b| {
+                let t = squash(src.of(b));
+                t.ends_with("models.Model") || t == "db.Model" || t == "DeclarativeBase" || t == "Base" && ext_base.is_none()
+            });
+        if table {
+            n.badges.push("DB table".into());
         }
     }
     if cx.ix.classes[cid].data {
@@ -3480,6 +3523,16 @@ fn fused_label(e: &Expr, src: &super::source::Source, g: &Gather, target: &str) 
             }
         }
         _ => {}
+    }
+    // A lone method call names the object it acts on: `session.get`, not `get`.
+    if let Expr::Call(c) = e {
+        if let Expr::Attribute(a) = &*c.func {
+            if let Expr::Name(recv) = &*a.value {
+                if calls.len() <= 1 {
+                    return clip(&format!("{}.{}", recv.id, a.attr), 28);
+                }
+            }
+        }
     }
     if !calls.is_empty() && calls.len() <= 3 && !matches!(e, Expr::BinOp(_) | Expr::Compare(_) | Expr::BoolOp(_)) {
         return calls.join(" · ");

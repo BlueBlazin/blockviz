@@ -116,6 +116,24 @@ fn web_app_entry_points_and_plumbing() {
 }
 
 #[test]
+fn compose_file_is_the_system_diagram() {
+    let s = scene("fastapi-template");
+    let compose = file(&s, "compose.yml");
+    assert_eq!(compose.subtitle, "4 services");
+    let backend = kid(&s, compose, "backend");
+    assert_eq!(s.nodes[backend.reference.unwrap() as usize].title, "backend/", "a built service zooms into its code");
+    assert_eq!(kid(&s, compose, "db").subtitle, "postgres:18");
+    let edges: Vec<(&str, &str)> = compose.edges.iter().map(|e| (s.nodes[e.from as usize].title.as_str(), s.nodes[e.to as usize].title.as_str())).collect();
+    assert!(edges.contains(&("db", "backend")), "{edges:?}");
+    assert!(edges.contains(&("proxy", "backend")), "{edges:?}");
+    // Database access and ORM tables are visible.
+    let models = file(&s, "backend/app/models.py");
+    assert!(kid(&s, models, "Item").badges.contains(&"DB table".into()));
+    let crud = file(&s, "backend/app/crud.py");
+    assert!(crud.effects.contains(&"database".into()));
+}
+
+#[test]
 fn library_modules_show_definitions_not_declarations() {
     let s = scene("httpx");
     for n in &s.nodes {
@@ -163,6 +181,14 @@ fn flask_views_and_signals() {
     let table = kids(&s, signals).into_iter().find(|n| n.kind == Kind::Table && n.title.ends_with("signal")).expect("signal table");
     assert!(table.rows.len() >= 8, "{}", table.rows.len());
     assert!(file(&s, "src/flask/__main__.py").badges.contains(&"entry point".into()));
+    // Views are linked to the templates they render; Flask's cookie session is not a database.
+    let templates = file(&s, "examples/tutorial/flaskr/templates/");
+    let parent = &s.nodes[templates.parent.unwrap() as usize];
+    for view in ["auth.py", "blog.py"] {
+        assert!(parent.edges.iter().any(|e| e.from == templates.id && s.nodes[e.to as usize].title == view && e.label == "template"), "templates → {view}");
+    }
+    assert!(!kid(&s, auth, "load_logged_in_user").effects.contains(&"database".into()));
+    assert!(kid(&s, auth, "register").effects.contains(&"database".into()));
 }
 
 #[test]

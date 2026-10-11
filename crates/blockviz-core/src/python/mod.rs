@@ -45,6 +45,8 @@ pub struct PyResult {
     pub execs: Vec<(u32, u32)>,
     /// (file, artifact name, is write)
     pub artifacts: Vec<(u32, String, bool)>,
+    /// (file, template path as written)
+    pub templates: Vec<(u32, String)>,
 }
 
 pub fn dotted_name(path: &str) -> (String, String) {
@@ -127,7 +129,7 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }
-    let mut result = PyResult { files: failed, execs: vec![], artifacts: vec![] };
+    let mut result = PyResult { files: failed, execs: vec![], artifacts: vec![], templates: vec![] };
     for (mi, m) in modules.iter().enumerate() {
         result.files.push(PyFile {
             file: m.file,
@@ -145,6 +147,7 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
         match r {
             Relation::Exec { from, to } => result.execs.push((modules[*from].file, modules[*to].file)),
             Relation::Artifact { module, name, write } => result.artifacts.push((modules[*module].file, name.clone(), *write)),
+            Relation::Template { module, name } => result.templates.push((modules[*module].file, name.clone())),
         }
     }
     let Ctx { b, .. } = cx;

@@ -315,6 +315,19 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             }
         }
     }
+    // Compose files show their services, each zooming into the code it builds.
+    for e in entries.iter().filter(|e| e.language == "YAML" && !e.hidden) {
+        let base = e.path.rsplit('/').next().unwrap_or(&e.path).to_ascii_lowercase();
+        if !(base.contains("compose") && (base.ends_with(".yml") || base.ends_with(".yaml"))) {
+            continue;
+        }
+        let services = crate::compose::services(e.text.as_deref().unwrap_or(""));
+        if services.is_empty() {
+            continue;
+        }
+        let dir = e.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        compose_services(&mut b, e.node, dir, &services, &dirs, root);
+    }
     // A directory of generated files (migrations) is one block.
     let generated_nodes: HashSet<Id> = entries.iter().filter(|e| e.generated).map(|e| e.node).collect();
     for &c in dirs.values() {
@@ -338,7 +351,9 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             .filter(|&k| {
                 let n = b.get(k);
                 let t = n.title.to_ascii_lowercase();
-                (n.kind == Kind::File && n.category == "config")
+                // A compose file's services are the system's architecture: it stays in view.
+                let services = n.subtitle.ends_with(" services");
+                (n.kind == Kind::File && n.category == "config" && !services)
                     || matches!(t.as_str(), "setup.py" | "noxfile.py" | "fabfile.py" | "setup.cfg" | "manifest.in")
                     // Hidden directories hold tooling: CI, editors, agents.
                     || (n.kind == Kind::Dir && t.starts_with('.'))
@@ -378,7 +393,22 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         }
     }
     // A directory holding a single item reads better as that item.
-    collapse_single_children(&mut b, root);
+    let mut replaced: HashMap<Id, Id> = HashMap::new();
+    collapse_single_children(&mut b, root, &mut replaced);
+    // References to directories folded into their only child follow the child.
+    if !replaced.is_empty() {
+        let follow = |mut id: Id| {
+            while let Some(&r) = replaced.get(&id) {
+                id = r;
+            }
+            id
+        };
+        for i in 0..b.len() {
+            let n = b.get_mut(i as Id);
+            n.reference = n.reference.map(follow);
+            n.link = n.link.map(follow);
+        }
+    }
 
     // Relations.
     let mut ports: HashMap<(Id, String, bool), Id> = HashMap::new();
@@ -416,6 +446,26 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         if linked.insert((a, c)) {
             let title = b.get(c).title.clone();
             lift_titled(&mut b, a, c, EdgeKind::Exec, label, &title, &mut ports);
+        }
+    }
+    // Templates a view renders, found under a templates directory.
+    for (module, name) in &py.templates {
+        if skip(*module) {
+            continue;
+        }
+        let name = name.trim_start_matches('/');
+        let hits: Vec<usize> = entries.iter().enumerate().filter(|(_, e)| e.path.ends_with(&format!("templates/{name}")) || (name.contains('/') && e.path.ends_with(&format!("/{name}")))).map(|(i, _)| i).collect();
+        let module_dir = entries[*module as usize].path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        // Prefer the template next to the view (a Flask app or Django app directory).
+        let t = match hits.as_slice() {
+            [one] => Some(*one),
+            many => many.iter().copied().find(|&h| entries[h].path.starts_with(module_dir)),
+        };
+        if let Some(t) = t {
+            let (a, c) = (entries[t].node, entries[*module as usize].node);
+            if !entries[t].hidden && linked.insert((a, c)) {
+                lift(&mut b, a, c, EdgeKind::Uses, "template", &mut ports);
+            }
         }
     }
     // Imports in other languages, resolved to files.
@@ -502,7 +552,8 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
 /// so dependency diagrams show their layering instead of a hairball.
 fn transitive_reduction(b: &mut Builder, container: Id) {
     let edges = &b.get(container).edges;
-    let uses: Vec<(Id, Id)> = edges.iter().filter(|e| e.kind == EdgeKind::Uses && !b.get(e.from).is_port() && !b.get(e.to).is_port()).map(|e| (e.from, e.to)).collect();
+    // Template edges say which view renders what; they are not dependencies to thin out.
+    let uses: Vec<(Id, Id)> = edges.iter().filter(|e| e.kind == EdgeKind::Uses && e.label != "template" && !b.get(e.from).is_port() && !b.get(e.to).is_port()).map(|e| (e.from, e.to)).collect();
     if uses.len() < 3 {
         return;
     }
@@ -625,6 +676,70 @@ fn subtree_is_static(b: &Builder, id: Id) -> bool {
         let n = b.get(c);
         matches!(n.kind, Kind::Doc | Kind::Asset) || (n.kind == Kind::Dir && subtree_is_static(b, c))
     })
+}
+
+/// A compose file's services: built ones zoom into the directory they are
+/// built from; image ones (databases, proxies) are plain blocks. Arrows run
+/// from a dependency to what depends on it, and from a proxy to what it routes to.
+fn compose_services(b: &mut Builder, node: Id, dir: &str, services: &[crate::compose::Service], dirs: &BTreeMap<String, Id>, root: Id) {
+    let norm = |p: &str| -> String {
+        let mut parts: Vec<&str> = dir.split('/').filter(|x| !x.is_empty()).collect();
+        for x in p.split('/') {
+            match x {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                x => parts.push(x),
+            }
+        }
+        parts.join("/")
+    };
+    b.get_mut(node).rows.clear();
+    let mut ids: HashMap<&str, Id> = HashMap::new();
+    for s in services {
+        let id = b.add(Some(node), Kind::Call, Shape::Box, s.name.clone());
+        // The code a service is built from: its Dockerfile's directory, else its context.
+        let code = match (&s.context, &s.dockerfile) {
+            (Some(c), Some(d)) => Some(norm(&format!("{c}/{d}")).rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()),
+            (Some(c), None) => Some(norm(c)),
+            (None, _) => None,
+        };
+        let target = code.as_deref().and_then(|c| if c.is_empty() { Some(root) } else { dirs.get(c).copied() });
+        let image = s.image.split(':').next().unwrap_or("").rsplit('/').next().unwrap_or("");
+        let n = b.get_mut(id);
+        n.subtitle = match (&code, s.image.is_empty()) {
+            (Some(c), _) if !c.is_empty() => format!("build {c}/"),
+            (_, false) => s.image.clone(),
+            _ => "service".into(),
+        };
+        n.category = if target.is_some() && target != Some(root) {
+            "component"
+        } else if matches!(image, "postgres" | "postgis" | "mysql" | "mariadb" | "mongo" | "redis" | "valkey" | "memcached" | "elasticsearch" | "opensearch" | "rabbitmq" | "kafka" | "minio" | "qdrant" | "clickhouse") {
+            "io"
+        } else {
+            "library"
+        };
+        if let Some(t) = target.filter(|&t| t != root) {
+            n.reference = Some(t);
+            n.link = Some(t);
+        }
+        ids.insert(s.name.as_str(), id);
+    }
+    let proxy = services.iter().find(|s| ["traefik", "nginx", "caddy", "haproxy", "envoy"].iter().any(|p| s.image.contains(p))).map(|s| ids[s.name.as_str()]);
+    for s in services {
+        let to = ids[s.name.as_str()];
+        for d in &s.depends_on {
+            if let Some(&from) = ids.get(d.as_str()) {
+                b.connect(from, to, EdgeKind::Uses, "");
+            }
+        }
+        if let (Some(p), true) = (proxy, s.routed) {
+            b.connect(p, to, EdgeKind::Data, "routes");
+        }
+    }
+    let n = b.get_mut(node);
+    n.subtitle = format!("{} services", services.len());
 }
 
 /// Replaces a script's outline with its pipeline: one step per program it
@@ -778,10 +893,10 @@ fn all_generated(b: &Builder, id: Id, generated: &HashSet<Id>, files: &mut Vec<I
     })
 }
 
-fn collapse_single_children(b: &mut Builder, id: Id) {
+fn collapse_single_children(b: &mut Builder, id: Id, replaced: &mut HashMap<Id, Id>) {
     let kids = b.get(id).children.clone();
     for k in kids {
-        collapse_single_children(b, k);
+        collapse_single_children(b, k, replaced);
     }
     for k in b.get(id).children.clone() {
         let n = b.get(k);
@@ -803,6 +918,7 @@ fn collapse_single_children(b: &mut Builder, id: Id) {
         b.get_mut(id).children[pos] = only;
         b.get_mut(k).children.clear();
         b.get_mut(k).parent = None;
+        replaced.insert(k, only);
     }
 }
 

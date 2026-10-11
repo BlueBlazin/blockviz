@@ -290,6 +290,14 @@ impl Builder {
         &self.nodes[id as usize]
     }
 
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
     pub fn get_mut(&mut self, id: Id) -> &mut Node {
         &mut self.nodes[id as usize]
     }

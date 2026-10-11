@@ -49,6 +49,8 @@ The goal is blocks a reader would name, not a syntax tree.
 * A shell script that runs several programs is a pipeline: zoom into `speedrun.sh` to see its steps in order, and into a step to see the program it runs.
 * Library modules show their definitions. `__all__` lists, type aliases, loggers and optional or type-checking imports are not blocks; constants gather into one table. Runs of calls on one object (`session.add → commit → refresh`, `parser.add_argument` × 12) are one block or table.
 * Generated code (migrations, protobuf stubs, files marked "auto-generated") is a single block, and empty `__init__.py` files are not drawn.
+* A Docker Compose file is the system diagram: its services, what each depends on, what the proxy routes to, and, for services built from the repository, the code they are built from (zoom in).
+* Database access (sessions, cursors, ORM managers) is marked as I/O, ORM models are tagged as tables, and views link to the templates they render.
 
 ### Other languages
 
@@ -62,6 +64,7 @@ crates/blockviz-core/          Rust → WebAssembly
   src/python/                  source + comments, symbol index and type inference, flow builder, effects
   src/python/frameworks.rs     routes, commands and tasks from framework decorators
   src/invocations.rs           commands in scripts and manifests that run project code
+  src/compose.rs               Docker Compose services
   src/outline.rs               non-Python outlines and imports
   src/highlight/               syntax classes for the source view: Ruff's tokens and tree for
                                Python, table-driven lexers for other languages and formats
