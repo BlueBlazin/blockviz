@@ -3,6 +3,7 @@
 
 pub mod effects;
 pub mod flow;
+pub mod frameworks;
 pub mod index;
 pub mod source;
 pub mod walk;
@@ -33,6 +34,10 @@ pub struct PyFile {
     pub imports: Vec<(u32, Vec<String>)>,
     pub externals: BTreeSet<String>,
     pub error: Option<String>,
+    /// Creates the application object a server or CLI runs (`app = FastAPI()`).
+    pub app: bool,
+    /// Framework roles of its functions: routes, commands, tasks, hooks.
+    pub handlers: Vec<frameworks::Handler>,
 }
 
 pub struct PyResult {
@@ -71,7 +76,7 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
             diagnostics.push(format!("Skipped {}: {why}", input.path));
             let node = b.add(None, if input.notebook { Kind::Notebook } else { Kind::File }, Shape::Box, input.path.rsplit('/').next().unwrap_or(&input.path));
             b.get_mut(node).badges.push("too complex".into());
-            failed.push(PyFile { file: input.file, node, entry: false, doc: String::new(), imports: vec![], externals: BTreeSet::new(), error: Some(why) });
+            failed.push(PyFile { file: input.file, node, entry: false, doc: String::new(), imports: vec![], externals: BTreeSet::new(), error: Some(why), app: false, handlers: vec![] });
             continue;
         }
         // Ruff's parser recovers from syntax errors: a file with a typo still
@@ -110,7 +115,15 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
     let ix = Index::build(&modules, |name, class| b.add(None, if class { Kind::Class } else { Kind::Function }, Shape::Box, name));
     let module_by_path: HashMap<String, usize> = modules.iter().enumerate().map(|(i, m)| (m.path.clone(), i)).collect();
     let n = modules.len();
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path };
+    let mut imported = vec![false; n];
+    for (mi, imps) in ix.imports.iter().enumerate() {
+        for (t, _) in imps {
+            if *t != mi {
+                imported[*t] = true;
+            }
+        }
+    }
+    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new() };
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }
@@ -124,6 +137,8 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
             imports: cx.ix.imports[mi].iter().map(|(t, names)| (modules[*t].file, names.clone())).collect(),
             externals: cx.ix.externals[mi].clone(),
             error: m.error.clone(),
+            app: cx.app[mi],
+            handlers: cx.handlers[mi].clone(),
         });
     }
     for r in &cx.relations {

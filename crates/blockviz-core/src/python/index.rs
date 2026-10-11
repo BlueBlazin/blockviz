@@ -350,12 +350,17 @@ impl<'p> Index<'p> {
                         let local = a.asname.as_ref().unwrap_or(&a.name).to_string();
                         let sym = match target {
                             Some(t) => {
-                                names.push(name.clone());
-                                // `from pkg import submodule`
+                                // `from pkg import submodule` imports the submodule, not the package.
                                 let sub = format!("{}.{}", self.modules[t].dotted, name);
                                 match self.by_dotted.get(&sub) {
-                                    Some(&s) => Sym::Module(s),
-                                    None => Sym::Member(t, name.clone()),
+                                    Some(&s) => {
+                                        self.note_import(mi, s, vec![]);
+                                        Sym::Module(s)
+                                    }
+                                    None => {
+                                        names.push(name.clone());
+                                        Sym::Member(t, name.clone())
+                                    }
                                 }
                             }
                             None => {
@@ -370,7 +375,9 @@ impl<'p> Index<'p> {
                         }
                     }
                     if let Some(t) = target {
-                        self.note_import(mi, t, names);
+                        if !names.is_empty() || x.names.iter().any(|a| a.name.as_str() == "*") {
+                            self.note_import(mi, t, names);
+                        }
                     }
                 }
                 Stmt::If(x) => {

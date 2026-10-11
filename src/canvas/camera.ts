@@ -1,4 +1,4 @@
-import { boxOf, covers, frame, smoothPath, viewOf, xfOf, zoomAt, type Box, type View, type Xf } from './geometry';
+import { boxOf, covers, frameIn, NO_INSETS, smoothPath, viewOf, xfOf, zoomAt, type Box, type Insets, type View, type Xf } from './geometry';
 import type { SceneModel } from './model';
 
 /**
@@ -11,6 +11,8 @@ import type { SceneModel } from './model';
 export class Camera {
   path: number[];
   xf: Xf = { x: 0, y: 0, s: 1 };
+  /** Overlays covering the screen's edges; framing centres in what is left. */
+  insets: Insets = NO_INSETS;
 
   constructor(private model: SceneModel) {
     this.path = [model.root];
@@ -90,7 +92,7 @@ export class Camera {
     const base = target.slice(0, lca + 1);
     const xfs = this.transforms();
     const from: View = viewOf(xfs[lca], width, height);
-    const to: View = target.length - 1 > lca ? frame(this.boxIn(target, lca), width, height, pad) : this.contentView(target[lca], width, height, pad);
+    const to: View = target.length - 1 > lca ? frameIn(this.boxIn(target, lca), width, height, pad, this.insets) : this.contentView(target[lca], width, height, pad);
     const path = smoothPath(from, to);
     const duration = Math.min(1400, Math.max(320, path.length * 260));
     return {
@@ -106,7 +108,7 @@ export class Camera {
   /** View framing a node's whole interior in its own interior frame. */
   contentView(id: number, width: number, height: number, pad = 0.06): View {
     const owner = this.model.owner(this.model.node(id)) ?? this.model.node(id);
-    return frame({ x: 0, y: 0, w: owner.cw ?? 1, h: owner.ch ?? 1 }, width, height, pad);
+    return frameIn({ x: 0, y: 0, w: owner.cw ?? 1, h: owner.ch ?? 1 }, width, height, pad, this.insets);
   }
 
   fitRoot(width: number, height: number) {

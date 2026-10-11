@@ -19,6 +19,7 @@ const light: Record<string, Swatch> = {
   // General code roles.
   component: { fill: '#f9e2cb', tint: '#fef8f2' },
   function: { fill: '#d6e7fa', tint: '#f4f8fe' },
+  endpoint: { fill: '#e6d9f7', tint: '#f8f4fd' },
   class: { fill: '#dde0f8', tint: '#f6f7fe' },
   library: { fill: '#e9e9f1', tint: '#f8f8fb' },
   io: { fill: '#cdeadf', tint: '#f1faf6' },
@@ -67,6 +68,7 @@ export function swatch(category: string): Swatch {
 /** Categories whose names carry meaning in a legend. */
 export const legend: [string, string][] = [
   ['function', 'Function / method'],
+  ['endpoint', 'Route, command or task'],
   ['class', 'Class'],
   ['component', 'Sub-module'],
   ['library', 'Library call'],

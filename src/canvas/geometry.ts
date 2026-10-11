@@ -51,6 +51,20 @@ export function frame(b: Box, width: number, height: number, pad = 0.12): View {
   return { cx: b.x + b.w / 2, cy: b.y + b.h / 2, w };
 }
 
+/** Screen margins covered by overlays (toolbars, the details panel). */
+export interface Insets { top: number; right: number; bottom: number; left: number }
+export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+/** Like `frame`, but centres the box in the part of the screen overlays leave visible. */
+export function frameIn(b: Box, width: number, height: number, pad: number, i: Insets): View {
+  const vw = Math.max(width - i.left - i.right, width * 0.3);
+  const vh = Math.max(height - i.top - i.bottom, height * 0.3);
+  const v = frame(b, vw, vh, pad);
+  const w = (v.w * width) / vw;
+  const k = w / width;
+  return { cx: v.cx - ((i.left - i.right) / 2) * k, cy: v.cy - ((i.top - i.bottom) / 2) * k, w };
+}
+
 /**
  * Smooth and efficient zooming and panning (van Wijk & Nuij, 2003): the
  * perceptually shortest path between two views zooms out, pans, then zooms in.

@@ -11,7 +11,7 @@ npm run dev          # http://127.0.0.1:5173 (run `npm run wasm` once first)
 npm test             # vitest + cargo test
 ```
 
-Open a GitHub repository (`#github=owner/repo` in the URL works too), a local folder (picker or drag-and-drop), or paste a single file. The bundled example is [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) (MIT), which also serves as the test fixture.
+Open a GitHub repository (`#github=owner/repo` in the URL works too), a local folder (picker or drag-and-drop), or paste a single file. The bundled example is [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) (MIT), which also serves as the main test fixture; `tests/corpus.rs` checks the abstractions on trimmed snapshots of a FastAPI app, httpx, nanochat, Flask, a Django site and HTTPie.
 
 A command-line view of the same analysis helps when tuning abstractions:
 
@@ -44,6 +44,11 @@ The goal is blocks a reader would name, not a syntax tree.
 * Long scripts are split into sections at comment-headed paragraphs (`# model init`, `# training loop`); runs of constants become a settings table.
 * Light types name things the way a reader would: `self.transformer.wte(idx)` is an `Embedding`, `block` is a `Block`, `model.configure_optimizers` is `GPT.configure_optimizers`.
 * Dependency diagrams are transitively reduced so their layering shows; a file's full import list is in the inspector.
+* Framework code says what it is: `@router.get("/{id}")` on a router with `prefix="/items"` is the endpoint `GET /items/{id}`; click and Typer commands, Celery tasks and request hooks are labelled the same way, and Django `urlpatterns` become a route table.
+* Files get roles a reader would use: app (creates `FastAPI()`, `Flask()`, a WSGI app), routes, script, tests, config (Django settings, Sphinx `conf.py`), module. Entry points come from main guards, `__main__.py`, app objects, and anything a script, Dockerfile, CI workflow, Makefile, compose file or `pyproject.toml`/`setup.cfg` console script runs.
+* A shell script that runs several programs is a pipeline: zoom into `speedrun.sh` to see its steps in order, and into a step to see the program it runs.
+* Library modules show their definitions. `__all__` lists, type aliases, loggers and optional or type-checking imports are not blocks; constants gather into one table. Runs of calls on one object (`session.add → commit → refresh`, `parser.add_argument` × 12) are one block or table.
+* Generated code (migrations, protobuf stubs, files marked "auto-generated") is a single block, and empty `__init__.py` files are not drawn.
 
 ### Other languages
 
@@ -55,6 +60,8 @@ Every text file is handled. Notebooks are analyzed as Python (cells become secti
 crates/blockviz-core/          Rust → WebAssembly
   src/ir.rs                    the scene: one tree of nested, laid-out diagrams
   src/python/                  source + comments, symbol index and type inference, flow builder, effects
+  src/python/frameworks.rs     routes, commands and tasks from framework decorators
+  src/invocations.rs           commands in scripts and manifests that run project code
   src/outline.rs               non-Python outlines and imports
   src/highlight/               syntax classes for the source view: Ruff's tokens and tree for
                                Python, table-driven lexers for other languages and formats

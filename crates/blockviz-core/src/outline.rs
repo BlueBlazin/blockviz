@@ -36,7 +36,6 @@ pub struct Outline {
     pub symbols: Vec<OSym>,
     pub rows: Vec<Row>,
     pub doc: String,
-    pub refs: Vec<String>,
     /// Module specifiers this file imports, as written (`./camera`, `crate::ir`, `util.h`).
     pub imports: Vec<String>,
 }
@@ -276,6 +275,8 @@ fn leading_comment(text: &str) -> String {
 }
 
 /// First paragraph of a markdown/rst/text document, without markup.
+/// The paragraph that introduces a document: prose right after its title,
+/// before any section. Lists, tables, badges and notices are not descriptions.
 fn doc_summary(text: &str) -> String {
     let mut para: Vec<String> = vec![];
     let mut in_code = false;
@@ -285,9 +286,14 @@ fn doc_summary(text: &str) -> String {
             in_code = !in_code;
             continue;
         }
-        if in_code || t.starts_with('#') || t.starts_with("![") || t.starts_with('<') || t.starts_with("[!") || t.starts_with("===") || t.starts_with("---") {
+        let list = rx!(r"^(?:[-*+]\s|\d+[.)]\s|\|)").is_match(t);
+        if in_code || list || t.starts_with('#') || t.starts_with("![") || t.starts_with('<') || t.starts_with("[!") || t.starts_with("[![") || t.starts_with("===") || t.starts_with("---") || t.starts_with("..") {
             if !para.is_empty() && !in_code {
                 break;
+            }
+            // A section reached before any prose: the document has no introduction.
+            if t.starts_with("##") && !in_code {
+                return String::new();
             }
             continue;
         }
@@ -341,7 +347,6 @@ pub fn outline(lang: &str, text: &str) -> Outline {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
                 json_rows(&v, "", &mut out.rows, 0);
             }
-            out.refs = file_mentions(text);
             return out;
         }
         "YAML" | "TOML" | "INI" | "Env" => {
@@ -370,7 +375,6 @@ pub fn outline(lang: &str, text: &str) -> Outline {
                 }
             }
             let _ = section;
-            out.refs = file_mentions(text);
             return out;
         }
         "Requirements" => {
@@ -388,7 +392,6 @@ pub fn outline(lang: &str, text: &str) -> Outline {
             for c in rx!(r"(?m)^\s*(FROM|RUN|COPY|ADD|CMD|ENTRYPOINT|ENV|WORKDIR|EXPOSE|ARG)\s+(.*)$").captures_iter(text).take(40) {
                 out.rows.push(Row { key: c[1].to_string(), value: clip(&squash(&c[2]), 44), note: String::new(), heading: false });
             }
-            out.refs = file_mentions(text);
             out.doc = leading_comment(text);
             return out;
         }
@@ -454,7 +457,6 @@ pub fn outline(lang: &str, text: &str) -> Outline {
         }
     }
     out.symbols = keep;
-    out.refs = file_mentions(text);
     out.imports = imports(lang, text);
     out
 }
@@ -500,19 +502,6 @@ fn json_rows(v: &serde_json::Value, prefix: &str, rows: &mut Vec<Row>, depth: u3
 }
 
 /// Tokens that look like paths to other source/config files.
-pub fn file_mentions(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = vec![];
-    for c in rx!(r"[\w./-]+\.(?:py|sh|bash|js|mjs|ts|yaml|yml|json|toml|cfg|ini|cu|cuh|cpp|cc|c|h|hpp|rs|go|rb|lua|sql|ipynb)\b").find_iter(text) {
-        let t = c.as_str().trim_start_matches("./").to_string();
-        if !t.contains("://") && !out.contains(&t) {
-            out.push(t);
-        }
-        if out.len() >= 64 {
-            break;
-        }
-    }
-    out
-}
 
 /// Import specifiers for languages whose module systems map onto files.
 pub fn imports(lang: &str, text: &str) -> Vec<String> {
@@ -574,11 +563,5 @@ mod tests {
     fn env_values_are_masked() {
         let o = outline("Env", "API_KEY=secret\n");
         assert_eq!(o.rows[0].value, "•••");
-    }
-    #[test]
-    fn shell_mentions_scripts() {
-        let o = outline("Shell", "#!/bin/bash\npython train.py config/train_gpt2.py\n");
-        assert!(o.refs.contains(&"train.py".to_string()));
-        assert!(o.refs.contains(&"config/train_gpt2.py".to_string()));
     }
 }

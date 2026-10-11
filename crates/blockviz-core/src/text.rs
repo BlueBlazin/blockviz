@@ -69,7 +69,9 @@ pub fn clip(s: &str, max: usize) -> String {
 /// natural boundary. Returns `None` for decorative rulers and code-like comments.
 pub fn heading(comment: &str) -> Option<String> {
     let t = comment.trim().trim_start_matches('#').trim();
-    if t.len() < 2 || t.chars().all(|c| !c.is_alphanumeric()) {
+    // Cell and folding markers introduce a title: `# %% Load data`, `# region Setup`.
+    let t = t.strip_prefix("%%").or_else(|| t.strip_prefix("region ")).map(str::trim).unwrap_or(t);
+    if is_directive(t) || t.len() < 2 || t.chars().all(|c| !c.is_alphanumeric()) {
         return None;
     }
     if looks_like_code(t) {
@@ -102,6 +104,16 @@ pub fn heading(comment: &str) -> Option<String> {
     let mut chars = t.chars();
     let first = chars.next()?;
     Some(first.to_uppercase().chain(chars).collect())
+}
+
+/// Tool directives, notes and links (`# noqa`, `# type: ignore`, `# TODO`,
+/// `# https://…`) annotate code; they never title it.
+pub fn is_directive(comment: &str) -> bool {
+    let t = comment.trim().trim_start_matches('#').trim().to_ascii_lowercase();
+    const PREFIXES: &[&str] = &[
+        "noqa", "type:", "noinspection", "pylint:", "pyright:", "mypy:", "fmt:", "isort:", "pragma", "nosec", "ruff:", "flake8", "coding:", "coding=", "-*-", "!", "todo", "fixme", "xxx", "hack", "note:", "nb:", "http://", "https://", "see ", "see:", "cf.", "endregion", "in[", "pyformat:", "yapf:", "black:", "spellchecker:", "cspell:",
+    ];
+    PREFIXES.iter().any(|p| t.starts_with(p))
 }
 
 /// Commented-out code (`x = 1`, `foo(bar)`, `>>> ...`) is not prose.

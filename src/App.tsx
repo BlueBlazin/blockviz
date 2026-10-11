@@ -4,6 +4,7 @@ import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubProject, pastedProject } from './core/loaders';
 import type { Project, Scene } from './core/types';
 import { Engine, type ViewState } from './canvas/engine';
+import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
 import { legend, swatch } from './canvas/theme';
 import { Highlights } from './core/highlights';
@@ -17,6 +18,17 @@ const storage = {
   get(key: string) { try { return localStorage.getItem(key) ?? ''; } catch { return ''; } },
   set(key: string, value: string) { try { localStorage.setItem(key, value); } catch { /* optional */ } },
 };
+
+/** Screen margins covered by the top bar, footer and (when open) the details panel. */
+function overlayInsets(panelOpen: boolean, panel: PanelSize): Insets {
+  const narrow = window.matchMedia('(max-width: 760px)').matches;
+  return {
+    top: narrow ? 100 : 56,
+    right: panelOpen && !narrow ? panel.w + 24 : 12,
+    bottom: panelOpen && narrow ? (panel.h || window.innerHeight * 0.46) + 24 : 52,
+    left: 12,
+  };
+}
 
 export default function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -85,13 +97,19 @@ export default function App() {
     const e = new Engine(canvas.current, loaded.model, {
       onView: setView,
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); },
-    });
+    }, overlayInsets(false, DEFAULT_PANEL));
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
     return () => { e.dispose(); if (engine.current === e) engine.current = null; };
   }, [loaded]);
 
   useEffect(() => engine.current?.select(selected), [selected]);
+
+  // Framing keeps blocks clear of the top bar, footer and details panel.
+  const panelOpen = selected !== null;
+  useEffect(() => {
+    engine.current?.setInsets(overlayInsets(panelOpen, panel));
+  }, [panelOpen, panel, loaded]);
 
   useEffect(() => {
     const t = setTimeout(() => { storage.set('blockviz.panel.w', String(panel.w)); storage.set('blockviz.panel.h', String(panel.h)); }, 300);
@@ -107,8 +125,10 @@ export default function App() {
   const goTo = useCallback((id: number) => {
     setSelected(id);
     setSelectedPath(loaded?.model.canonicalPath(id) ?? null);
+    // The panel opens with this selection: frame the block beside it.
+    engine.current?.setInsets(overlayInsets(true, panel));
     engine.current?.flyToNode(id);
-  }, [loaded]);
+  }, [loaded, panel]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {

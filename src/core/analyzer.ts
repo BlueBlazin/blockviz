@@ -21,7 +21,7 @@ export class Analyzer {
         reject(new Error(`Analysis took longer than ${timeoutMs / 1000}s. Try a smaller folder.`));
       }, timeoutMs);
     });
-    const work = this.call({ kind: 'analyze', name: project.name, files: project.files }).then(r => {
+    const work = this.call({ kind: 'analyze', name: project.name, description: project.description, files: project.files }).then(r => {
       // WebAssembly memory never shrinks, and analysis can grow it to
       // gigabytes: drop that worker and keep a fresh one for highlighting.
       this.cancel();

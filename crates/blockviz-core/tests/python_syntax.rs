@@ -36,7 +36,8 @@ fn python_3_8_and_3_9() {
     clean(&s);
     let f = find(&s, "scale");
     assert_eq!(f.inputs, ["values", "factor", "clamp"]);
-    assert!(f.badges.iter().any(|b| b.starts_with("@buttons[0].cache")));
+    // The relaxed decorator expression `@buttons[0].cache` is functools.cache.
+    assert!(f.badges.iter().any(|b| b == "cached"), "{:?}", f.badges);
 }
 
 #[test]

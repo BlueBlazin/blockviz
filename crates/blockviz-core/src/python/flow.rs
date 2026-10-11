@@ -17,10 +17,11 @@
 //!   diagram has explicit inputs (top) and outputs (bottom).
 
 use super::effects::{self, Io};
+use super::frameworks::{self, Handler};
 use super::index::*;
 use super::walk;
 use crate::ir::*;
-use crate::text::{clip, heading, squash, summary};
+use crate::text::{clip, heading, is_directive, squash, summary};
 use ruff_python_ast::{self as ast, Expr, Stmt};
 use ruff_text_size::{Ranged, TextRange};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -39,6 +40,14 @@ pub struct Ctx<'p> {
     pub entry: Vec<bool>,
     /// Repo-relative paths of every file, for resolving `exec(open('x.py'))`.
     pub module_by_path: HashMap<String, usize>,
+    /// Modules some other project module imports.
+    pub imported: Vec<bool>,
+    /// Modules that create an application object (`app = FastAPI()`).
+    pub app: Vec<bool>,
+    /// Framework roles found among each module's functions.
+    pub handlers: Vec<Vec<Handler>>,
+    /// Router prefixes per module, computed on first use.
+    pub prefixes: HashMap<usize, HashMap<String, String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -132,6 +141,11 @@ pub struct Fb<'c, 'p> {
     globals_declared: HashSet<String>,
     /// Loop variables that alias elements of a collection (`param_group` → `optimizer`).
     loop_alias: HashMap<String, String>,
+    /// An imported module without a main guard: its top level defines things
+    /// rather than doing things, so its constants form one table.
+    library: bool,
+    /// Module-level statements already accounted for by `declarations`.
+    handled: HashSet<u32>,
 }
 
 fn compact(s: &str, max: usize) -> String {
@@ -180,6 +194,8 @@ impl<'c, 'p> Fb<'c, 'p> {
             out_ports: HashMap::new(),
             globals_declared: HashSet::new(),
             loop_alias: HashMap::new(),
+            library: false,
+            handled: HashSet::new(),
         }
     }
 
@@ -189,11 +205,14 @@ impl<'c, 'p> Fb<'c, 'p> {
         let root = cx.file_nodes[mi];
         let modules: &'p [PyModule] = cx.ix.modules;
         let m = &modules[mi];
+        let library = cx.imported[mi] && !m.ast.iter().any(|s| matches!(s, Stmt::If(x) if is_main_guard(&x.test)));
         let mut fb = Fb::new(cx, mi, root);
         fb.module_level = true;
+        fb.library = library;
         // Nothing runs after the module body, so nothing is "read later" at its end.
         let later = HashSet::new();
         let body: &'p [Stmt] = if docstring(&m.ast).is_some() { &m.ast[1..] } else { &m.ast };
+        fb.declarations(body);
         fb.statements(body, &later, true);
         let effects = fb.regions[0].effects.clone();
         fb.cx.b.get_mut(root).effects.extend(effects);
@@ -352,6 +371,9 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut total = 0;
         let mut in_settings = false;
         for s in stmts {
+            if self.handled.contains(&u32::from(s.start())) {
+                continue;
+            }
             let u = match s {
                 Stmt::Expr(e) => match &*e.value {
                     e if is_constant(e) => 0,
@@ -409,7 +431,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                             j += 1;
                         }
                         if j > start && (j == end || j - start >= 4) {
-                            self.settings(&stmts[start..j], title.take(), std::mem::take(&mut doc));
+                            let run: Vec<&'p Stmt> = stmts[start..j].iter().collect();
+                            self.settings(&run, title.take(), std::mem::take(&mut doc));
                             start = j;
                             if start == end {
                                 continue;
@@ -418,9 +441,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                     }
                     let slice = &stmts[start..end];
                     let units = self.units(slice);
+                    let defs = slice.iter().filter(|s| matches!(s, Stmt::FunctionDef(_) | Stmt::ClassDef(_))).count();
                     match title {
                         Some(t) if units >= 3 => self.section(t, doc, slice, &suffix[end]),
-                        None if units >= 5 => {
+                        // Untitled runs of code get a generated title; runs of definitions don't need one.
+                        None if units >= 5 && defs * 2 < slice.len() => {
                             let t = self.generated_title(slice);
                             self.section(t, doc, slice, &suffix[end])
                         }
@@ -450,10 +475,12 @@ impl<'c, 'p> Fb<'c, 'p> {
             };
             if new_para {
                 let comments = src.comments_above(start_line);
-                let title = comments.iter().find_map(|c| heading(&c.text));
-                let doc = comments.iter().map(|c| c.text.trim_start_matches('#').trim()).filter(|t| !t.chars().all(|c| !c.is_alphanumeric())).collect::<Vec<_>>().join(" ");
-                if title.is_none() && paras.last().is_some_and(|p| p.2.is_some()) {
-                    // An untitled paragraph continues the titled one before it.
+                let title = comment_title(&comments);
+                let doc = comments.iter().map(|c| c.text.trim_start_matches('#').trim()).filter(|t| !t.chars().all(|c| !c.is_alphanumeric()) && !is_directive(t)).collect::<Vec<_>>().join(" ");
+                // An untitled paragraph continues the titled one before it, unless it
+                // starts a definition: definitions stand on their own.
+                let definition = matches!(s, Stmt::FunctionDef(_) | Stmt::ClassDef(_));
+                if title.is_none() && !definition && paras.last().is_some_and(|p| p.2.is_some()) {
                     paras.last_mut().unwrap().1 = i + 1;
                     continue;
                 }
@@ -514,6 +541,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut i = 0;
         let first_child = self.cx.b.get(self.container()).children.len();
         while i < stmts.len() {
+            if self.handled.contains(&u32::from(stmts[i].start())) {
+                i += 1;
+                continue;
+            }
             if self.module_level && self.is_setting(&stmts[i]) {
                 let mut j = i + 1;
                 while j < stmts.len() && self.is_setting(&stmts[j]) {
@@ -521,8 +552,23 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 let t = if i == 0 { title.clone() } else { None };
                 let d = if i == 0 { doc.clone() } else { String::new() };
-                self.settings(&stmts[i..j], t, d);
+                let run: Vec<&'p Stmt> = stmts[i..j].iter().collect();
+                self.settings(&run, t, d);
                 i = j;
+                continue;
+            }
+            // `session.add(x); session.commit()` and `parser.add_argument(…)` × 12
+            // say one thing to a reader: fuse runs of calls on one receiver.
+            let run = self.call_run(stmts, i);
+            if run > i + 1 {
+                self.fused_run(&stmts[i..run], &suffix[run]);
+                i = run;
+                continue;
+            }
+            let run = self.assign_run(stmts, i);
+            if run > i + 2 {
+                self.fused_run(&stmts[i..run], &suffix[run]);
+                i = run;
                 continue;
             }
             self.stmt(&stmts[i], &suffix[i + 1]);
@@ -541,6 +587,512 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
+    // ----- fused runs ---------------------------------------------------------------
+
+    /// The receiver and method of a statement that is a library method call:
+    /// `session.commit()`, `parser.add_argument(...)`.
+    /// Also says whether the method is project code (`group.add_argument(...)`
+    /// on a project class), which only fuses as a table of identical calls.
+    fn receiver_call(&self, s: &Stmt) -> Option<(String, String, bool)> {
+        let Stmt::Expr(e) = s else { return None };
+        let Expr::Call(c) = &*e.value else { return None };
+        let Expr::Attribute(a) = &*c.func else { return None };
+        if self.is_print(c) || is_super(c) || contains_call(&a.value) || !matches!(&*a.value, Expr::Name(_) | Expr::Attribute(_)) || self.is_self(&a.value) {
+            return None;
+        }
+        let recv = squash(self.src().of(&*a.value));
+        match self.classify(c) {
+            Callee::Method(_) | Callee::Ext(_) => Some((recv, a.attr.to_string(), false)),
+            Callee::Func(_) => Some((recv, a.attr.to_string(), true)),
+            _ => None,
+        }
+    }
+
+    /// End of a run of at least two calls on one receiver starting at `i`.
+    fn call_run(&self, stmts: &[Stmt], i: usize) -> usize {
+        let Some((recv, method, _)) = self.receiver_call(&stmts[i]) else { return i };
+        let mut j = i + 1;
+        let mut project = false;
+        while j < stmts.len() && !self.handled.contains(&u32::from(stmts[j].start())) {
+            match self.receiver_call(&stmts[j]) {
+                Some((r, m, p)) if r == recv => {
+                    project |= p || self.receiver_call(&stmts[i]).is_some_and(|x| x.2);
+                    if project && m != method {
+                        break;
+                    }
+                    j += 1;
+                }
+                _ => break,
+            }
+        }
+        // Project calls keep their own blocks unless they repeat as a table.
+        if project && j - i < 3 {
+            return i;
+        }
+        j
+    }
+
+    /// End of a run of module-level assignments from one callee
+    /// (`template_rendered = _signals.signal("template-rendered")` × 10).
+    fn assign_run(&self, stmts: &[Stmt], i: usize) -> usize {
+        if !self.module_level {
+            return i;
+        }
+        let callee = |s: &Stmt| match s {
+            Stmt::Assign(a) if a.targets.len() == 1 && matches!(a.targets[0], Expr::Name(_)) => match &*a.value {
+                Expr::Call(c) if !contains_call(&c.func) => Some(squash(self.src().of(&*c.func))),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(f) = callee(&stmts[i]) else { return i };
+        let mut j = i + 1;
+        while j < stmts.len() && !self.handled.contains(&u32::from(stmts[j].start())) && callee(&stmts[j]).as_ref() == Some(&f) {
+            j += 1;
+        }
+        j
+    }
+
+    /// Builds a run's statements as usual, then merges their blocks into one:
+    /// a table when the same call repeats (each row one call), else one block
+    /// naming the steps (`session` · add → commit → refresh).
+    fn fused_run(&mut self, stmts: &'p [Stmt], later: &HashSet<String>) {
+        let container = self.container();
+        let before: HashSet<Id> = self.cx.b.get(container).children.iter().copied().collect();
+        for (k, s) in stmts.iter().enumerate() {
+            let _ = k;
+            self.stmt(s, later);
+        }
+        let made: Vec<Id> = self.cx.b.get(container).children.iter().copied().filter(|c| !before.contains(c) && !self.cx.b.get(*c).is_port()).collect();
+        if made.len() < 2 {
+            return;
+        }
+        let src = self.src();
+        // What each statement does, for titles and rows.
+        let mut recv = String::new();
+        let mut methods: Vec<String> = vec![];
+        let mut rows: Vec<Row> = vec![];
+        let mut names: Vec<String> = vec![];
+        for s in stmts {
+            let (call, target) = match s {
+                Stmt::Expr(e) => (&*e.value, None),
+                Stmt::Assign(a) => (&*a.value, Some(src.of(&a.targets[0]).to_string())),
+                _ => continue,
+            };
+            let Expr::Call(c) = call else { continue };
+            let args: Vec<String> = c.arguments.args.iter().map(|a| compact(src.of(a), 40)).chain(c.arguments.keywords.iter().map(|k| compact(src.of(k), 40))).collect();
+            match &*c.func {
+                Expr::Attribute(a) if target.is_none() => {
+                    recv = squash(src.of(&*a.value));
+                    methods.push(a.attr.to_string());
+                }
+                f => methods.push(squash(src.of(f))),
+            }
+            match target {
+                Some(t) => {
+                    rows.push(Row { key: t.clone(), value: clip(&args.join(", "), 48), note: String::new(), heading: false });
+                    names.push(t);
+                }
+                None => {
+                    let (key, rest) = match args.split_first() {
+                        Some((k, r)) => (k.clone(), r.join(", ")),
+                        None => ("()".into(), String::new()),
+                    };
+                    rows.push(Row { key, value: clip(&rest, 48), note: String::new(), heading: false });
+                }
+            }
+        }
+        let same = methods.windows(2).all(|w| w[0] == w[1]);
+        let fused = made[0];
+        let others: Vec<Id> = made[1..].to_vec();
+        // Rewire edges of the merged blocks onto the first one.
+        let merged: HashSet<Id> = made.iter().copied().collect();
+        let edges = std::mem::take(&mut self.cx.b.get_mut(container).edges);
+        let mut kept: Vec<Edge> = vec![];
+        for mut e in edges {
+            let from_in = merged.contains(&e.from);
+            let to_in = merged.contains(&e.to);
+            if from_in && to_in {
+                continue;
+            }
+            if from_in {
+                e.from = fused;
+            }
+            if to_in {
+                e.to = fused;
+            }
+            match kept.iter_mut().find(|k| k.from == e.from && k.to == e.to && k.from_port == e.from_port && k.to_port == e.to_port) {
+                Some(k) => {
+                    for l in e.label.split(", ").filter(|l| !l.is_empty()) {
+                        if !k.label.split(", ").any(|x| x == l) {
+                            if !k.label.is_empty() {
+                                k.label.push_str(", ");
+                            }
+                            k.label.push_str(l);
+                        }
+                    }
+                    if e.kind < k.kind {
+                        k.kind = e.kind;
+                    }
+                }
+                None => kept.push(e),
+            }
+        }
+        self.cx.b.get_mut(container).edges = kept;
+        let mut effects: BTreeSet<String> = BTreeSet::new();
+        let mut outputs: Vec<String> = vec![];
+        let mut io = false;
+        for &m in &made {
+            let n = self.cx.b.get(m);
+            effects.extend(n.effects.iter().cloned());
+            io |= n.category == "io";
+            for o in &n.outputs {
+                if !outputs.contains(o) {
+                    outputs.push(o.clone());
+                }
+            }
+        }
+        for &o in &others {
+            self.cx.b.remove(o);
+        }
+        // Names bound to merged blocks now come from the fused one.
+        for r in self.regions.iter_mut() {
+            for b in r.env.values_mut() {
+                if let Bind::Src(srcs, _) = b {
+                    for s in srcs.iter_mut() {
+                        if merged.contains(s) {
+                            *s = fused;
+                        }
+                    }
+                    srcs.dedup();
+                }
+            }
+        }
+        let range = TextRange::new(stmts[0].start(), stmts[stmts.len() - 1].end());
+        let span = self.src().span(range);
+        let code = compact(self.src().of(&RangeOf(range)), 200);
+        let table = same && (rows.len() >= 3 || !names.is_empty());
+        let n = self.cx.b.get_mut(fused);
+        n.effects = effects.into_iter().collect();
+        n.span = Some(span);
+        n.code = code;
+        n.outputs = outputs;
+        n.reference = None;
+        if table {
+            n.kind = Kind::Table;
+            n.title = if names.is_empty() { format!("{recv}.{}", methods[0]) } else { methods[0].clone() };
+            n.subtitle = format!("× {}", rows.len());
+            n.rows = rows;
+            if !matches!(n.category, "io") {
+                n.category = "config";
+            }
+        } else if same {
+            n.title = format!("{recv}.{}", methods[0]);
+            n.subtitle = format!("× {}", methods.len());
+        } else {
+            n.title = recv;
+            n.subtitle = clip(&methods.join(" → "), 40);
+            if io {
+                n.category = "io";
+            }
+        }
+    }
+
+    // ----- module declarations --------------------------------------------------------
+
+    /// Module-level statements that declare rather than compute: `__all__` and
+    /// other metadata, type aliases, loggers, optional and type-checking
+    /// imports. None of them is a step a reader would draw. Type aliases are
+    /// listed in a table when a module has several; a library module's
+    /// constants are gathered into one table.
+    fn declarations(&mut self, body: &'p [Stmt]) {
+        let mut types: Vec<&'p Stmt> = vec![];
+        let mut consts: Vec<&'p Stmt> = vec![];
+        // Names whose values are computed by blocks: anything reading them is dataflow.
+        let mut dynamic: HashSet<String> = HashSet::new();
+        let mut const_names: HashSet<String> = HashSet::new();
+        // Route tables: `urlpatterns = [path(...), ...]` and later `+=` additions.
+        let mut tables: Vec<(String, Vec<Row>, &'p Stmt)> = vec![];
+        for s in body {
+            if self.route_rows(s, &mut tables, None) {
+                self.handled.insert(u32::from(s.start()));
+                continue;
+            }
+            let decl = self.declaration(s);
+            match decl {
+                Some(Decl::Exports(names)) => {
+                    let file = self.cx.file_nodes[self.mi];
+                    let n = self.cx.b.get_mut(file);
+                    for name in names {
+                        if !n.outputs.contains(&name) {
+                            n.outputs.push(name);
+                        }
+                    }
+                }
+                Some(Decl::Type) => types.push(s),
+                Some(Decl::Quiet) => {}
+                None => {
+                    if self.library && self.is_constant(s, &dynamic) {
+                        consts.push(s);
+                        let mut names = BTreeSet::new();
+                        walk::collect_bindings(std::slice::from_ref(s), &mut names, &mut BTreeSet::new());
+                        const_names.extend(names);
+                    } else if self.library && adjusts(std::slice::from_ref(s), &const_names) {
+                        // Folded into the constants it adjusts.
+                    } else {
+                        let mut names = BTreeSet::new();
+                        walk::collect_bindings(std::slice::from_ref(s), &mut names, &mut BTreeSet::new());
+                        if !matches!(s, Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+                            dynamic.extend(names);
+                        }
+                        continue;
+                    }
+                }
+            }
+            self.handled.insert(u32::from(s.start()));
+        }
+        for &s in &types {
+            if types.len() < 3 {
+                let mut names = BTreeSet::new();
+                walk::collect_bindings(std::slice::from_ref(s), &mut names, &mut BTreeSet::new());
+                for n in names {
+                    self.bind(&n, Bind::Static);
+                }
+            }
+        }
+        if types.len() >= 3 {
+            self.type_table(&types);
+        }
+        for s in body {
+            if matches!(self.declaration(s), Some(Decl::Quiet) | Some(Decl::Exports(_))) {
+                let mut names = BTreeSet::new();
+                walk::collect_bindings(std::slice::from_ref(s), &mut names, &mut BTreeSet::new());
+                for n in names {
+                    if self.peek(&n).is_none() {
+                        self.bind(&n, Bind::Static);
+                    }
+                }
+            }
+        }
+        if !consts.is_empty() {
+            self.settings(&consts, Some("Constants".into()), String::new());
+        }
+        for (name, rows, first) in tables {
+            let id = self.add(Kind::Table, Shape::Box, name.clone());
+            let span = self.src().span(first.range());
+            let n = self.cx.b.get_mut(id);
+            n.category = "endpoint";
+            n.subtitle = format!("{} routes", rows.len());
+            n.rows = rows;
+            n.span = Some(span);
+            n.outputs = vec![name.clone()];
+            self.bind(&name, Bind::Src(vec![id], Style::Ctx));
+        }
+    }
+
+    /// Collects rows of a route list (`urlpatterns = [path("admin/", …), …]`,
+    /// `urlpatterns += [...]`, and `if settings.DEBUG:` blocks adding to it).
+    /// Returns whether the statement was one.
+    fn route_rows(&self, s: &'p Stmt, tables: &mut Vec<(String, Vec<Row>, &'p Stmt)>, guard: Option<&str>) -> bool {
+        let src = self.src();
+        let row = |call: &Expr| -> Row {
+            match call {
+                Expr::Call(c) => {
+                    let key = c.arguments.args.first().map(|a| string_literal(a).map(|t| if t.is_empty() { "/".to_string() } else { t.to_string() }).unwrap_or_else(|| compact(src.of(a), 40))).unwrap_or_default();
+                    let value = c.arguments.args.get(1).map(|a| compact(src.of(a), 44)).unwrap_or_default();
+                    Row { key, value, note: guard.map(|g| format!("if {g}")).unwrap_or_default(), heading: false }
+                }
+                e => Row { key: compact(src.of(e), 40), value: String::new(), note: guard.map(|g| format!("if {g}")).unwrap_or_default(), heading: false },
+            }
+        };
+        let calls = |e: &'p Expr| -> Option<&'p [Expr]> {
+            let elts: &[Expr] = match e {
+                Expr::List(l) => &l.elts,
+                Expr::Tuple(t) => &t.elts,
+                _ => return None,
+            };
+            (elts.len() >= 2 && elts.iter().all(|x| matches!(x, Expr::Call(c) if !contains_call(&c.func))) && elts.iter().filter(|x| matches!(x, Expr::Call(c) if c.arguments.args.first().is_some_and(|a| string_literal(a).is_some()))).count() * 2 >= elts.len()).then_some(elts)
+        };
+        match s {
+            Stmt::Assign(a) if guard.is_none() && a.targets.len() == 1 => {
+                let (Expr::Name(n), Some(elts)) = (&a.targets[0], calls(&a.value)) else { return false };
+                let rows = elts.iter().map(row).collect();
+                tables.push((n.id.to_string(), rows, s));
+                true
+            }
+            Stmt::AugAssign(a) => {
+                let Expr::Name(n) = &*a.target else { return false };
+                let Some(t) = tables.iter_mut().find(|t| t.0 == n.id.as_str()) else { return false };
+                match calls(&a.value) {
+                    Some(elts) => t.1.extend(elts.iter().map(row)),
+                    None => match &*a.value {
+                        Expr::List(l) => t.1.extend(l.elts.iter().map(row)),
+                        v => t.1.push(row(v)),
+                    },
+                }
+                true
+            }
+            Stmt::If(x) if guard.is_none() && !tables.is_empty() => {
+                let only = |body: &[Stmt]| body.iter().all(|b| matches!(b, Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Pass(_)) || matches!(b, Stmt::AugAssign(a) if matches!(&*a.target, Expr::Name(n) if tables.iter().any(|t| t.0 == n.id.as_str()))));
+                if !only(&x.body) || x.elif_else_clauses.iter().any(|c| !only(&c.body)) {
+                    return false;
+                }
+                let test = compact(src.of(&*x.test), 30);
+                for b in &x.body {
+                    self.route_rows(b, tables, Some(&test));
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn declaration(&self, s: &Stmt) -> Option<Decl> {
+        fn assigned(t: &Expr) -> Option<&str> {
+            match t {
+                Expr::Name(n) => Some(n.id.as_str()),
+                _ => None,
+            }
+        }
+        if is_plumbing(s) {
+            return Some(Decl::Quiet);
+        }
+        match s {
+            Stmt::TypeAlias(_) => Some(Decl::Type),
+            Stmt::Assign(a) if a.targets.len() == 1 => {
+                let name = assigned(&a.targets[0])?;
+                if name == "__all__" {
+                    return Some(Decl::Exports(strings_in(&a.value)));
+                }
+                if is_dunder(name) {
+                    return Some(Decl::Quiet);
+                }
+                if is_logger(&a.value) {
+                    return Some(Decl::Quiet);
+                }
+                if self.is_type_expr(&a.value) || is_type_factory(&a.value) {
+                    return Some(Decl::Type);
+                }
+                None
+            }
+            Stmt::AnnAssign(a) => {
+                let name = assigned(&a.target)?;
+                if is_dunder(name) {
+                    return Some(if name == "__all__" { Decl::Exports(a.value.as_deref().map(strings_in).unwrap_or_default()) } else { Decl::Quiet });
+                }
+                let alias = matches!(&*a.annotation, Expr::Name(n) if n.id.as_str() == "TypeAlias") || matches!(&*a.annotation, Expr::Attribute(x) if x.attr.as_str() == "TypeAlias");
+                if alias {
+                    return Some(Decl::Type);
+                }
+                if a.value.as_deref().is_some_and(is_logger) {
+                    return Some(Decl::Quiet);
+                }
+                None
+            }
+            Stmt::AugAssign(a) if assigned(&a.target) == Some("__all__") => Some(Decl::Exports(strings_in(&a.value))),
+            Stmt::Expr(e) => match &*e.value {
+                Expr::Call(c) => match &*c.func {
+                    Expr::Attribute(x) if matches!(&*x.value, Expr::Name(n) if n.id.as_str() == "__all__") => Some(Decl::Exports(c.arguments.args.iter().flat_map(strings_in).collect())),
+                    _ => None,
+                },
+                _ => None,
+            },
+            // `if TYPE_CHECKING:` imports exist for annotations only.
+            Stmt::If(x) if matches!(&*x.test, Expr::Name(n) if n.id.as_str() == "TYPE_CHECKING") || matches!(&*x.test, Expr::Attribute(a) if a.attr.as_str() == "TYPE_CHECKING") => Some(Decl::Quiet),
+            // Optional and version-dependent imports: `try: import x except ImportError: x = None`.
+            Stmt::If(x) if !is_main_guard(&x.test) && !x.body.is_empty() && import_only(&x.body) && x.elif_else_clauses.iter().all(|c| import_only(&c.body)) => Some(Decl::Quiet),
+            Stmt::Try(x) if !x.body.is_empty() && import_only(&x.body) && x.handlers.iter().all(|ast::ExceptHandler::ExceptHandler(h)| import_only(&h.body)) && import_only(&x.orelse) && import_only(&x.finalbody) => Some(Decl::Quiet),
+            _ => None,
+        }
+    }
+
+    /// `Optional[int]`, `dict[str, Any]`, `int | None`: a type, not a value.
+    fn is_type_expr(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Subscript(x) => self.is_type_name(&x.value),
+            Expr::BinOp(b) if b.op == ast::Operator::BitOr => {
+                let side = |e: &Expr| self.is_type_expr(e) || matches!(e, Expr::NoneLiteral(_)) || self.is_type_name(e) || matches!(e, Expr::Name(n) if matches!(self.cx.ix.sym_ty(self.mi, &n.id, 0), Ty::Class(_)));
+                (self.is_type_expr(&b.left) || self.is_type_expr(&b.right) || self.is_type_name(&b.left) || self.is_type_name(&b.right)) && side(&b.left) && side(&b.right)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_type_name(&self, e: &Expr) -> bool {
+        let name = match e {
+            Expr::Name(n) => {
+                if matches!(self.peek(&n.id), Some(Bind::Src(..))) {
+                    return false;
+                }
+                n.id.as_str()
+            }
+            Expr::Attribute(a) => a.attr.as_str(),
+            _ => return false,
+        };
+        TYPING_NAMES.contains(&name) || (matches!(e, Expr::Name(_)) && matches!(name, "list" | "dict" | "tuple" | "set" | "frozenset" | "type" | "int" | "str" | "float" | "bool" | "bytes"))
+    }
+
+    /// A library module's constant: a name bound to a value computed without
+    /// I/O or other blocks. UPPER_CASE names may also hold constructed objects.
+    fn is_constant(&self, s: &Stmt, dynamic: &HashSet<String>) -> bool {
+        let (target, value) = match s {
+            Stmt::Assign(a) if a.targets.len() == 1 => (&a.targets[0], &*a.value),
+            Stmt::AnnAssign(a) => match &a.value {
+                Some(v) => (&*a.target, &**v),
+                None => return false,
+            },
+            _ => return false,
+        };
+        let Expr::Name(n) = target else { return false };
+        let upper = n.id.chars().any(|c| c.is_ascii_uppercase()) && !n.id.chars().any(|c| c.is_ascii_lowercase());
+        let mut ok = true;
+        walk::walk(value, &mut |e| match e {
+            Expr::Lambda(_) | Expr::Await(_) | Expr::Yield(_) | Expr::Named(_) => ok = false,
+            Expr::Name(x) if dynamic.contains(x.id.as_str()) => ok = false,
+            Expr::Call(c) => {
+                let callee = self.classify(c);
+                let io = matches!(&callee, Callee::Ext(p) if effects::io_of(p, c, self.src()).is_some() || effects::ext_effect(p).is_some())
+                    || matches!(&callee, Callee::Builtin(b) if matches!(b.as_str(), "open" | "input" | "exec" | "eval" | "print"));
+                let allowed = match &callee {
+                    Callee::Ctor(_) | Callee::Ext(_) => upper || !self.is_major(&callee, c),
+                    Callee::Func(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::Value(_) | Callee::ExecFile(_) => false,
+                    _ => true,
+                };
+                if io || !allowed {
+                    ok = false;
+                }
+            }
+            _ => {}
+        });
+        ok
+    }
+
+    fn type_table(&mut self, stmts: &[&'p Stmt]) {
+        let src = self.src();
+        let mut rows = vec![];
+        let mut names = vec![];
+        for &s in stmts {
+            let (name, value) = match s {
+                Stmt::Assign(a) => (src.of(&a.targets[0]).to_string(), compact(src.of(&*a.value), 40)),
+                Stmt::AnnAssign(a) => (src.of(&*a.target).to_string(), a.value.as_deref().map(|v| compact(src.of(v), 40)).unwrap_or_default()),
+                Stmt::TypeAlias(t) => (src.of(&*t.name).to_string(), compact(src.of(&*t.value), 40)),
+                _ => continue,
+            };
+            rows.push(Row { key: name.clone(), value, note: String::new(), heading: false });
+            names.push(name);
+        }
+        let id = self.add(Kind::Table, Shape::Box, "Types");
+        let span = self.src().span(stmts[0].range());
+        let n = self.cx.b.get_mut(id);
+        n.category = "config";
+        n.rows = rows;
+        n.span = Some(span);
+        n.doc = "Type aliases and type variables used in annotations.".into();
+        for name in names {
+            self.bind(&name, Bind::Static);
+        }
+    }
+
     // ----- settings ----------------------------------------------------------------
 
     fn is_setting(&self, s: &Stmt) -> bool {
@@ -552,7 +1104,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             },
             _ => return false,
         };
-        matches!(target, Expr::Name(_)) && self.literalish(value)
+        matches!(target, Expr::Name(n) if !is_dunder(&n.id)) && self.literalish(value)
     }
 
     /// Constants, other settings, module attributes (`torch.float32`) and
@@ -605,9 +1157,9 @@ impl<'c, 'p> Fb<'c, 'p> {
         ok
     }
 
-    fn settings(&mut self, stmts: &'p [Stmt], title: Option<String>, doc: String) {
+    fn settings(&mut self, stmts: &[&'p Stmt], title: Option<String>, doc: String) {
         if stmts.len() == 1 && self.regions.len() > 1 {
-            if let Stmt::Assign(a) = &stmts[0] {
+            if let Stmt::Assign(a) = stmts[0] {
                 let text = compact(self.src().of(&*a.value), 40);
                 let mut names = vec![];
                 walk::target_names(&a.targets[0], &mut names);
@@ -621,14 +1173,19 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut rows = vec![];
         let mut names = vec![];
         let mut prev_end: Option<u32> = None;
-        for s in stmts {
+        // Comments between rows are headings only within one stretch of code.
+        let contiguous = stmts.windows(2).all(|w| src.line_of(usize::from(w[1].start())) <= src.line_of(usize::from(w[0].end())) + 3);
+        for &s in stmts {
             let (target, value) = match s {
                 Stmt::Assign(a) => (&a.targets[0], &*a.value),
-                Stmt::AnnAssign(a) => (&*a.target, a.value.as_deref().unwrap()),
+                Stmt::AnnAssign(a) => match a.value.as_deref() {
+                    Some(v) => (&*a.target, v),
+                    None => continue,
+                },
                 _ => continue,
             };
             let line = src.line_of(usize::from(s.start()));
-            if let Some(pe) = prev_end {
+            if let (Some(pe), true) = (prev_end, contiguous) {
                 for c in src.comments_between(pe, line) {
                     if let Some(h) = heading(&c.text) {
                         rows.push(Row { key: h, value: String::new(), note: String::new(), heading: true });
@@ -650,7 +1207,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         let single = rows.iter().filter(|r| !r.heading).count() == 1;
         if single {
-            let value = match &stmts[0] {
+            let value = match stmts[0] {
                 Stmt::Assign(a) => Some(&*a.value),
                 Stmt::AnnAssign(a) => a.value.as_deref(),
                 _ => None,
@@ -668,13 +1225,14 @@ impl<'c, 'p> Fb<'c, 'p> {
             _ => doc,
         };
         let title = match title {
-            Some(t) if !big => t,
+            Some(t) if !big || t == "Constants" => t,
             _ if single => names[0].clone(),
             _ => "Settings".into(),
         };
         let id = self.add(Kind::Table, Shape::Box, title);
-        let range = TextRange::new(stmts[0].start(), stmts[stmts.len() - 1].end());
-        let span = self.src().span(range);
+        // A table gathered from across a module points at its first row.
+        let last = if contiguous { stmts[stmts.len() - 1].end() } else { stmts[0].end() };
+        let span = self.src().span(TextRange::new(stmts[0].start(), last));
         {
             let n = self.cx.b.get_mut(id);
             n.category = "config";
@@ -691,6 +1249,9 @@ impl<'c, 'p> Fb<'c, 'p> {
     // ----- statements ------------------------------------------------------------
 
     fn stmt(&mut self, s: &'p Stmt, later: &HashSet<String>) {
+        if self.module_level && self.handled.contains(&u32::from(s.start())) {
+            return;
+        }
         match s {
             Stmt::Expr(e) => self.expr_stmt(s, &e.value),
             Stmt::Assign(a) => self.assign(s, &a.targets, &a.value),
@@ -1482,10 +2043,18 @@ impl<'c, 'p> Fb<'c, 'p> {
         });
         let span = self.src().span(s.range());
         let mut badges = vec![];
+        let mi = self.mi;
+        if !self.cx.prefixes.contains_key(&mi) {
+            let p = frameworks::prefixes(&self.m.ast);
+            self.cx.prefixes.insert(mi, p);
+        }
+        let src = self.src();
+        let mut role = None;
         for d in def.decorators {
-            let name = decorator_name(&d.expression);
-            if !matches!(name, "staticmethod" | "classmethod" | "property") {
-                badges.push(format!("@{}", compact(self.src().of(&d.expression), 24).trim_end_matches("()")));
+            match frameworks::role(&d.expression, def.name, &self.cx.prefixes[&mi], |e| compact(src.of(e), 24)) {
+                Some(r) if role.is_none() => role = Some(r),
+                Some(_) => {}
+                None => badges.extend(frameworks::tag(d, |e| compact(src.of(e), 24))),
             }
         }
         match kind {
@@ -1497,12 +2066,21 @@ impl<'c, 'p> Fb<'c, 'p> {
         if def.is_async {
             badges.push("async".into());
         }
+        if let Some(r) = &role {
+            if !self.cx.handlers[mi].contains(&r.kind) {
+                self.cx.handlers[mi].push(r.kind);
+            }
+        }
         let n = self.cx.b.get_mut(node);
         n.kind = Kind::Function;
         n.shape = Shape::Box;
         n.title = def.name.to_string();
-        n.subtitle = if def.name == "__init__" { "constructor".into() } else { format!("({})", clip(&params.join(", "), 40)) };
-        n.category = "function";
+        n.subtitle = match &role {
+            Some(r) => r.label.clone(),
+            None if def.name == "__init__" => "constructor".into(),
+            None => format!("({})", clip(&params.join(", "), 40)),
+        };
+        n.category = if role.as_ref().is_some_and(|r| r.kind != Handler::Hook) { "endpoint" } else { "function" };
         n.doc = doc;
         n.span = Some(span);
         n.badges = badges;
@@ -1926,6 +2504,9 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             Callee::Ext(p) => {
                 let resolved = p.rsplit('.').next().unwrap_or(p).to_string();
+                if frameworks::APPS.contains(&resolved.as_str()) && !resolved.is_empty() {
+                    self.cx.app[self.mi] = true;
+                }
                 let (prefix, last) = match func_text.rsplit_once('.') {
                     Some((a, b)) => (a.to_string(), b.to_string()),
                     None => (String::new(), func_text.clone()),
@@ -2689,6 +3270,112 @@ fn split_target(t: &Expr) -> (Option<&str>, Vec<&Expr>) {
         }
         Expr::Call(c) => (None, c.arguments.args.iter().collect()),
         _ => (None, vec![]),
+    }
+}
+
+enum Decl {
+    Exports(Vec<String>),
+    Type,
+    Quiet,
+}
+
+const TYPING_NAMES: &[&str] = &[
+    "Union", "Optional", "Callable", "Literal", "Annotated", "Tuple", "List", "Dict", "Set", "FrozenSet", "Type", "Iterable", "Iterator", "Mapping", "MutableMapping", "Sequence", "MutableSequence", "Awaitable", "Coroutine", "AsyncIterator", "AsyncIterable", "Generator", "AsyncGenerator", "ClassVar", "Final", "TypeGuard", "TypeIs", "Required", "NotRequired", "ReadOnly", "Unpack", "Concatenate", "Collection", "Container", "AbstractSet", "MutableSet", "Deque", "DefaultDict", "OrderedDict", "Counter", "ChainMap", "Pattern", "IO", "Generic", "Protocol",
+];
+
+fn is_dunder(name: &str) -> bool {
+    name.len() > 4 && name.starts_with("__") && name.ends_with("__")
+}
+
+/// `logging.getLogger(__name__)` and friends.
+fn is_logger(e: &Expr) -> bool {
+    let Expr::Call(c) = e else { return false };
+    let last = match &*c.func {
+        Expr::Name(n) => n.id.as_str(),
+        Expr::Attribute(a) => a.attr.as_str(),
+        _ => return false,
+    };
+    matches!(last, "getLogger" | "get_logger" | "getChild")
+}
+
+/// `TypeVar("T")`, `NewType("UserId", int)`, `NamedTuple("P", ...)`.
+fn is_type_factory(e: &Expr) -> bool {
+    let Expr::Call(c) = e else { return false };
+    let last = match &*c.func {
+        Expr::Name(n) => n.id.as_str(),
+        Expr::Attribute(a) => a.attr.as_str(),
+        _ => return false,
+    };
+    matches!(last, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "NewType" | "TypeAliasType") || (matches!(last, "NamedTuple" | "TypedDict") && c.arguments.args.first().is_some_and(|a| matches!(a, Expr::StringLiteral(_))))
+}
+
+/// String literals in a list or tuple (an `__all__`).
+fn strings_in(e: &Expr) -> Vec<String> {
+    let elts: &[Expr] = match e {
+        Expr::List(l) => &l.elts,
+        Expr::Tuple(t) => &t.elts,
+        _ => return vec![],
+    };
+    elts.iter().filter_map(|x| string_literal(x).map(str::to_string)).collect()
+}
+
+/// Statements that only import or bind fallbacks, as in optional imports.
+fn import_only(body: &[Stmt]) -> bool {
+    body.iter().all(|s| match s {
+        Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Pass(_) | Stmt::Raise(_) => true,
+        Stmt::Expr(e) => is_constant(&e.value),
+        Stmt::Assign(a) => matches!(&*a.value, Expr::Name(_) | Expr::Attribute(_)) || is_constant(&a.value),
+        Stmt::If(x) => import_only(&x.body) && x.elif_else_clauses.iter().all(|c| import_only(&c.body)),
+        Stmt::Try(x) => import_only(&x.body) && x.handlers.iter().all(|ast::ExceptHandler::ExceptHandler(h)| import_only(&h.body)) && import_only(&x.orelse),
+        _ => false,
+    })
+}
+
+/// Statements that only adjust a module's constant tables:
+/// `if brotli is None: SUPPORTED_DECODERS.pop("br")`.
+fn adjusts(body: &[Stmt], consts: &HashSet<String>) -> bool {
+    let on_const = |e: &Expr| matches!(split_target(e).0, Some(b) if consts.contains(b));
+    !body.is_empty()
+        && body.iter().all(|s| match s {
+            Stmt::Expr(e) => matches!(&*e.value, Expr::Call(c) if matches!(&*c.func, Expr::Attribute(a) if on_const(&a.value))),
+            Stmt::Assign(a) => a.targets.iter().all(|t| !matches!(t, Expr::Name(_)) && on_const(t)),
+            Stmt::AugAssign(a) => on_const(&a.target),
+            Stmt::If(x) => adjusts(&x.body, consts) && x.elif_else_clauses.iter().all(|c| adjusts(&c.body, consts)),
+            Stmt::Pass(_) => true,
+            _ => false,
+        })
+}
+
+/// `__locals = locals()` and loops over `__all__`: module plumbing.
+fn is_plumbing(s: &Stmt) -> bool {
+    let reflective = |e: &Expr| matches!(e, Expr::Call(c) if matches!(&*c.func, Expr::Name(n) if matches!(n.id.as_str(), "locals" | "globals" | "vars" | "dir")));
+    match s {
+        Stmt::Assign(a) => reflective(&a.value),
+        Stmt::For(f) => matches!(&*f.iter, Expr::Name(n) if n.id.as_str() == "__all__") || reflective(&f.iter),
+        _ => false,
+    }
+}
+
+/// The title a comment block gives the code below it. One line is a heading
+/// (`# training loop`); a longer block is an explanation, titled only by a
+/// short first line (`# Optimizer\n# AdamW with weight decay on matrices`).
+fn comment_title(comments: &[&super::source::Comment]) -> Option<String> {
+    let prose: Vec<&str> = comments
+        .iter()
+        .map(|c| c.text.trim_start_matches('#').trim())
+        .filter(|t| t.chars().any(|c| c.is_alphanumeric()) && !is_directive(t))
+        .collect();
+    match prose.as_slice() {
+        [] => None,
+        [one] => heading(one),
+        [first, ..] => {
+            let short = first.split_whitespace().count() <= 5 && first.chars().count() <= 40 && !first.ends_with([',', ';', '(']);
+            if short {
+                heading(first)
+            } else {
+                None
+            }
+        }
     }
 }
 

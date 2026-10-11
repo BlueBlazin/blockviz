@@ -20,6 +20,17 @@ pub struct InFile {
 const IGNORED_DIRS: &[&str] = &[".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".ipynb_checkpoints", "dist", "build", "target", ".next", ".cache", "site-packages", ".eggs"];
 const MAX_TEXT: usize = 2_000_000;
 
+/// Test code: `tests/…`, `test_*.py`, `*_test.py`, `conftest.py`.
+pub fn is_test_path(path: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    path.split('/').rev().skip(1).any(|d| matches!(d, "tests" | "test" | "testing" | "__tests__" | "spec" | "specs"))
+        || base.starts_with("test_")
+        || base.ends_with("_test.py")
+        || base == "conftest.py"
+        || base.contains(".test.")
+        || base.contains(".spec.")
+}
+
 pub fn ignored(path: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     parts[..parts.len().saturating_sub(1)].iter().any(|p| IGNORED_DIRS.contains(p) || p.ends_with(".egg-info"))
@@ -33,6 +44,11 @@ struct FileEntry {
     language: &'static str,
     node: Id,
     text: Option<String>,
+    /// Written by a tool (migrations, protobuf stubs, generated clients):
+    /// shown as a file, never opened, and left out of relations.
+    generated: bool,
+    /// Not drawn at all (an empty package marker).
+    hidden: bool,
 }
 
 pub fn build(name: &str, files: Vec<InFile>) -> Scene {
@@ -91,7 +107,9 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             analyzed: text.is_some() && class != Class::Asset,
             source,
         });
-        entries.push(FileEntry { path: f.path, class, language, node: 0, text });
+        let generated = text.as_deref().is_some_and(|t| is_generated(&f.path, t));
+        let hidden = f.path.rsplit('/').next() == Some("__init__.py") && text.as_deref().is_some_and(is_empty_python);
+        entries.push(FileEntry { path: f.path, class, language, node: 0, text, generated, hidden });
     }
 
     let mut b = Builder::default();
@@ -105,7 +123,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     }
 
     // File nodes.
-    let mut refs: Vec<(usize, Vec<String>)> = vec![];
+    let mut runs: Vec<(usize, Vec<crate::invocations::Run>)> = vec![];
     let mut code_imports: Vec<(usize, Vec<String>)> = vec![];
     for (i, e) in entries.iter_mut().enumerate() {
         let base = e.path.rsplit('/').next().unwrap_or(&e.path).to_string();
@@ -139,6 +157,10 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             b.get_mut(id).subtitle = format!("{} · {}", e.language, human_size(bytes));
             continue;
         };
+        let found = crate::invocations::runs(e.language, &e.path, text);
+        if !found.is_empty() {
+            runs.push((i, found));
+        }
         if matches!(e.class, Class::Asset | Class::Meta | Class::Other) {
             continue;
         }
@@ -147,12 +169,6 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         if !o.imports.is_empty() {
             b.get_mut(id).inputs = o.imports.clone();
             code_imports.push((i, o.imports.clone()));
-        }
-        let runner = matches!(e.language, "Shell" | "PowerShell" | "Makefile" | "Dockerfile")
-            || (e.path.starts_with(".github/workflows/") && matches!(e.language, "YAML"))
-            || e.path.ends_with("package.json");
-        if !o.refs.is_empty() && runner {
-            refs.push((i, o.refs.clone()));
         }
         if !o.symbols.is_empty() {
             b.get_mut(id).badges.push("outline".into());
@@ -183,22 +199,66 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             b.get_mut(id).rows = o.rows;
         }
     }
-    // Python file roles: an entry point is run (main guard, or top-level
-    // actions in a file nobody imports); everything else is a module.
+    // Commands in scripts and manifests that run project files.
+    let paths: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
+    let mut invocations: Vec<(usize, usize, String)> = vec![];
+    for (runner, found) in &runs {
+        let mut steps: Vec<(usize, &crate::invocations::Run)> = vec![];
+        for r in found {
+            if let Some(t) = resolve_run(&entries[*runner].path, r, &paths) {
+                if t == *runner || entries[t].generated {
+                    continue;
+                }
+                steps.push((t, r));
+                if !invocations.iter().any(|(a, b, _)| a == runner && *b == t) {
+                    invocations.push((*runner, t, r.label.clone()));
+                }
+            }
+        }
+        // A script that runs several programs is a pipeline: its steps, in order.
+        if steps.len() >= 2 && matches!(entries[*runner].language, "Shell" | "PowerShell" | "Makefile" | "YAML") {
+            pipeline(&mut b, &entries, *runner, &steps);
+        }
+    }
+    let run_targets: HashSet<u32> = invocations.iter().map(|(_, t, _)| *t as u32).collect();
+    // Python file roles: an entry point is run (main guard, `__main__.py`,
+    // an application object, or top-level actions in a file nobody imports);
+    // tests, configuration and framework handlers say what they are; everything
+    // else is a module.
     let imported: HashSet<u32> = py.files.iter().flat_map(|f| f.imports.iter().map(|(t, _)| *t)).collect();
     for pf in &py.files {
         let node = pf.node;
+        let path = entries[pf.file as usize].path.as_str();
+        let base = path.rsplit('/').next().unwrap_or(path);
         let kids: Vec<Kind> = b.get(node).children.iter().map(|&c| b.get(c).kind).collect();
         let notebook = b.get(node).kind == Kind::Notebook;
         let only_settings = !kids.is_empty() && kids.iter().all(|k| *k == Kind::Table);
         let acts = b.get(node).effects.iter().any(|e| ["prints", "reads file", "writes file", "network", "executes code", "spawns process", "distributed", "logs"].iter().any(|a| e.starts_with(a)));
-        let runs = pf.entry || (acts && !imported.contains(&pf.file) && !kids.iter().all(|k| matches!(k, Kind::Class | Kind::Function | Kind::Table)));
+        let test = is_test_path(path);
+        let settings = !test && (base.starts_with("settings") || path.contains("/settings/") || base == "conf.py" || base == "config.py" || base.ends_with("_settings.py")) && kids.iter().all(|k| matches!(k, Kind::Table | Kind::Op | Kind::Call | Kind::Branch | Kind::Section));
+        let main = base == "__main__.py";
+        let runs = !test && (pf.entry || main || pf.app || run_targets.contains(&pf.file) || (acts && !imported.contains(&pf.file) && !kids.iter().all(|k| matches!(k, Kind::Class | Kind::Function | Kind::Table))));
+        let handlers = |h: python::frameworks::Handler| pf.handlers.contains(&h);
+        let route_table = b.get(node).children.iter().any(|&c| b.get(c).kind == Kind::Table && b.get(c).category == "endpoint");
+        use python::frameworks::Handler;
         let role = if pf.error.is_some() {
             "Python"
         } else if notebook {
             "notebook"
-        } else if only_settings && !imported.contains(&pf.file) {
+        } else if test {
+            "tests"
+        } else if pf.app {
+            "app"
+        } else if route_table {
+            "routes"
+        } else if (only_settings || settings) && !imported.contains(&pf.file) || (settings && only_settings) {
             "config"
+        } else if handlers(Handler::Route) {
+            "routes"
+        } else if handlers(Handler::Command) {
+            "commands"
+        } else if handlers(Handler::Task) {
+            "tasks"
         } else if runs {
             "script"
         } else {
@@ -209,7 +269,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         if role == "config" {
             n.category = "config";
         }
-        if runs && !notebook {
+        if runs && !notebook && role != "config" {
             n.badges.insert(0, "entry point".into());
         }
     }
@@ -217,6 +277,18 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     // Directory tree.
     let mut dirs: BTreeMap<String, Id> = BTreeMap::new();
     for e in &entries {
+        if e.hidden {
+            continue;
+        }
+        if e.generated {
+            let n = b.get_mut(e.node);
+            n.children.clear();
+            n.edges.clear();
+            n.category = "meta";
+            n.subtitle = "generated".into();
+            n.badges.retain(|b| b != "entry point");
+            n.badges.push("generated".into());
+        }
         let parent = match e.path.rsplit_once('/') {
             Some((dir, _)) => ensure_dir(&mut b, &mut dirs, root, dir),
             None => root,
@@ -243,6 +315,19 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             }
         }
     }
+    // A directory of generated files (migrations) is one block.
+    let generated_nodes: HashSet<Id> = entries.iter().filter(|e| e.generated).map(|e| e.node).collect();
+    for &c in dirs.values() {
+        let mut files = vec![];
+        if b.get(c).parent.is_some() && all_generated(&b, c, &generated_nodes, &mut files) && files.len() >= 2 {
+            let n = b.get_mut(c);
+            n.children.clear();
+            n.edges.clear();
+            n.category = "meta";
+            n.subtitle = format!("{} generated files", files.len());
+            n.badges.push("generated".into());
+        }
+    }
     // Build and tooling configuration gathers into one group per directory.
     for &c in &containers {
         let tooling: Vec<Id> = b
@@ -254,7 +339,9 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
                 let n = b.get(k);
                 let t = n.title.to_ascii_lowercase();
                 (n.kind == Kind::File && n.category == "config")
-                    || matches!(t.as_str(), "setup.py" | "noxfile.py" | "fabfile.py" | "setup.cfg" | "manifest.in" | ".github/" | ".circleci/" | ".devcontainer/")
+                    || matches!(t.as_str(), "setup.py" | "noxfile.py" | "fabfile.py" | "setup.cfg" | "manifest.in")
+                    // Hidden directories hold tooling: CI, editors, agents.
+                    || (n.kind == Kind::Dir && t.starts_with('.'))
                     || (n.kind == Kind::Asset && n.category == "meta")
             })
             .collect();
@@ -298,8 +385,12 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     let all_paths: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
     let node_of_file = |f: u32| entries[f as usize].node;
     let mut linked: HashSet<(Id, Id)> = HashSet::new();
+    let skip = |f: u32| entries[f as usize].generated || entries[f as usize].hidden;
     for pf in &py.files {
         for (target, names) in &pf.imports {
+            if skip(*target) || skip(pf.file) {
+                continue;
+            }
             let (from, to) = (node_of_file(*target), pf.node);
             let mut names: Vec<String> = names.clone();
             names.dedup();
@@ -309,39 +400,32 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         }
     }
     for (from, to) in &py.execs {
+        if skip(*from) || skip(*to) {
+            continue;
+        }
         let (a, c) = (node_of_file(*to), node_of_file(*from));
         if linked.insert((a, c)) {
             lift(&mut b, a, c, EdgeKind::Exec, "exec", &mut ports);
         }
     }
-    let path_index: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
-    let mut by_base: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, e) in entries.iter().enumerate() {
-        by_base.entry(e.path.rsplit('/').next().unwrap_or(&e.path)).or_default().push(i);
-    }
-    for (i, mentions) in &refs {
-        let dir = entries[*i].path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-        for m in mentions {
-            let candidates = [m.clone(), if dir.is_empty() { m.clone() } else { format!("{dir}/{m}") }];
-            let target = candidates.iter().find_map(|c| path_index.get(c.as_str()).copied()).or_else(|| match by_base.get(m.as_str()) {
-                Some(v) if v.len() == 1 && !m.contains('/') => Some(v[0]),
-                _ => None,
-            });
-            if let Some(t) = target {
-                if t != *i && matches!(entries[t].class, Class::Python | Class::Notebook | Class::Code | Class::Config) {
-                    let (a, c) = (entries[t].node, entries[*i].node);
-                    if linked.insert((a, c)) {
-                        lift(&mut b, a, c, EdgeKind::Uses, "runs", &mut ports);
-                    }
-                }
-            }
+    for (runner, target, label) in &invocations {
+        if skip(*runner as u32) || skip(*target as u32) {
+            continue;
+        }
+        let (a, c) = (entries[*runner].node, entries[*target].node);
+        if linked.insert((a, c)) {
+            let title = b.get(c).title.clone();
+            lift_titled(&mut b, a, c, EdgeKind::Exec, label, &title, &mut ports);
         }
     }
     // Imports in other languages, resolved to files.
     for (i, specs) in &code_imports {
+        if skip(*i as u32) {
+            continue;
+        }
         for spec in specs {
             if let Some(t) = resolve_import(&entries[*i].path, entries[*i].language, spec, &all_paths) {
-                if t != *i {
+                if t != *i && !skip(t as u32) {
                     let (a, c) = (entries[t].node, entries[*i].node);
                     if linked.insert((a, c)) {
                         let module = b.get(a).title.clone();
@@ -351,7 +435,8 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             }
         }
     }
-    artifacts(&mut b, &py.artifacts, &entries, &mut ports);
+    let artifact_uses: Vec<(u32, String, bool)> = py.artifacts.iter().filter(|(f, _, _)| !skip(*f)).cloned().collect();
+    artifacts(&mut b, &artifact_uses, &entries, &mut ports);
     // Files list what they import, before redundant lines are dropped.
     for pf in &py.files {
         let mut deps: Vec<String> = pf.imports.iter().map(|(t, _)| entries[*t as usize].path.clone()).collect();
@@ -539,6 +624,157 @@ fn subtree_is_static(b: &Builder, id: Id) -> bool {
     b.get(id).children.iter().all(|&c| {
         let n = b.get(c);
         matches!(n.kind, Kind::Doc | Kind::Asset) || (n.kind == Kind::Dir && subtree_is_static(b, c))
+    })
+}
+
+/// Replaces a script's outline with its pipeline: one step per program it
+/// runs, in order, each showing that program's diagram when zoomed into.
+fn pipeline(b: &mut Builder, entries: &[FileEntry], runner: usize, steps: &[(usize, &crate::invocations::Run)]) {
+    let node = entries[runner].node;
+    for c in std::mem::take(&mut b.get_mut(node).children) {
+        b.get_mut(c).parent = None;
+    }
+    b.get_mut(node).edges.clear();
+    b.get_mut(node).badges.retain(|x| x != "outline");
+    let mut prev: Option<Id> = None;
+    for (target, run) in steps {
+        let t = entries[*target].node;
+        let title = b.get(t).title.clone();
+        let category = if b.get(t).category == "config" { "config" } else { "function" };
+        let id = b.add(Some(node), Kind::Call, Shape::Box, title);
+        let n = b.get_mut(id);
+        n.subtitle = clip(&run.summary, 40);
+        n.code = run.command.clone();
+        n.category = category;
+        n.reference = Some(t);
+        n.link = Some(t);
+        if let Some(p) = prev {
+            b.connect(p, id, EdgeKind::Exec, "");
+        }
+        prev = Some(id);
+    }
+    b.get_mut(node).subtitle = format!("{} · {} steps", entries[runner].language, steps.len());
+}
+
+/// The file a command runs: relative to the directory it runs in, the
+/// runner's directory or the root, else by a unique path suffix (container
+/// paths like `/app/scripts/prestart.sh` rarely match the repository's).
+fn resolve_run(runner: &str, run: &crate::invocations::Run, paths: &HashMap<&str, usize>) -> Option<usize> {
+    use crate::invocations::Target;
+    let dir = runner.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else if b.is_empty() { a.to_string() } else { format!("{a}/{b}") };
+    let rels: Vec<String> = match &run.target {
+        Target::Path(p) => vec![p.trim_start_matches("./").to_string()],
+        Target::Module(m) => {
+            let p = m.replace('.', "/");
+            vec![format!("{p}.py"), format!("{p}/__main__.py"), format!("{p}/__init__.py")]
+        }
+        Target::Any(v) => v.clone(),
+    };
+    let bases = [join(dir, &run.cwd), run.cwd.clone(), dir.to_string(), String::new()];
+    for rel in &rels {
+        if rel.starts_with('/') || rel.contains('$') {
+            continue;
+        }
+        for base in &bases {
+            if let Some(&i) = paths.get(join(base, rel).as_str()) {
+                return Some(i);
+            }
+        }
+    }
+    for rel in &rels {
+        let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty() && *p != "." && !p.contains('$')).collect();
+        for k in 0..parts.len() {
+            let suffix = parts[k..].join("/");
+            let hits: Vec<usize> = paths.iter().filter(|(p, _)| **p == suffix || p.ends_with(&format!("/{suffix}"))).map(|(_, &i)| i).collect();
+            if hits.len() == 1 {
+                return Some(hits[0]);
+            }
+            if !hits.is_empty() {
+                break;
+            }
+        }
+    }
+    None
+}
+
+/// Code written by a tool rather than a person: migrations, protobuf stubs,
+/// generated API clients. Judged by name and by a header comment saying so.
+fn is_generated(path: &str, text: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    if base.ends_with("_pb2.py") || base.ends_with("_pb2_grpc.py") || base.ends_with("_pb2.pyi") || base.ends_with(".pb.go") || base.contains(".gen.") || base.ends_with(".g.dart") || base.ends_with(".generated.ts") {
+        return true;
+    }
+    let mut in_doc = false;
+    for line in text.lines().take(15) {
+        let t = line.trim();
+        let comment = t.starts_with('#') || t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') || t.starts_with("<!--");
+        let quote = |l: &str| l.starts_with("\"\"\"") || l.starts_with("'''");
+        let ends = |l: &str| l.ends_with("\"\"\"") || l.ends_with("'''");
+        let doc_line = in_doc || quote(t);
+        if quote(t) && !(t.len() >= 6 && ends(t)) {
+            in_doc = !in_doc;
+        } else if in_doc && ends(t) {
+            in_doc = false;
+        }
+        if !(comment || doc_line) {
+            continue;
+        }
+        let l = t.to_ascii_lowercase();
+        if l.contains("auto-generated") || l.contains("autogenerated") || l.contains("generated by") || l.contains("do not edit") || l.contains("@generated") || l.contains("code generated") || l.starts_with("revision id:") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Python with nothing in it: blank, comments, or only a docstring.
+fn is_empty_python(text: &str) -> bool {
+    let mut in_doc: Option<&str> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(q) = in_doc {
+            if t.contains(q) {
+                in_doc = None;
+            }
+            continue;
+        }
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        for q in ["\"\"\"", "'''"] {
+            if let Some(rest) = t.strip_prefix(q) {
+                if !rest.contains(q) {
+                    in_doc = Some(q);
+                }
+            }
+        }
+        if t.starts_with("\"\"\"") || t.starts_with("'''") {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Whether every file below `id` is generated (collecting them).
+fn all_generated(b: &Builder, id: Id, generated: &HashSet<Id>, files: &mut Vec<Id>) -> bool {
+    let n = b.get(id);
+    if n.children.is_empty() {
+        return false;
+    }
+    n.children.iter().all(|&k| {
+        let c = b.get(k);
+        if c.kind == Kind::Dir {
+            all_generated(b, k, generated, files)
+        } else if c.is_port() {
+            true
+        } else if generated.contains(&k) {
+            files.push(k);
+            true
+        } else {
+            false
+        }
     })
 }
 

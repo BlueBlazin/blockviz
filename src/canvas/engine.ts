@@ -1,5 +1,5 @@
 import { Camera } from './camera';
-import { clamp } from './geometry';
+import { clamp, type Insets } from './geometry';
 import type { SceneModel } from './model';
 import { Renderer, type Hit } from './renderer';
 
@@ -34,10 +34,11 @@ export class Engine {
   private disposed = false;
   private observer: ResizeObserver;
 
-  constructor(private canvas: HTMLCanvasElement, private model: SceneModel, private events: EngineEvents) {
+  constructor(private canvas: HTMLCanvasElement, private model: SceneModel, private events: EngineEvents, insets?: Insets) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.renderer = new Renderer(this.ctx, model);
     this.camera = new Camera(model);
+    if (insets) this.camera.insets = insets;
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(canvas);
     canvas.addEventListener('wheel', this.wheel, { passive: false });
@@ -74,6 +75,11 @@ export class Engine {
   select(id: number | null) {
     this.selected = id;
     this.invalidate();
+  }
+
+  /** Screen margins covered by overlays, kept clear when framing. */
+  setInsets(insets: Insets) {
+    this.camera.insets = insets;
   }
 
   /** Flies to frame the node at the end of an instance path. */

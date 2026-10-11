@@ -5,6 +5,7 @@
 //! thread only ever renders.
 
 pub mod highlight;
+pub mod invocations;
 pub mod ir;
 pub mod layout;
 pub mod notebook;
@@ -29,6 +30,9 @@ struct WireFile {
 struct WireProject {
     #[serde(default)]
     name: String,
+    /// A maintainer-written one-liner (GitHub's repository description).
+    #[serde(default)]
+    description: String,
     files: Vec<WireFile>,
 }
 
@@ -57,7 +61,10 @@ pub fn analyze_project(input: &str) -> String {
                     project::InFile { path: f.path, text: f.text, bytes }
                 })
                 .collect();
-            let scene = analyze(&p.name, files);
+            let mut scene = analyze(&p.name, files);
+            if !p.description.trim().is_empty() {
+                scene.description = p.description.trim().to_string();
+            }
             serde_json::json!({ "ok": true, "scene": scene }).to_string()
         }
         Err(e) => serde_json::json!({ "ok": false, "error": format!("Invalid input: {e}") }).to_string(),

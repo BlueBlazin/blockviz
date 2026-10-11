@@ -85,7 +85,7 @@ export async function githubProject(input: string, progress: Progress): Promise<
   if (meta.status === 404) throw new Error(`GitHub has no public repository ${ref.owner}/${ref.repo}.`);
   if (meta.status === 403) throw new Error('GitHub rate limit reached. Try again later, or open a local folder.');
   if (!meta.ok) throw new Error(`GitHub returned ${meta.status}.`);
-  const info = await meta.json() as { default_branch: string; name: string };
+  const info = await meta.json() as { default_branch: string; name: string; description?: string | null };
   const branch = ref.branch ?? info.default_branch;
   const treeRes = await fetch(`${api}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
   if (!treeRes.ok) throw new Error(`Could not list ${ref.owner}/${ref.repo}@${branch} (${treeRes.status}).`);
@@ -120,7 +120,7 @@ export async function githubProject(input: string, progress: Progress): Promise<
   for (const f of queue) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size });
   files.sort((a, b) => a.path.localeCompare(b.path));
   const name = ref.path ? ref.path.split('/').pop()! : info.name;
-  return { name, files, source: `github.com/${ref.owner}/${ref.repo}${ref.path ? `/${ref.path}` : ''}` };
+  return { name, files, source: `github.com/${ref.owner}/${ref.repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined };
 }
 
 export function pastedProject(filename: string, text: string): Project {

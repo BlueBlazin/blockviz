@@ -69,6 +69,6 @@ export interface Scene {
 }
 
 export interface InputFile { path: string; text?: string; bytes: number }
-export interface Project { name: string; files: InputFile[]; source: string }
+export interface Project { name: string; files: InputFile[]; source: string; description?: string }
 
 export type AnalysisResult = { ok: true; scene: Scene; elapsed: number } | { ok: false; error: string };
