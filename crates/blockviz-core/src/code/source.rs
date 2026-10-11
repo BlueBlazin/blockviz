@@ -1,14 +1,15 @@
 //! Source text with line, comment and blank-line lookups.
 //!
 //! The AST drops comments, but comments are the strongest signal of how a
-//! human chunks a script ("# model init", "# training loop"), so they are
-//! recovered from the token stream.
+//! human chunks a script ("# model init", "# training loop"), so front ends
+//! recover them from their token streams.
 
+use super::syntax::{Ranged, TextRange};
 use crate::ir::Span;
-use ruff_text_size::{Ranged, TextRange};
 
 pub struct Comment {
     pub line: u32,
+    /// The comment's words without its markers (`#`, `//`, `/* */`).
     pub text: String,
     /// The comment is alone on its line (not trailing code).
     pub own_line: bool,
@@ -23,8 +24,9 @@ pub struct Source {
 }
 
 impl Source {
-    /// `comments` are the ranges of comment tokens reported by the parser.
-    pub fn new(text: String, file: u32, comments: &[TextRange]) -> Self {
+    /// `comments` are comment lines: where each starts, and its words without
+    /// comment markers. A block comment contributes one entry per line.
+    pub fn new(text: String, file: u32, comments: &[(TextRange, String)]) -> Self {
         let mut line_starts = vec![0];
         for (i, b) in text.bytes().enumerate() {
             if b == b'\n' {
@@ -34,13 +36,12 @@ impl Source {
         let blank = text.split('\n').map(|l| l.trim().is_empty()).collect();
         let mut s = Source { text, file, line_starts, comments: vec![], blank };
         let mut found = vec![];
-        for range in comments {
+        for (range, body) in comments {
             let start = usize::from(range.start());
             let line = s.line_of(start);
             let line_start = s.line_starts[(line - 1) as usize];
-            let own_line = s.text[line_start..start].trim().is_empty();
-            let text = s.text[start..usize::from(range.end())].to_string();
-            found.push(Comment { line, text, own_line });
+            let own_line = s.text.get(line_start..start).is_some_and(|t| t.trim().is_empty());
+            found.push(Comment { line, text: body.clone(), own_line });
         }
         s.comments = found;
         s
@@ -90,7 +91,7 @@ impl Source {
     }
 
     pub fn trailing_comment(&self, line: u32) -> Option<&str> {
-        self.comments.iter().find(|c| c.line == line && !c.own_line).map(|c| c.text.trim_start_matches('#').trim())
+        self.comments.iter().find(|c| c.line == line && !c.own_line).map(|c| c.text.trim())
     }
 
     /// Own-line comments strictly between two lines (used for headings inside settings runs).

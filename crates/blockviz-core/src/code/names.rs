@@ -4,9 +4,9 @@
 //! instead of cutting text.
 
 use super::source::Source;
+use super::syntax::{self as ast, CompKind, Expr, TemplateKind, TemplatePart};
 use crate::naming::{self, Collection, Dest, Step};
 use crate::text::squash;
-use ruff_python_ast::{self as ast, Expr, FStringPartRef, InterpolatedStringElement};
 
 pub struct Namer<'a> {
     pub src: &'a Source,
@@ -30,8 +30,8 @@ const WRAPPERS: &[&str] = &["len", "int", "float", "str", "bool", "list", "tuple
 
 fn string_value(e: &Expr) -> Option<String> {
     match e {
-        Expr::StringLiteral(s) => Some(s.value.to_str().to_string()),
-        Expr::BytesLiteral(b) => Some(String::from_utf8_lossy(&b.value.bytes().collect::<Vec<u8>>()).into_owned()),
+        Expr::StringLiteral(s) => Some(s.value.clone()),
+        Expr::BytesLiteral(b) => Some(String::from_utf8_lossy(&b.value).into_owned()),
         _ => None,
     }
 }
@@ -106,10 +106,12 @@ impl<'a> Namer<'a> {
                     format!("{{{}}}", naming::list(&keys, 18))
                 }
             }
-            Expr::List(_) | Expr::ListComp(_) => "list".into(),
+            Expr::List(_) => "list".into(),
+            Expr::Comp(c) if c.kind == CompKind::List => "list".into(),
             Expr::Tuple(_) => "tuple".into(),
-            Expr::Set(_) | Expr::SetComp(_) => "set".into(),
-            Expr::FString(_) => "text".into(),
+            Expr::Set(_) => "set".into(),
+            Expr::Comp(c) if c.kind == CompKind::Set => "set".into(),
+            Expr::Template(t) if t.kind == TemplateKind::Format => "text".into(),
             _ => String::new(),
         }
     }
@@ -146,6 +148,9 @@ impl<'a> Namer<'a> {
             Expr::UnaryOp(u) => {
                 let op = match u.op {
                     ast::UnaryOp::Not => "not ",
+                    ast::UnaryOp::TypeOf => "typeof ",
+                    ast::UnaryOp::Void => "void ",
+                    ast::UnaryOp::Delete => "delete ",
                     other => other.as_str(),
                 };
                 format!("{op}{}", self.code(&u.operand, max.saturating_sub(op.len())))
@@ -223,7 +228,7 @@ impl<'a> Namer<'a> {
                 let quote = if text.starts_with('\'') { '\'' } else { '"' };
                 format!("{quote}{}{quote}", naming::shorten(&string_value(e).unwrap_or_default(), max.saturating_sub(2)))
             }
-            Expr::FString(_) => match self.template(e) {
+            Expr::Template(t) if t.kind == TemplateKind::Format => match self.template(e) {
                 Some(t) => format!("\"{}\"", naming::shorten(&t, max.saturating_sub(2))),
                 None => "…".into(),
             },
@@ -237,7 +242,7 @@ impl<'a> Namer<'a> {
                 };
                 format!("{open}…{close}")
             }
-            Expr::ListComp(_) | Expr::SetComp(_) | Expr::DictComp(_) | Expr::Generator(_) => match self.step(e) {
+            Expr::Comp(_) => match self.step(e) {
                 Step::Map { over, .. } => format!("each of {over}"),
                 _ => "…".into(),
             },
@@ -253,21 +258,14 @@ impl<'a> Namer<'a> {
 
     fn template_raw(&self, e: &Expr) -> Option<String> {
         match e {
-            Expr::FString(f) => {
+            Expr::Template(t) if t.kind == TemplateKind::Format && t.tag.is_none() => {
                 let mut out = String::new();
-                for part in f.value.iter() {
+                for part in &t.parts {
                     match part {
-                        FStringPartRef::Literal(l) => out.push_str(&l.value),
-                        FStringPartRef::FString(f) => {
-                            for el in f.elements.iter() {
-                                match el {
-                                    InterpolatedStringElement::Literal(l) => out.push_str(&l.value),
-                                    InterpolatedStringElement::Interpolation(i) => {
-                                        let b = self.brief(&i.expression);
-                                        out.push_str(&format!("{{{}}}", if b.is_empty() { "…".into() } else { b }));
-                                    }
-                                }
-                            }
+                        TemplatePart::Literal(l) => out.push_str(l),
+                        TemplatePart::Hole { expr, .. } => {
+                            let b = self.brief(expr);
+                            out.push_str(&format!("{{{}}}", if b.is_empty() { "…".into() } else { b }));
                         }
                     }
                 }
@@ -316,7 +314,7 @@ impl<'a> Namer<'a> {
     fn is_test(e: &Expr) -> bool {
         match e {
             Expr::Compare(_) => true,
-            Expr::UnaryOp(u) => matches!(u.op, ast::UnaryOp::Not),
+            Expr::UnaryOp(u) => u.op.is_not(),
             Expr::BoolOp(b) => b.values.iter().all(Self::is_test),
             Expr::Call(c) => matches!(&*c.func, Expr::Name(n) if matches!(n.id.as_str(), "isinstance" | "issubclass" | "hasattr" | "callable" | "any" | "all")),
             _ => false,
@@ -335,12 +333,12 @@ impl<'a> Namer<'a> {
                 self.subjects(e, &mut subjects);
                 Step::Test { subjects }
             }
-            Expr::UnaryOp(u) if matches!(u.op, ast::UnaryOp::Not) => {
+            Expr::UnaryOp(u) if u.op.is_not() => {
                 self.subjects(e, &mut subjects);
                 Step::Test { subjects }
             }
             // `x or default` picks a value; `a and b` tests.
-            Expr::BoolOp(b) if matches!(b.op, ast::BoolOp::Or) && !b.values.last().is_some_and(Self::is_test) => {
+            Expr::BoolOp(b) if b.op.is_or() && !b.values.last().is_some_and(Self::is_test) => {
                 b.values.iter().for_each(|v| self.subjects(v, &mut subjects));
                 Step::Choose { subjects }
             }
@@ -359,7 +357,7 @@ impl<'a> Namer<'a> {
                 Step::Choose { subjects }
             }
             Expr::Dict(d) => Step::Pack { kind: Collection::Map, keys: d.items.iter().filter_map(|i| i.key.as_ref().and_then(string_value)).collect() },
-            Expr::List(ast::ExprList { elts, .. }) | Expr::Tuple(ast::ExprTuple { elts, .. }) | Expr::Set(ast::ExprSet { elts, .. }) => {
+            Expr::List(ast::ExprSeq { elts, .. }) | Expr::Tuple(ast::ExprSeq { elts, .. }) | Expr::Set(ast::ExprSeq { elts, .. }) => {
                 let kind = match e {
                     Expr::List(_) => Collection::List,
                     Expr::Set(_) => Collection::Set,
@@ -370,15 +368,11 @@ impl<'a> Namer<'a> {
             Expr::Call(c) if matches!(&*c.func, Expr::Name(n) if n.id.as_str() == "dict") && !c.arguments.keywords.is_empty() => {
                 Step::Pack { kind: Collection::Map, keys: c.arguments.keywords.iter().filter_map(|k| k.arg.as_ref().map(|a| a.to_string())).collect() }
             }
-            Expr::DictComp(d) => Step::Map { over: d.generators.first().map(|g| self.brief(&g.iter)).unwrap_or_default(), filtered: false },
-            Expr::ListComp(ast::ExprListComp { generators, .. }) | Expr::SetComp(ast::ExprSetComp { generators, .. }) | Expr::Generator(ast::ExprGenerator { generators, .. }) => {
+            Expr::Comp(d) if d.kind == CompKind::Dict => Step::Map { over: d.generators.first().map(|g| self.brief(&g.iter)).unwrap_or_default(), filtered: false },
+            Expr::Comp(c) => {
+                let generators = &c.generators;
                 let over = generators.first().map(|g| self.brief(&g.iter)).unwrap_or_default();
-                let identity = match e {
-                    Expr::ListComp(l) => generators.first().is_some_and(|g| self.text(&l.elt) == self.text(&g.target)),
-                    Expr::Generator(l) => generators.first().is_some_and(|g| self.text(&l.elt) == self.text(&g.target)),
-                    Expr::SetComp(l) => generators.first().is_some_and(|g| self.text(&l.elt) == self.text(&g.target)),
-                    _ => false,
-                };
+                let identity = generators.first().is_some_and(|g| self.text(&c.elt) == self.text(&g.target));
                 Step::Map { over, filtered: identity && generators.iter().any(|g| !g.ifs.is_empty()) }
             }
             Expr::Subscript(s) => Step::Pick { from: self.brief(&s.value) },

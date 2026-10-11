@@ -6,22 +6,25 @@
 //! `model.configure_optimizers(...)` is `GPT.configure_optimizers`.
 
 use super::source::Source;
+use super::syntax::{self as ast, DefKind, Expr, Lang, Ranged, Stmt, TextRange};
 use super::walk;
 use crate::ir::Id;
 use crate::text::{clip, squash};
-use ruff_python_ast::{self as ast, Expr, Stmt};
-use ruff_text_size::{Ranged, TextRange};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
-pub struct PyModule {
+/// One source file, parsed and lowered to the shared syntax tree.
+pub struct Module {
     pub file: u32,
     pub path: String,
+    /// Python's dotted module name (`app.core.db`); for other languages the
+    /// path without its extension, dotted the same way.
     pub dotted: String,
     pub package: String,
     pub src: Source,
     pub ast: Vec<Stmt>,
     pub notebook: bool,
+    pub lang: Lang,
     /// First syntax error (the parser recovered and the tree is still usable).
     pub error: Option<String>,
 }
@@ -29,17 +32,22 @@ pub struct PyModule {
 #[derive(Clone, Copy)]
 pub struct FnDef<'p> {
     pub name: &'p str,
-    pub args: &'p ast::Parameters,
+    pub args: &'p [ast::Param],
     pub body: &'p [Stmt],
     pub decorators: &'p [ast::Decorator],
     pub range: TextRange,
     pub is_async: bool,
+    pub kind: DefKind,
+    pub doc: Option<&'p str>,
 }
 
 impl<'p> FnDef<'p> {
+    pub fn of(f: &'p ast::FunctionDef) -> Self {
+        FnDef { name: &f.name, args: &f.params, body: &f.body, decorators: &f.decorators, range: f.range, is_async: f.is_async, kind: f.kind, doc: f.doc.as_deref() }
+    }
     pub fn from_stmt(s: &'p Stmt) -> Option<Self> {
         match s {
-            Stmt::FunctionDef(f) => Some(FnDef { name: &f.name, args: &f.parameters, body: &f.body, decorators: &f.decorator_list, range: f.range, is_async: f.is_async }),
+            Stmt::FunctionDef(f) => Some(FnDef::of(f)),
             _ => None,
         }
     }
@@ -49,8 +57,9 @@ impl<'p> FnDef<'p> {
     pub fn decorated(&self, name: &str) -> bool {
         self.decorators.iter().any(|d| decorator_name(&d.expression) == name)
     }
+    /// A Python docstring, or documentation written above the definition.
     pub fn docstring(&self) -> Option<&'p str> {
-        docstring(self.body)
+        docstring(self.body).or(self.doc)
     }
 }
 
@@ -66,15 +75,15 @@ pub fn decorator_name(d: &Expr) -> &str {
 pub fn docstring(body: &[Stmt]) -> Option<&str> {
     if let Some(Stmt::Expr(e)) = body.first() {
         if let Expr::StringLiteral(s) = &*e.value {
-            return Some(s.value.to_str());
+            return Some(&s.value);
         }
     }
     None
 }
 
 /// Base class expressions of a class definition.
-pub fn class_bases(c: &ast::StmtClassDef) -> &[Expr] {
-    c.arguments.as_ref().map(|a| &a.args[..]).unwrap_or(&[])
+pub fn class_bases(c: &ast::ClassDef) -> &[Expr] {
+    &c.bases
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,7 +132,7 @@ pub struct Field {
 pub struct ClassInfo<'p> {
     pub name: String,
     pub module: usize,
-    pub def: &'p ast::StmtClassDef,
+    pub def: &'p ast::ClassDef,
     pub bases: Vec<Ty>,
     pub base_text: Vec<String>,
     pub methods: Vec<(String, usize)>,
@@ -142,7 +151,7 @@ pub struct FuncInfo<'p> {
 }
 
 pub struct Index<'p> {
-    pub modules: &'p [PyModule],
+    pub modules: &'p [Module],
     pub by_dotted: HashMap<String, usize>,
     pub syms: Vec<HashMap<String, Sym>>,
     pub classes: Vec<ClassInfo<'p>>,
@@ -191,7 +200,7 @@ pub fn count_text(e: &str) -> String {
 
 impl<'p> Index<'p> {
     /// Builds symbols for all modules. `alloc` creates a detached IR node for each definition.
-    pub fn build(modules: &'p [PyModule], mut alloc: impl FnMut(&str, bool) -> Id) -> Self {
+    pub fn build(modules: &'p [Module], mut alloc: impl FnMut(&str, bool) -> Id) -> Self {
         let mut by_dotted = HashMap::new();
         for (i, m) in modules.iter().enumerate() {
             by_dotted.insert(m.dotted.clone(), i);
@@ -253,7 +262,7 @@ impl<'p> Index<'p> {
                 }
                 Stmt::Try(x) => {
                     self.collect_defs(mi, &x.body, alloc, false);
-                    for ast::ExceptHandler::ExceptHandler(h) in &x.handlers {
+                    for h in &x.handlers {
                         self.collect_defs(mi, &h.body, alloc, false);
                     }
                 }
@@ -277,7 +286,7 @@ impl<'p> Index<'p> {
         }
     }
 
-    fn register_class(&mut self, mi: usize, c: &'p ast::StmtClassDef, alloc: &mut impl FnMut(&str, bool) -> Id) -> usize {
+    fn register_class(&mut self, mi: usize, c: &'p ast::ClassDef, alloc: &mut impl FnMut(&str, bool) -> Id) -> usize {
         let node = alloc(&c.name, true);
         let cid = self.classes.len();
         let src = &self.modules[mi].src;
@@ -288,14 +297,11 @@ impl<'p> Index<'p> {
         for s in &c.body {
             if let Some(f) = FnDef::from_stmt(s) {
                 let node = alloc(f.name, false);
-                let kind = if f.decorated("staticmethod") {
-                    FnKind::StaticMethod
-                } else if f.decorated("classmethod") {
-                    FnKind::ClassMethod
-                } else if f.decorated("property") || f.decorated("cached_property") {
-                    FnKind::Property
-                } else {
-                    FnKind::Method
+                let kind = match f.kind {
+                    DefKind::StaticMethod => FnKind::StaticMethod,
+                    DefKind::ClassMethod => FnKind::ClassMethod,
+                    DefKind::Getter => FnKind::Property,
+                    _ => FnKind::Method,
                 };
                 let id = self.funcs.len();
                 self.funcs.push(FuncInfo { name: f.name.to_string(), module: mi, class: Some(cid), def: f, node, kind });
@@ -303,7 +309,7 @@ impl<'p> Index<'p> {
                 methods.push((f.name.to_string(), id));
             }
         }
-        let data_decorator = c.decorator_list.iter().any(|d| matches!(decorator_name(&d.expression), "dataclass" | "dataclasses" | "attrs" | "define" | "frozen"));
+        let data_decorator = c.decorators.iter().any(|d| matches!(decorator_name(&d.expression), "dataclass" | "dataclasses" | "attrs" | "define" | "frozen"));
         let data_base = self.classes[cid].base_text.iter().any(|b| {
             let tail = b.rsplit('.').next().unwrap_or(b);
             matches!(tail, "NamedTuple" | "TypedDict" | "BaseModel" | "Enum" | "IntEnum" | "StrEnum" | "BaseSettings")
@@ -388,7 +394,7 @@ impl<'p> Index<'p> {
                 }
                 Stmt::Try(x) => {
                     self.collect_imports(mi, &x.body, false);
-                    for ast::ExceptHandler::ExceptHandler(h) in &x.handlers {
+                    for h in &x.handlers {
                         self.collect_imports(mi, &h.body, false);
                     }
                 }
@@ -590,7 +596,7 @@ impl<'p> Index<'p> {
                     _ => Ty::Unknown,
                 }
             }
-            Expr::ListComp(lc) => {
+            Expr::Comp(lc) if lc.kind == ast::CompKind::List => {
                 let elem = infer(&lc.elt);
                 let count = lc.generators.first().and_then(|g| range_count(&self.modules[mi].src, &g.iter));
                 Ty::List(Box::new(elem), count)
@@ -601,7 +607,7 @@ impl<'p> Index<'p> {
                 let mut fields = vec![];
                 for item in &d.items {
                     if let Some(Expr::StringLiteral(k)) = &item.key {
-                        fields.push((k.value.to_str().to_string(), infer(&item.value)));
+                        fields.push((k.value.clone(), infer(&item.value)));
                     }
                 }
                 Ty::Dict(fields)
@@ -736,7 +742,7 @@ impl<'p> Index<'p> {
                         if let Expr::Attribute(f) = &*call.func {
                             if f.attr.as_str() == "register_buffer" {
                                 if let Some(Expr::StringLiteral(k)) = call.arguments.args.first() {
-                                    let name = k.value.to_str();
+                                    let name = k.value.as_str();
                                     if !fields.iter().any(|x| x.name == name) {
                                         fields.push(Field { name: name.to_string(), ty: Ty::Ext("buffer".into()), ctor: "buffer".into(), range: call.range() });
                                     }

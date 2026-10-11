@@ -5,7 +5,7 @@
 //! so the repo view can connect a writer of `train.bin` to its readers.
 
 use super::source::Source;
-use ruff_python_ast::{self as ast, Expr, FStringPartRef, InterpolatedStringElement};
+use super::syntax::{self as ast, Expr, TemplatePart};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Io {
@@ -36,19 +36,15 @@ pub fn file_name(s: &str) -> Option<String> {
 }
 
 /// `f'{split}.bin'` → `*.bin`.
-pub fn fstring_file(j: &ast::ExprFString) -> Option<String> {
+pub fn fstring_file(j: &ast::ExprTemplate) -> Option<String> {
+    if j.kind != ast::TemplateKind::Format {
+        return None;
+    }
     let mut pattern = String::new();
-    for part in j.value.iter() {
+    for part in &j.parts {
         match part {
-            FStringPartRef::Literal(l) => pattern.push_str(&l.value),
-            FStringPartRef::FString(f) => {
-                for el in f.elements.iter() {
-                    match el {
-                        InterpolatedStringElement::Literal(l) => pattern.push_str(&l.value),
-                        InterpolatedStringElement::Interpolation(_) => pattern.push('*'),
-                    }
-                }
-            }
+            TemplatePart::Literal(l) => pattern.push_str(l),
+            TemplatePart::Hole { .. } => pattern.push('*'),
         }
     }
     let base = pattern.rsplit('/').next()?.to_string();
@@ -62,7 +58,7 @@ fn mode_of(c: &ast::ExprCall, positional: usize) -> Option<String> {
     let kw = c.arguments.keywords.iter().find(|k| k.arg.as_ref().map(|a| a.as_str()) == Some("mode")).map(|k| &k.value);
     let e = kw.or_else(|| c.arguments.args.get(positional))?;
     if let Expr::StringLiteral(k) = e {
-        return Some(k.value.to_str().to_string());
+        return Some(k.value.clone());
     }
     None
 }

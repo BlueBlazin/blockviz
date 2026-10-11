@@ -1,54 +1,22 @@
-//! Python analysis: parse every module, index symbols project-wide, then build
-//! one dataflow diagram per module, class and function.
+//! The Python front end: Ruff parses each module (error-tolerant, current with
+//! the newest grammar) and `lower` translates it into the shared syntax tree.
 
-pub mod effects;
-pub mod flow;
-pub mod frameworks;
-pub mod index;
-pub mod names;
-pub mod source;
-pub mod walk;
+pub mod lower;
 
+use crate::code::source::Source;
+use crate::code::syntax::{Lang, TextRange};
+use crate::code::{failed_file, CodeFile, Module};
 use crate::ir::*;
 use crate::text::summary;
-use crate::vocabulary::{self, Domains};
-use flow::{Ctx, Fb, Relation};
-use index::{docstring, Index, PyModule};
 use ruff_python_ast::token::TokenKind;
 use ruff_python_ast::PySourceType;
-use ruff_text_size::{Ranged, TextRange};
-use source::Source;
-use ruff_python_ast as ast_stmt;
-use std::collections::{BTreeSet, HashMap};
+use ruff_text_size::Ranged;
 
 pub struct PyInput {
     pub file: u32,
     pub path: String,
     pub text: String,
     pub notebook: bool,
-}
-
-pub struct PyFile {
-    pub file: u32,
-    pub node: Id,
-    pub entry: bool,
-    pub doc: String,
-    pub imports: Vec<(u32, Vec<String>)>,
-    pub externals: BTreeSet<String>,
-    pub error: Option<String>,
-    /// Creates the application object a server or CLI runs (`app = FastAPI()`).
-    pub app: bool,
-    /// Framework roles of its functions: routes, commands, tasks, hooks.
-    pub handlers: Vec<frameworks::Handler>,
-}
-
-pub struct PyResult {
-    pub files: Vec<PyFile>,
-    pub execs: Vec<(u32, u32)>,
-    /// (file, artifact name, is write)
-    pub artifacts: Vec<(u32, String, bool)>,
-    /// (file, template path as written)
-    pub templates: Vec<(u32, String)>,
 }
 
 pub fn dotted_name(path: &str) -> (String, String) {
@@ -71,24 +39,24 @@ pub fn clean_notebook_line(line: &str) -> String {
     }
 }
 
-pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) -> (Builder, PyResult) {
-    let mut b = b;
-    let mut modules: Vec<PyModule> = vec![];
-    let mut failed: Vec<PyFile> = vec![];
+/// Parses and lowers every input. Inputs too deeply nested to parse safely
+/// become file nodes marked "too complex".
+pub fn parse(b: &mut Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) -> (Vec<Module>, Vec<String>, Vec<CodeFile>) {
+    let mut modules = vec![];
+    let mut headers = vec![];
+    let mut failed = vec![];
     for input in inputs {
         if let Some(why) = too_complex(&input.text) {
             diagnostics.push(format!("Skipped {}: {why}", input.path));
-            let node = b.add(None, if input.notebook { Kind::Notebook } else { Kind::File }, Shape::Box, input.path.rsplit('/').next().unwrap_or(&input.path));
-            b.get_mut(node).badges.push("too complex".into());
-            failed.push(PyFile { file: input.file, node, entry: false, doc: String::new(), imports: vec![], externals: BTreeSet::new(), error: Some(why), app: false, handlers: vec![] });
+            failed.push(failed_file(b, input.file, &input.path, Lang::Python, input.notebook, why));
             continue;
         }
         // Ruff's parser recovers from syntax errors: a file with a typo still
         // yields a tree for everything around the error.
         let parsed = ruff_python_parser::parse_unchecked_source(&input.text, PySourceType::Python);
-        let comments: Vec<TextRange> = parsed.tokens().iter().filter(|t| t.kind() == TokenKind::Comment).map(|t| t.range()).collect();
+        let comments: Vec<(TextRange, String)> = parsed.tokens().iter().filter(|t| t.kind() == TokenKind::Comment).map(|t| (t.range(), input.text[t.range()].trim_start_matches('#').to_string())).collect();
         let errors: Vec<(usize, String)> = parsed.errors().iter().map(|e| (usize::from(e.location.start()), e.error.to_string())).collect();
-        let body: Vec<ast_stmt::Stmt> = parsed.into_syntax().body.into_iter().collect();
+        let body = lower::body(&parsed.into_syntax().body);
         let (dotted, package) = dotted_name(&input.path);
         let error = errors.first().map(|(offset, msg)| {
             let offset = (*offset).min(input.text.len());
@@ -99,65 +67,11 @@ pub fn analyze(b: Builder, inputs: Vec<PyInput>, diagnostics: &mut Vec<String>) 
         if let Some(e) = &error {
             diagnostics.push(format!("Syntax error in {e}; the rest of the file is still shown."));
         }
-        modules.push(PyModule { file: input.file, path: input.path, dotted, package, src: Source::new(input.text, input.file, &comments), ast: body, notebook: input.notebook, error });
+        let src = Source::new(input.text, input.file, &comments);
+        headers.push(leading_comment(&src));
+        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: input.notebook, lang: Lang::Python, error });
     }
-    let file_nodes: Vec<Id> = modules
-        .iter()
-        .map(|m| {
-            let title = m.path.rsplit('/').next().unwrap_or(&m.path).to_string();
-            let id = b.add(None, if m.notebook { Kind::Notebook } else { Kind::File }, Shape::Box, title);
-            let n = b.get_mut(id);
-            n.category = "file";
-            n.span = Some(Span { file: m.file, start: 0, end: m.src.text.len() as u32, line: 1, end_line: m.src.text.lines().count().max(1) as u32 });
-            n.doc = docstring(&m.ast).map(summary).unwrap_or_else(|| leading_comment(&m.src));
-            if m.error.is_some() {
-                n.badges.push("syntax error".into());
-            }
-            id
-        })
-        .collect();
-    let ix = Index::build(&modules, |name, class| b.add(None, if class { Kind::Class } else { Kind::Function }, Shape::Box, name));
-    let module_by_path: HashMap<String, usize> = modules.iter().enumerate().map(|(i, m)| (m.path.clone(), i)).collect();
-    let n = modules.len();
-    let mut imported = vec![false; n];
-    for (mi, imps) in ix.imports.iter().enumerate() {
-        for (t, _) in imps {
-            if *t != mi {
-                imported[*t] = true;
-            }
-        }
-    }
-    // A module works in the domains of the libraries it imports, and of those
-    // its project imports use (views that call a `db.py` work with a database).
-    let direct: Vec<Domains> = ix.externals.iter().map(|ext| ext.iter().fold(Domains::default(), |d, e| d.union(vocabulary::library_domains(e)))).collect();
-    let domains: Vec<Domains> = (0..n).map(|mi| ix.imports[mi].iter().fold(direct[mi], |d, (t, _)| d.union(direct[*t]))).collect();
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), domains };
-    for mi in 0..n {
-        Fb::build_module(&mut cx, mi);
-    }
-    let mut result = PyResult { files: failed, execs: vec![], artifacts: vec![], templates: vec![] };
-    for (mi, m) in modules.iter().enumerate() {
-        result.files.push(PyFile {
-            file: m.file,
-            node: cx.file_nodes[mi],
-            entry: cx.entry[mi],
-            doc: cx.b.get(cx.file_nodes[mi]).doc.clone(),
-            imports: cx.ix.imports[mi].iter().map(|(t, names)| (modules[*t].file, names.clone())).collect(),
-            externals: cx.ix.externals[mi].clone(),
-            error: m.error.clone(),
-            app: cx.app[mi],
-            handlers: cx.handlers[mi].clone(),
-        });
-    }
-    for r in &cx.relations {
-        match r {
-            Relation::Exec { from, to } => result.execs.push((modules[*from].file, modules[*to].file)),
-            Relation::Artifact { module, name, write } => result.artifacts.push((modules[*module].file, name.clone(), *write)),
-            Relation::Template { module, name } => result.templates.push((modules[*module].file, name.clone())),
-        }
-    }
-    let Ctx { b, .. } = cx;
-    (b, result)
+    (modules, headers, failed)
 }
 
 /// Rejects inputs that would recurse too deeply in the parser or analysis

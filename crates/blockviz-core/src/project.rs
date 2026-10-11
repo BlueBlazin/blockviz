@@ -7,6 +7,7 @@
 
 use crate::ir::*;
 use crate::outline::{self, Class};
+use crate::code;
 use crate::python::{self, PyInput};
 use crate::text::clip;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -115,9 +116,10 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     let mut b = Builder::default();
     let root = b.add(None, Kind::Repo, Shape::Box, title.clone());
     b.get_mut(root).category = "repo";
-    let (b2, py) = python::analyze(b, py_inputs, &mut diagnostics);
+    let (modules, headers, failed) = python::parse(&mut b, py_inputs, &mut diagnostics);
+    let (b2, py) = code::analyze(b, modules, headers, failed);
     let mut b = b2;
-    let mut py_by_file: HashMap<u32, &python::PyFile> = HashMap::new();
+    let mut py_by_file: HashMap<u32, &code::CodeFile> = HashMap::new();
     for pf in &py.files {
         py_by_file.insert(pf.file, pf);
     }
@@ -238,9 +240,9 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         let settings = !test && (base.starts_with("settings") || path.contains("/settings/") || base == "conf.py" || base == "config.py" || base.ends_with("_settings.py")) && kids.iter().all(|k| matches!(k, Kind::Table | Kind::Op | Kind::Call | Kind::Branch | Kind::Section));
         let main = base == "__main__.py";
         let runs = !test && (pf.entry || main || pf.app || run_targets.contains(&pf.file) || (acts && !imported.contains(&pf.file) && !kids.iter().all(|k| matches!(k, Kind::Class | Kind::Function | Kind::Table))));
-        let handlers = |h: python::frameworks::Handler| pf.handlers.contains(&h);
+        let handlers = |h: code::frameworks::Handler| pf.handlers.contains(&h);
         let route_table = b.get(node).children.iter().any(|&c| b.get(c).kind == Kind::Table && b.get(c).category == "endpoint");
-        use python::frameworks::Handler;
+        use code::frameworks::Handler;
         let role = if pf.error.is_some() {
             "Python"
         } else if notebook {
@@ -293,7 +295,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             Some((dir, _)) => ensure_dir(&mut b, &mut dirs, root, dir),
             None => root,
         };
-        crate::python::flow::attach(&mut b, parent, e.node);
+        crate::code::flow::attach(&mut b, parent, e.node);
     }
     // READMEs describe their directory.
     let mut description = String::new();
@@ -366,7 +368,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             b.get_mut(g).category = "dir";
             b.get_mut(g).hints.pack = 9;
             for k in tooling {
-                crate::python::flow::attach(&mut b, g, k);
+                crate::code::flow::attach(&mut b, g, k);
             }
         }
     }
@@ -388,7 +390,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             b.get_mut(g).category = "dir";
             b.get_mut(g).hints.pack = 10;
             for k in others {
-                crate::python::flow::attach(&mut b, g, k);
+                crate::code::flow::attach(&mut b, g, k);
             }
         }
     }

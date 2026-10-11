@@ -4,6 +4,7 @@
 //! a fully laid-out scene out (JSON). Everything runs in a worker, so the UI
 //! thread only ever renders.
 
+pub mod code;
 pub mod compose;
 pub mod highlight;
 pub mod invocations;

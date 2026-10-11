@@ -4,7 +4,7 @@
 //! Sanic, Litestar, blueprints and routers alike.
 
 use super::flow::string_literal;
-use ruff_python_ast::{self as ast, Expr, Stmt};
+use super::syntax::{self as ast, Expr, Stmt};
 use std::collections::HashMap;
 
 /// A function's role in its framework.

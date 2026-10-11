@@ -30,8 +30,7 @@ use crate::ir::*;
 use crate::naming::{self, Dest, Step};
 use crate::text::{clip, heading, is_directive, squash, summary};
 use crate::vocabulary::{self, Domains};
-use ruff_python_ast::{self as ast, Expr, Stmt};
-use ruff_text_size::{Ranged, TextRange};
+use super::syntax::{self as ast, Ctx as Load, Expr, Ranged, Stmt, TemplateKind, TextRange};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A cross-file relation discovered while building flows.
@@ -151,7 +150,7 @@ const MINOR_EXT: &[&str] = &["os.path.", "math.", "operator.", "typing.", "funct
 pub struct Fb<'c, 'p> {
     cx: &'c mut Ctx<'p>,
     mi: usize,
-    m: &'p PyModule,
+    m: &'p Module,
     regions: Vec<Region>,
     types: HashMap<String, Ty>,
     files: HashMap<String, Vec<String>>,
@@ -178,7 +177,7 @@ fn compact(s: &str, max: usize) -> String {
 
 impl<'c, 'p> Fb<'c, 'p> {
     pub fn new(cx: &'c mut Ctx<'p>, mi: usize, root: Id) -> Self {
-        let modules: &'p [PyModule] = cx.ix.modules;
+        let modules: &'p [Module] = cx.ix.modules;
         Fb {
             cx,
             mi,
@@ -203,7 +202,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     pub fn build_module(cx: &'c mut Ctx<'p>, mi: usize) {
         let root = cx.file_nodes[mi];
-        let modules: &'p [PyModule] = cx.ix.modules;
+        let modules: &'p [Module] = cx.ix.modules;
         let m = &modules[mi];
         let library = cx.imported[mi] && !m.ast.iter().any(|s| matches!(s, Stmt::If(x) if is_main_guard(&x.test)));
         let mut fb = Fb::new(cx, mi, root);
@@ -481,7 +480,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let prev_end = src.line_of(usize::from(stmts[i - 1].end()).saturating_sub(1));
                 // `# ------` rulers separate parts of a script as clearly as blank lines.
                 let ruler = src.comments_between(prev_end, start_line).iter().any(|c| {
-                    let t = c.text.trim_start_matches('#').trim();
+                    let t = c.text.trim();
                     t.len() >= 8 && t.chars().all(|ch| !ch.is_alphanumeric())
                 });
                 ruler || src.paragraph_break(prev_end, start_line)
@@ -489,7 +488,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             if new_para {
                 let comments = src.comments_above(start_line);
                 let title = comment_title(&comments);
-                let doc = comments.iter().map(|c| c.text.trim_start_matches('#').trim()).filter(|t| !t.chars().all(|c| !c.is_alphanumeric()) && !is_directive(t)).collect::<Vec<_>>().join(" ");
+                let doc = comments.iter().map(|c| c.text.trim()).filter(|t| !t.chars().all(|c| !c.is_alphanumeric()) && !is_directive(t)).collect::<Vec<_>>().join(" ");
                 // An untitled paragraph continues the titled one before it, unless it
                 // starts a definition: definitions stand on their own.
                 let definition = matches!(s, Stmt::FunctionDef(_) | Stmt::ClassDef(_));
@@ -1123,7 +1122,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             Stmt::If(x) if matches!(&*x.test, Expr::Name(n) if n.id.as_str() == "TYPE_CHECKING") || matches!(&*x.test, Expr::Attribute(a) if a.attr.as_str() == "TYPE_CHECKING") => Some(Decl::Quiet),
             // Optional and version-dependent imports: `try: import x except ImportError: x = None`.
             Stmt::If(x) if !is_main_guard(&x.test) && !x.body.is_empty() && import_only(&x.body) && x.elif_else_clauses.iter().all(|c| import_only(&c.body)) => Some(Decl::Quiet),
-            Stmt::Try(x) if !x.body.is_empty() && import_only(&x.body) && x.handlers.iter().all(|ast::ExceptHandler::ExceptHandler(h)| import_only(&h.body)) && import_only(&x.orelse) && import_only(&x.finalbody) => Some(Decl::Quiet),
+            Stmt::Try(x) if !x.body.is_empty() && import_only(&x.body) && x.handlers.iter().all(|h| import_only(&h.body)) && import_only(&x.orelse) && import_only(&x.finalbody) => Some(Decl::Quiet),
             _ => None,
         }
     }
@@ -1250,7 +1249,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             Expr::Set(l) => l.elts.iter().all(|v| self.literalish(v)),
             Expr::Dict(d) => d.items.iter().all(|i| i.key.as_ref().is_none_or(|k| self.literalish(k)) && self.literalish(&i.value)),
             Expr::Subscript(x) => self.literalish(&x.value) && self.literalish(&x.slice),
-            Expr::FString(_) => {
+            Expr::Template(t) if t.kind == TemplateKind::Format && t.tag.is_none() => {
                 let mut kids = vec![];
                 walk::children(e, &mut kids);
                 kids.iter().all(|v| self.literalish(v))
@@ -1324,7 +1323,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 self.cx.ix.var_types.borrow_mut().insert((self.mi, name.clone()), ty);
             }
             if let Expr::StringLiteral(c) = value {
-                self.files.insert(name.clone(), effects::file_name(c.value.to_str()).into_iter().collect());
+                self.files.insert(name.clone(), effects::file_name(&c.value).into_iter().collect());
             }
         }
         let single = rows.iter().filter(|r| !r.heading).count() == 1;
@@ -2272,7 +2271,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn try_stmt(&mut self, s: &'p Stmt, body: &'p [Stmt], handlers: &'p [ast::ExceptHandler], orelse: &'p [Stmt], finalbody: &'p [Stmt], later: &HashSet<String>) {
-        let trivial = handlers.iter().all(|ast::ExceptHandler::ExceptHandler(h)| self.units(&h.body) == 0) && self.units(finalbody) == 0;
+        let trivial = handlers.iter().all(|h| self.units(&h.body) == 0) && self.units(finalbody) == 0;
         if trivial {
             self.statements(body, later, true);
             self.statements(orelse, later, true);
@@ -2282,7 +2281,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.cx.b.get_mut(id).hints.lanes = true;
         self.regions.last_mut().unwrap().merging = true;
         let mut lanes: Vec<(String, &'p [Stmt])> = vec![("try".into(), body)];
-        for ast::ExceptHandler::ExceptHandler(h) in handlers {
+        for h in handlers {
             let t = h.type_.as_ref().map(|t| self.namer().code(t, 28)).unwrap_or_else(|| "Exception".into());
             lanes.push((format!("except {t}"), &h.body));
         }
@@ -2313,7 +2312,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.cx.b.get_mut(id).hints.lanes = true;
         self.regions.last_mut().unwrap().merging = true;
         for case in &x.cases {
-            let title = format!("case {}", compact(self.src().of(&case.pattern), 30));
+            let title = match case.pattern {
+                Some(p) => format!("case {}", compact(self.src().slice(p), 30)),
+                None => "default".to_string(),
+            };
             let lane = self.add(Kind::Lane, Shape::Region, title);
             self.cx.b.get_mut(lane).category = "lane";
             self.regions.push(Region::new(lane));
@@ -2378,7 +2380,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         let doc = def.docstring().map(summary).unwrap_or_else(|| {
             let line = stmt_start_line(self.src(), s);
-            let c: Vec<&str> = self.src().comments_above(line).iter().map(|c| c.text.trim_start_matches('#').trim()).collect();
+            let c: Vec<&str> = self.src().comments_above(line).iter().map(|c| c.text.trim()).collect();
             summary(&c.join(" "))
         });
         let span = self.src().span(s.range());
@@ -2428,7 +2430,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         n.inputs = params;
     }
 
-    fn class_stmt(&mut self, c: &'p ast::StmtClassDef) {
+    fn class_stmt(&mut self, c: &'p ast::ClassDef) {
         let key = (self.mi, u32::from(c.range.start()));
         let Some(Sym::Class(cid)) = self.cx.ix.defs_at.get(&key).cloned() else { return };
         let node = self.cx.ix.classes[cid].node;
@@ -2639,7 +2641,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     fn collect(&mut self, e: &'p Expr, g: &mut Gather, fold: bool) -> Vec<Val> {
         match e {
             Expr::Name(n) => {
-                if n.ctx == ast::ExprContext::Load {
+                if n.ctx == Load::Load {
                     self.read(&n.id, g)
                 } else {
                     vec![]
@@ -2724,7 +2726,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 out
             }
-            Expr::Lambda(_) | Expr::ListComp(_) | Expr::SetComp(_) | Expr::DictComp(_) | Expr::Generator(_) => {
+            Expr::Lambda(_) | Expr::Comp(_) => {
                 let mut out = vec![];
                 for n in walk::loads(e) {
                     out.extend(self.read(&n, g));
@@ -2928,7 +2930,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 if let Some(s) = string_literal(x).and_then(effects::file_name) {
                     files.push(s);
                 }
-                if let Expr::FString(j) = x {
+                if let Expr::Template(j) = x {
                     if let Some(p) = effects::fstring_file(j) {
                         files.push(p);
                     }
@@ -3343,7 +3345,7 @@ pub fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, 
         let port = fb.cx.b.add(Some(node), Kind::Input, Shape::Port, p.clone());
         fb.cx.b.get_mut(port).category = "port";
         fb.regions[0].env.insert(p.clone(), Bind::Src(vec![port], Style::Data));
-        let annotation = def.args.posonlyargs.iter().chain(&def.args.args).chain(&def.args.kwonlyargs).find(|a| a.parameter.name.as_str() == p).and_then(|a| a.parameter.annotation.as_deref());
+        let annotation = def.args.iter().filter(|a| matches!(a.kind, ast::ParamKind::Positional | ast::ParamKind::KeywordOnly)).find(|a| a.name == *p).and_then(|a| a.annotation.as_ref());
         match annotation.map(|a| fb.cx.ix.infer(mi, a, &TypesView(&fb.types))) {
             Some(Ty::Class(k)) => {
                 fb.types.insert(p.clone(), Ty::Inst(k));
@@ -3379,7 +3381,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         let c = &cx.ix.classes[cid];
         (c.module, c.node, c.def)
     };
-    let modules: &'p [PyModule] = cx.ix.modules;
+    let modules: &'p [Module] = cx.ix.modules;
     let src = &modules[mi].src;
     let ext_base = cx.ix.external_base(cid);
     let project_bases: Vec<String> = cx.ix.classes[cid].bases.iter().filter_map(|b| if let Ty::Class(k) = b { Some(cx.ix.classes[*k].name.clone()) } else { None }).collect();
@@ -3387,7 +3389,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         let name = cx.ix.classes[cid].name.clone();
         let doc = docstring(&def.body).map(summary).unwrap_or_else(|| {
             let line = src.line_of(usize::from(def.range.start()));
-            summary(&src.comments_above(line).iter().map(|c| c.text.trim_start_matches('#').trim()).collect::<Vec<_>>().join(" "))
+            summary(&src.comments_above(line).iter().map(|c| c.text.trim()).collect::<Vec<_>>().join(" "))
         });
         let span = src.span(def.range);
         let data = cx.ix.classes[cid].data;
@@ -3404,12 +3406,12 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         n.category = if data { "config" } else { category.unwrap_or("class") };
         n.doc = doc;
         n.span = Some(span);
-        for d in &def.decorator_list {
+        for d in &def.decorators {
             n.badges.extend(super::frameworks::tag(d, |e| Namer::plain(src).code(e, 20)));
         }
         // ORM models are the database's tables: SQLModel `table=True`,
         // Django `models.Model`, SQLAlchemy declarative bases.
-        let keywords = def.arguments.as_ref().map(|a| &a.keywords[..]).unwrap_or(&[]);
+        let keywords = &def.keywords[..];
         let table = keywords.iter().any(|k| k.arg.as_deref() == Some("table") && matches!(k.value, Expr::BooleanLiteral(ref b) if b.value))
             || class_bases(def).iter().any(|b| {
                 let t = squash(src.of(b));
@@ -3652,7 +3654,7 @@ fn has_break(body: &[Stmt]) -> bool {
 
 pub fn string_literal(e: &Expr) -> Option<&str> {
     if let Expr::StringLiteral(s) = e {
-        return Some(s.value.to_str());
+        return Some(&s.value);
     }
     None
 }
@@ -3763,7 +3765,7 @@ fn import_only(body: &[Stmt]) -> bool {
         Stmt::Expr(e) => is_constant(&e.value),
         Stmt::Assign(a) => matches!(&*a.value, Expr::Name(_) | Expr::Attribute(_)) || is_constant(&a.value),
         Stmt::If(x) => import_only(&x.body) && x.elif_else_clauses.iter().all(|c| import_only(&c.body)),
-        Stmt::Try(x) => import_only(&x.body) && x.handlers.iter().all(|ast::ExceptHandler::ExceptHandler(h)| import_only(&h.body)) && import_only(&x.orelse),
+        Stmt::Try(x) => import_only(&x.body) && x.handlers.iter().all(|h| import_only(&h.body)) && import_only(&x.orelse),
         _ => false,
     })
 }
@@ -3800,7 +3802,7 @@ fn is_plumbing(s: &Stmt) -> bool {
 fn comment_title(comments: &[&super::source::Comment]) -> Option<String> {
     let prose: Vec<&str> = comments
         .iter()
-        .map(|c| c.text.trim_start_matches('#').trim())
+        .map(|c| c.text.trim())
         .filter(|t| t.chars().any(|c| c.is_alphanumeric()) && !is_directive(t))
         .collect();
     match prose.as_slice() {
@@ -3820,8 +3822,8 @@ fn comment_title(comments: &[&super::source::Comment]) -> Option<String> {
 fn stmt_start_line(src: &super::source::Source, s: &Stmt) -> u32 {
     let mut start = usize::from(s.start());
     let decorators: &[ast::Decorator] = match s {
-        Stmt::FunctionDef(f) => &f.decorator_list,
-        Stmt::ClassDef(c) => &c.decorator_list,
+        Stmt::FunctionDef(f) => &f.decorators,
+        Stmt::ClassDef(c) => &c.decorators,
         _ => &[],
     };
     for d in decorators {
@@ -3848,7 +3850,8 @@ fn stmt_loads(s: &Stmt) -> HashSet<String> {
 /// Expressions that compute a path (and so carry file names to a variable).
 fn is_path_expr(e: &Expr) -> bool {
     match e {
-        Expr::StringLiteral(_) | Expr::FString(_) | Expr::Name(_) => true,
+        Expr::StringLiteral(_) | Expr::Name(_) => true,
+        Expr::Template(t) => t.kind == TemplateKind::Format && t.tag.is_none(),
         Expr::BinOp(b) => is_path_expr(&b.left) && is_path_expr(&b.right),
         Expr::Call(c) => {
             let f = match &*c.func {
@@ -3877,7 +3880,7 @@ fn g_strings_files(fb: &Fb, e: &Expr) -> Vec<String> {
         if let Some(s) = string_literal(x).and_then(effects::file_name) {
             out.push(s);
         }
-        if let Expr::FString(j) = x {
+        if let Expr::Template(j) = x {
             if let Some(p) = effects::fstring_file(j) {
                 out.push(p);
             }

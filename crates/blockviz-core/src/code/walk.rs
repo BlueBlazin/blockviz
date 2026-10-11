@@ -1,20 +1,10 @@
-//! Borrowing traversals over the Ruff Python AST.
+//! Borrowing traversals over the shared syntax tree.
 
-use ruff_python_ast::{self as ast, Expr, InterpolatedStringElement, Stmt};
+use super::syntax::*;
 use std::collections::BTreeSet;
 
-fn interpolations<'a>(elements: &'a ast::InterpolatedStringElements, out: &mut Vec<&'a Expr>) {
-    for el in elements.iter() {
-        if let InterpolatedStringElement::Interpolation(i) = el {
-            out.push(&i.expression);
-            if let Some(spec) = &i.format_spec {
-                interpolations(&spec.elements, out);
-            }
-        }
-    }
-}
-
-/// Immediate sub-expressions of an expression.
+/// Immediate sub-expressions of an expression. A function expression's body
+/// is a scope of its own and is not included (see `function_bodies`).
 pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
     match e {
         Expr::BoolOp(x) => out.extend(&x.values),
@@ -28,15 +18,10 @@ pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
         }
         Expr::UnaryOp(x) => out.push(&x.operand),
         Expr::Lambda(x) => {
-            if let Some(p) = &x.parameters {
-                for a in p.posonlyargs.iter().chain(&p.args).chain(&p.kwonlyargs) {
-                    if let Some(d) = &a.default {
-                        out.push(d);
-                    }
-                }
-            }
+            out.extend(x.params.iter().filter_map(|p| p.default.as_ref()));
             out.push(&x.body)
         }
+        Expr::Function(f) => out.extend(f.params.iter().filter_map(|p| p.default.as_ref())),
         Expr::If(x) => {
             out.push(&x.test);
             out.push(&x.body);
@@ -48,36 +33,31 @@ pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
                 out.push(&item.value);
             }
         }
-        Expr::Set(x) => out.extend(&x.elts),
-        Expr::ListComp(x) => comprehension(&x.elt, None, &x.generators, out),
-        Expr::SetComp(x) => comprehension(&x.elt, None, &x.generators, out),
-        Expr::Generator(x) => comprehension(&x.elt, None, &x.generators, out),
-        Expr::DictComp(x) => {
-            // `{**d for d in ds}` (PEP 798) has no key.
-            match &x.key {
-                Some(k) => comprehension(k, Some(&x.value), &x.generators, out),
-                None => comprehension(&x.value, None, &x.generators, out),
+        Expr::Set(x) | Expr::List(x) | Expr::Tuple(x) => out.extend(&x.elts),
+        Expr::Comp(x) => {
+            out.push(&x.elt);
+            out.extend(x.value.as_deref());
+            for g in &x.generators {
+                out.push(&g.target);
+                out.push(&g.iter);
+                out.extend(&g.ifs);
             }
         }
-        Expr::Await(x) => out.push(&x.value),
+        Expr::Await(x) | Expr::YieldFrom(x) | Expr::Starred(x) => out.push(&x.value),
         Expr::Yield(x) => out.extend(x.value.as_deref()),
-        Expr::YieldFrom(x) => out.push(&x.value),
         Expr::Compare(x) => out.extend(x.operands.iter()),
         Expr::Call(x) => {
             out.push(&x.func);
             out.extend(&x.arguments.args);
             out.extend(x.arguments.keywords.iter().map(|k| &k.value))
         }
-        Expr::FString(x) => {
-            for part in x.value.iter() {
-                if let ast::FStringPartRef::FString(f) = part {
-                    interpolations(&f.elements, out);
+        Expr::Template(x) => {
+            out.extend(x.tag.as_deref());
+            for p in &x.parts {
+                if let TemplatePart::Hole { expr, spec } = p {
+                    out.push(expr);
+                    out.extend(spec);
                 }
-            }
-        }
-        Expr::TString(x) => {
-            for t in x.value.iter() {
-                interpolations(&t.elements, out);
             }
         }
         Expr::Attribute(x) => out.push(&x.value),
@@ -85,32 +65,12 @@ pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
             out.push(&x.value);
             out.push(&x.slice)
         }
-        Expr::Starred(x) => out.push(&x.value),
-        Expr::List(x) => out.extend(&x.elts),
-        Expr::Tuple(x) => out.extend(&x.elts),
         Expr::Slice(x) => {
             out.extend(x.lower.as_deref());
             out.extend(x.upper.as_deref());
             out.extend(x.step.as_deref())
         }
-        Expr::StringLiteral(_)
-        | Expr::BytesLiteral(_)
-        | Expr::NumberLiteral(_)
-        | Expr::BooleanLiteral(_)
-        | Expr::NoneLiteral(_)
-        | Expr::EllipsisLiteral(_)
-        | Expr::Name(_)
-        | Expr::IpyEscapeCommand(_) => {}
-    }
-}
-
-fn comprehension<'a>(elt: &'a Expr, value: Option<&'a Expr>, gens: &'a [ast::Comprehension], out: &mut Vec<&'a Expr>) {
-    out.push(elt);
-    out.extend(value);
-    for g in gens {
-        out.push(&g.target);
-        out.push(&g.iter);
-        out.extend(&g.ifs);
+        Expr::StringLiteral(_) | Expr::BytesLiteral(_) | Expr::NumberLiteral(_) | Expr::BooleanLiteral(_) | Expr::NoneLiteral(_) | Expr::EllipsisLiteral(_) | Expr::Name(_) | Expr::Other(_) => {}
     }
 }
 
@@ -124,45 +84,39 @@ pub fn walk<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
     }
 }
 
+/// Function expressions anywhere in an expression (callbacks, handlers).
+pub fn function_bodies<'a>(e: &'a Expr, out: &mut Vec<&'a FunctionDef>) {
+    walk(e, &mut |x| {
+        if let Expr::Function(f) = x {
+            out.push(f);
+        }
+    });
+}
+
 /// Names bound inside comprehensions and lambdas are local to them.
 fn local_binders(e: &Expr, out: &mut BTreeSet<String>) {
     match e {
-        Expr::ListComp(x) => gens_binders(&x.generators, out),
-        Expr::SetComp(x) => gens_binders(&x.generators, out),
-        Expr::Generator(x) => gens_binders(&x.generators, out),
-        Expr::DictComp(x) => gens_binders(&x.generators, out),
+        Expr::Comp(x) => {
+            for g in &x.generators {
+                walk(&g.target, &mut |t| {
+                    if let Expr::Name(n) = t {
+                        out.insert(n.id.to_string());
+                    }
+                });
+            }
+        }
         Expr::Lambda(x) => {
-            if let Some(p) = &x.parameters {
-                for name in param_names(p) {
-                    out.insert(name);
-                }
+            for p in &x.params {
+                out.insert(p.name.clone());
             }
         }
         _ => {}
     }
 }
 
-fn gens_binders(gens: &[ast::Comprehension], out: &mut BTreeSet<String>) {
-    for g in gens {
-        walk(&g.target, &mut |t| {
-            if let Expr::Name(n) = t {
-                out.insert(n.id.to_string());
-            }
-        });
-    }
-}
-
 /// All parameter names, in declaration order.
-pub fn param_names(p: &ast::Parameters) -> Vec<String> {
-    let mut out: Vec<String> = p.posonlyargs.iter().chain(&p.args).map(|a| a.parameter.name.to_string()).collect();
-    if let Some(v) = &p.vararg {
-        out.push(v.name.to_string());
-    }
-    out.extend(p.kwonlyargs.iter().map(|a| a.parameter.name.to_string()));
-    if let Some(k) = &p.kwarg {
-        out.push(k.name.to_string());
-    }
-    out
+pub fn param_names(p: &[Param]) -> Vec<String> {
+    p.iter().map(|a| a.name.clone()).collect()
 }
 
 /// Free names loaded by an expression, in first-use order.
@@ -172,7 +126,7 @@ pub fn loads(e: &Expr) -> Vec<String> {
     let mut out: Vec<String> = vec![];
     walk(e, &mut |x| {
         if let Expr::Name(n) = x {
-            if n.ctx == ast::ExprContext::Load && !bound.contains(n.id.as_str()) && !out.iter().any(|o| o == n.id.as_str()) {
+            if n.ctx == Ctx::Load && !bound.contains(n.id.as_str()) && !out.iter().any(|o| o == n.id.as_str()) {
                 out.push(n.id.to_string());
             }
         }
@@ -184,8 +138,7 @@ pub fn loads(e: &Expr) -> Vec<String> {
 pub fn target_names(t: &Expr, out: &mut Vec<String>) {
     match t {
         Expr::Name(n) => out.push(n.id.to_string()),
-        Expr::Tuple(x) => x.elts.iter().for_each(|e| target_names(e, out)),
-        Expr::List(x) => x.elts.iter().for_each(|e| target_names(e, out)),
+        Expr::Tuple(x) | Expr::List(x) => x.elts.iter().for_each(|e| target_names(e, out)),
         Expr::Starred(x) => target_names(&x.value, out),
         _ => {}
     }
@@ -202,8 +155,8 @@ pub fn stmt_exprs<'a>(stmts: &'a [Stmt], deep: bool, f: &mut impl FnMut(&'a Expr
 pub fn stmt_expr<'a>(s: &'a Stmt, deep: bool, f: &mut impl FnMut(&'a Expr)) {
     match s {
         Stmt::FunctionDef(x) => {
-            x.decorator_list.iter().for_each(|d| f(&d.expression));
-            for a in x.parameters.posonlyargs.iter().chain(&x.parameters.args).chain(&x.parameters.kwonlyargs) {
+            x.decorators.iter().for_each(|d| f(&d.expression));
+            for a in &x.params {
                 if let Some(d) = &a.default {
                     f(d);
                 }
@@ -213,11 +166,9 @@ pub fn stmt_expr<'a>(s: &'a Stmt, deep: bool, f: &mut impl FnMut(&'a Expr)) {
             }
         }
         Stmt::ClassDef(x) => {
-            if let Some(args) = &x.arguments {
-                args.args.iter().for_each(&mut *f);
-                args.keywords.iter().for_each(|k| f(&k.value));
-            }
-            x.decorator_list.iter().for_each(|d| f(&d.expression));
+            x.bases.iter().for_each(&mut *f);
+            x.keywords.iter().for_each(|k| f(&k.value));
+            x.decorators.iter().for_each(|d| f(&d.expression));
             if deep {
                 stmt_exprs(&x.body, deep, f);
             }
@@ -295,7 +246,7 @@ pub fn stmt_expr<'a>(s: &'a Stmt, deep: bool, f: &mut impl FnMut(&'a Expr)) {
         }
         Stmt::Try(x) => {
             stmt_exprs(&x.body, deep, f);
-            for ast::ExceptHandler::ExceptHandler(h) in &x.handlers {
+            for h in &x.handlers {
                 if let Some(t) = &h.type_ {
                     f(t);
                 }
@@ -311,7 +262,7 @@ pub fn stmt_expr<'a>(s: &'a Stmt, deep: bool, f: &mut impl FnMut(&'a Expr)) {
             }
         }
         Stmt::Expr(x) => f(&x.value),
-        Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Global(_) | Stmt::Nonlocal(_) | Stmt::Pass(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::IpyEscapeCommand(_) => {}
+        Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Global(_) | Stmt::Nonlocal(_) | Stmt::Pass(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Export(_) | Stmt::Other(_) => {}
     }
 }
 
@@ -374,7 +325,7 @@ pub fn collect_bindings(body: &[Stmt], out: &mut BTreeSet<String>, globals: &mut
             }
             Stmt::Try(x) => {
                 collect_bindings(&x.body, out, globals);
-                for ast::ExceptHandler::ExceptHandler(h) in &x.handlers {
+                for h in &x.handlers {
                     if let Some(n) = &h.name {
                         out.insert(n.to_string());
                     }
@@ -390,7 +341,15 @@ pub fn collect_bindings(body: &[Stmt], out: &mut BTreeSet<String>, globals: &mut
             }
             Stmt::Import(x) => {
                 for a in &x.names {
-                    out.insert(a.asname.as_ref().map(|n| n.to_string()).unwrap_or_else(|| a.name.split('.').next().unwrap_or("").to_string()));
+                    match (&a.asname, x.style) {
+                        (Some(n), _) => {
+                            out.insert(n.to_string());
+                        }
+                        (None, ModuleStyle::Dotted) => {
+                            out.insert(a.name.split('.').next().unwrap_or("").to_string());
+                        }
+                        (None, ModuleStyle::Path) => {}
+                    }
                 }
             }
             Stmt::ImportFrom(x) => {
