@@ -113,6 +113,9 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
   display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
 }
+/* The panel's size is set on it alone: inherited, each step of a resize would restyle every line of its code. */
+@property --panel-w { syntax: '*'; inherits: false; }
+@property --panel-h { syntax: '*'; inherits: false; }
 .insp-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 14px 16px 16px; border-radius: inherit; }
 /* Resize grip on the inner (left) edge; the top edge of the bottom sheet on narrow screens. */
 .insp-resize { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; z-index: 1; outline: none; }
