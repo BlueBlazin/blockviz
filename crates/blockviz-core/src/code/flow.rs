@@ -1511,9 +1511,9 @@ impl<'c, 'p> Fb<'c, 'p> {
             Expr::Dict(d) => d.items.iter().all(|i| i.key.as_ref().is_none_or(|k| self.literalish(k, earlier)) && self.literalish(&i.value, earlier)),
             Expr::Subscript(x) => self.literalish(&x.value, earlier) && self.literalish(&x.slice, earlier),
             Expr::Template(t) if t.kind == TemplateKind::Format && t.tag.is_none() => {
-                let mut kids = vec![];
-                walk::children(e, &mut kids);
-                kids.iter().all(|v| self.literalish(v, earlier))
+                let mut all = true;
+                walk::children(e, &mut |v| all &= self.literalish(v, earlier));
+                all
             }
             _ => false,
         }
@@ -3874,12 +3874,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                 out
             }
             _ => {
-                let mut kids = vec![];
-                walk::children(e, &mut kids);
                 let mut out = vec![];
-                for k in kids {
-                    out.extend(self.collect(k, g, fold));
-                }
+                walk::children(e, &mut |k| out.extend(self.collect(k, g, fold)));
                 out
             }
         }

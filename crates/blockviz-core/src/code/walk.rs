@@ -4,72 +4,73 @@ use super::syntax::*;
 use crate::hash::Set;
 use std::collections::BTreeSet;
 
-/// Immediate sub-expressions of an expression. A function expression's body
-/// is a scope of its own and is not included (see `loads_deep`).
-pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+/// Immediate sub-expressions of an expression, in order. A function
+/// expression's body is a scope of its own and is not included (see
+/// `loads_deep`).
+pub fn children<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
     match e {
-        Expr::BoolOp(x) => out.extend(&x.values),
+        Expr::BoolOp(x) => x.values.iter().for_each(f),
         Expr::Named(x) => {
-            out.push(&x.target);
-            out.push(&x.value)
+            f(&x.target);
+            f(&x.value)
         }
         Expr::BinOp(x) => {
-            out.push(&x.left);
-            out.push(&x.right)
+            f(&x.left);
+            f(&x.right)
         }
-        Expr::UnaryOp(x) => out.push(&x.operand),
+        Expr::UnaryOp(x) => f(&x.operand),
         Expr::Lambda(x) => {
-            out.extend(x.params.iter().filter_map(|p| p.default.as_ref()));
-            out.push(&x.body)
+            x.params.iter().filter_map(|p| p.default.as_ref()).for_each(&mut *f);
+            f(&x.body)
         }
-        Expr::Function(f) => out.extend(f.params.iter().filter_map(|p| p.default.as_ref())),
+        Expr::Function(x) => x.params.iter().filter_map(|p| p.default.as_ref()).for_each(f),
         Expr::If(x) => {
-            out.push(&x.test);
-            out.push(&x.body);
-            out.push(&x.orelse)
+            f(&x.test);
+            f(&x.body);
+            f(&x.orelse)
         }
         Expr::Dict(x) => {
             for item in &x.items {
-                out.extend(item.key.as_ref());
-                out.push(&item.value);
+                item.key.iter().for_each(&mut *f);
+                f(&item.value);
             }
         }
-        Expr::Set(x) | Expr::List(x) | Expr::Tuple(x) => out.extend(&x.elts),
+        Expr::Set(x) | Expr::List(x) | Expr::Tuple(x) => x.elts.iter().for_each(f),
         Expr::Comp(x) => {
-            out.push(&x.elt);
-            out.extend(x.value.as_deref());
+            f(&x.elt);
+            x.value.as_deref().into_iter().for_each(&mut *f);
             for g in &x.generators {
-                out.push(&g.target);
-                out.push(&g.iter);
-                out.extend(&g.ifs);
+                f(&g.target);
+                f(&g.iter);
+                g.ifs.iter().for_each(&mut *f);
             }
         }
-        Expr::Await(x) | Expr::YieldFrom(x) | Expr::Starred(x) => out.push(&x.value),
-        Expr::Yield(x) => out.extend(x.value.as_deref()),
-        Expr::Compare(x) => out.extend(x.operands.iter()),
+        Expr::Await(x) | Expr::YieldFrom(x) | Expr::Starred(x) => f(&x.value),
+        Expr::Yield(x) => x.value.as_deref().into_iter().for_each(f),
+        Expr::Compare(x) => x.operands.iter().for_each(f),
         Expr::Call(x) => {
-            out.push(&x.func);
-            out.extend(&x.arguments.args);
-            out.extend(x.arguments.keywords.iter().map(|k| &k.value))
+            f(&x.func);
+            x.arguments.args.iter().for_each(&mut *f);
+            x.arguments.keywords.iter().map(|k| &k.value).for_each(f)
         }
         Expr::Template(x) => {
-            out.extend(x.tag.as_deref());
+            x.tag.as_deref().into_iter().for_each(&mut *f);
             for p in &x.parts {
                 if let TemplatePart::Hole { expr, spec } = p {
-                    out.push(expr);
-                    out.extend(spec);
+                    f(expr);
+                    spec.iter().for_each(&mut *f);
                 }
             }
         }
-        Expr::Attribute(x) => out.push(&x.value),
+        Expr::Attribute(x) => f(&x.value),
         Expr::Subscript(x) => {
-            out.push(&x.value);
-            out.push(&x.slice)
+            f(&x.value);
+            f(&x.slice)
         }
         Expr::Slice(x) => {
-            out.extend(x.lower.as_deref());
-            out.extend(x.upper.as_deref());
-            out.extend(x.step.as_deref())
+            x.lower.as_deref().into_iter().for_each(&mut *f);
+            x.upper.as_deref().into_iter().for_each(&mut *f);
+            x.step.as_deref().into_iter().for_each(f)
         }
         Expr::StringLiteral(_) | Expr::BytesLiteral(_) | Expr::NumberLiteral(_) | Expr::BooleanLiteral(_) | Expr::NoneLiteral(_) | Expr::EllipsisLiteral(_) | Expr::Name(_) | Expr::Other(_) => {}
     }
@@ -77,14 +78,8 @@ pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
 
 /// Pre-order walk of an expression tree.
 pub fn walk<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
-    // One stack for the whole walk: children go on reversed, to come off in order.
-    let mut stack = vec![e];
-    while let Some(e) = stack.pop() {
-        f(e);
-        let at = stack.len();
-        children(e, &mut stack);
-        stack[at..].reverse();
-    }
+    f(e);
+    children(e, &mut |c| walk(c, f));
 }
 
 /// Names bound inside comprehensions and lambdas are local to them.

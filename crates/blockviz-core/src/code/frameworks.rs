@@ -413,13 +413,7 @@ pub fn chain_tops<'e>(stmts: &'e [Stmt], f: &mut impl FnMut(&'e Expr)) {
                 }
             }
             Expr::Function(d) => chain_tops(&d.body, f),
-            other => {
-                let mut kids = vec![];
-                super::walk::children(other, &mut kids);
-                for k in kids {
-                    visit(k, false, f);
-                }
-            }
+            other => super::walk::children(other, &mut |k| visit(k, false, f)),
         }
     }
     super::walk::stmt_exprs(stmts, true, &mut |root| visit(root, false, f));
