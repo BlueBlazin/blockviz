@@ -5,7 +5,7 @@
 //! `extends`), the common `@/` alias, and workspace packages by their
 //! `package.json` name.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const EXTS: &[&str] = &[".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".json"];
 
@@ -86,6 +86,11 @@ fn dir_of(path: &str) -> &str {
     path.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
+/// How many directories deep `dir` is; the repository root is 0.
+fn depth(dir: &str) -> usize {
+    dir.matches('/').count() + usize::from(!dir.is_empty())
+}
+
 /// Joins and normalizes `a/b/../c` style paths; `None` if it leaves the repository.
 pub fn join(base: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = if base.is_empty() || rel.starts_with('/') { vec![] } else { base.split('/').filter(|p| !p.is_empty()).collect() };
@@ -106,7 +111,8 @@ impl Resolver {
     /// file the resolver reads (`tsconfig*.json`, `jsconfig.json`, `package.json`).
     pub fn new(files: &[(&str, Option<&str>)]) -> Self {
         let mut r = Resolver { files: files.iter().map(|(p, _)| p.to_string()).collect(), configs: vec![], packages: HashMap::new() };
-        let texts: HashMap<&str, &str> = files.iter().filter_map(|(p, t)| t.map(|t| (*p, t))).collect();
+        // In path order, so that the result does not depend on hashing.
+        let texts: BTreeMap<&str, &str> = files.iter().filter_map(|(p, t)| t.map(|t| (*p, t))).collect();
         for (path, text) in &texts {
             let base = path.rsplit('/').next().unwrap_or(path);
             if (base.starts_with("tsconfig") && base.ends_with(".json")) || base == "jsconfig.json" {
@@ -117,6 +123,11 @@ impl Resolver {
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { continue };
                 let Some(name) = v.get("name").and_then(|n| n.as_str()) else { continue };
                 let dir = dir_of(path).to_string();
+                // Of packages sharing a name the shallowest wins, as a build
+                // output inside a package repeats its name; then the first.
+                if r.packages.get(name).is_some_and(|(d, _)| depth(d) <= depth(&dir)) {
+                    continue;
+                }
                 let entry = [v.get("source"), v.get("exports").and_then(|e| if e.is_string() { Some(e) } else { e.get(".").and_then(|d| if d.is_string() { Some(d) } else { d.get("import").or(d.get("default")) }) }), v.get("module"), v.get("main"), v.get("types")]
                     .into_iter()
                     .flatten()
@@ -127,7 +138,7 @@ impl Resolver {
             }
         }
         // The nearest config wins: deeper directories first.
-        r.configs.sort_by_key(|c| std::cmp::Reverse(c.dir.matches('/').count() + usize::from(!c.dir.is_empty())));
+        r.configs.sort_by_key(|c| std::cmp::Reverse(depth(&c.dir)));
         r
     }
 
@@ -235,7 +246,7 @@ pub fn package_name(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn config(path: &str, texts: &HashMap<&str, &str>, depth: u32) -> Option<Config> {
+fn config(path: &str, texts: &BTreeMap<&str, &str>, depth: u32) -> Option<Config> {
     let text = texts.get(path)?;
     let v: serde_json::Value = serde_json::from_str(&strip_jsonc(text)).ok()?;
     let dir = dir_of(path).to_string();
