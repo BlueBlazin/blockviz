@@ -27,7 +27,9 @@ const OUTER = new Set(['repo', 'dir', 'file', 'notebook', 'doc', 'asset', 'group
 export function describeChange(diff: SceneDiff, c: Change) {
   const model = c.status === 'removed' ? diff.base : diff.head;
   const n = model.node(c.id);
-  const where = OUTER.has(n.kind) ? null : model.where(c.id);
+  // What it is in, unless that is just the repository.
+  const w = OUTER.has(n.kind) ? null : model.where(c.id);
+  const where = w && w.at !== model.root ? w : null;
   // A whole file starts at its first line: no line to give.
   return { name: blockName(model, n), context: where && where.name !== n.title ? where.name : null, kind: KIND_LABEL[n.kind] ?? n.kind, file: fileOf(model, n), line: OUTER.has(n.kind) ? undefined : n.span?.line };
 }

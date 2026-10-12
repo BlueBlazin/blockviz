@@ -525,6 +525,12 @@ export default function App() {
             <div className="keys">
               {[...(touch ? TOUCH_KEYS : KEYS), ...(compare && !touch ? [['Next / previous change', 'N / P']] : [])].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
             </div>
+            {compare && (
+              <>
+                <h2>Reading a change</h2>
+                <p>This is the code after {compare.comparison.info.kind === 'pr' ? `pull request #${compare.comparison.info.number}` : 'the comparison'}, coloured by what it did: green blocks were added, amber ones changed, and what it did not touch is faded. A badge counts the changes inside a block; a dashed ring marks a call into changed code. Green arrows are new connections, dashed red curves removed ones. The details panel lists the changes ({touch ? 'tap one to go to it' : <>press <kbd>N</kbd> and <kbd>P</kbd> to step through them</>}) and shows a block's code as it changed.</p>
+              </>
+            )}
             <h2>Finding your way</h2>
             <p>The details panel shows a step's code inside its function with its lines marked; {touch ? 'tap' : 'click'} a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
             <h2>What becomes a block</h2>

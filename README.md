@@ -45,6 +45,12 @@ A reader sees one small part at a time, so every part says where it fits.
 * Every jump is a step in the browser's history (Back, Alt+←), and the URL names the current view and selection (`#at=model.py/CausalSelfAttention/forward`), so a link reopens it.
 * Inside code reached through a call (`… › Block › forward › attn`), a line under the breadcrumbs says where that code is defined, and long breadcrumb paths fold their middle into a menu.
 
+### Reading a pull request
+
+Open a pull request (`github.com/owner/repo/pull/123`) or a comparison (`…/compare/main...feature`) and the diagram is the code after the change, drawn the same way, coloured by what the change did: added blocks green, changed ones amber, what it did not touch faded, with new connections in green and removed ones as dashed red curves. Every block counts the changes inside it, so from the whole project down you see which parts of the architecture the change touches; the details panel lists the changes in diagram order (`N`/`P` step through them) and shows a block's code as it changed.
+
+Both versions are analyzed (the head and the commit it branched off its base) and matched block by block: files by path through renames, folders by name or contents, blocks by kind and title, code moved within a file followed to its new place. Only files the change touched have changes, and a dependency still implied through others is neither new nor removed.
+
 ### Abstraction rules
 
 The goal is blocks a reader would name, not a syntax tree.
@@ -144,11 +150,14 @@ crates/blockviz-core/          Rust → WebAssembly
   src/layout/                  bottom-up sizing; layered layout with shared trunks, PAV placement,
                                orthogonal routing with track allocation
 src/
-  core/                        worker, analyzer, loaders (GitHub, folder, drop, paste)
+  core/                        worker, analyzer, loaders (GitHub repositories, pull requests and
+                               comparisons, folder, drop, paste), saved downloads
   canvas/                      camera (anchored for unlimited depth), renderer, engine, locations
-                               (paths as titles), value tracing
+                               (paths as titles), value tracing, scene diff (two versions matched
+                               block by block)
   ui/                          inspector (resizable, source linked to blocks, used by), value panel,
-                               history and links, breadcrumbs, search, open dialog
+                               changes panel and line diff, history and links, breadcrumbs,
+                               search, open dialog
 ```
 
 **One uniform scene model.** Every node lives in its parent's interior coordinates. A node with an interior (children, a table, or a `ref` to another node's interior) draws it inside its `inner` rectangle, scaled to fit. That single rule is what makes zoom unbounded: the renderer never needs to know what a node is to descend into it. A call borrows its callee's interior by reference, so the same definition appears wherever it is called without being duplicated.

@@ -13,6 +13,20 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Skips what isn't the project's code**: `.git`, `node_modules`, `target`, `dist`, `build`, virtualenvs, caches and binary files. Limits are 4,000 files, 2 MB per file and 40 MB in total.
 - **Command line**: `blockviz <dir> [--depth N] [--json] [--trunks]` prints the same analysis without a browser.
 
+## Pull requests and comparisons
+
+- **Open a change**: a pull request (`github.com/owner/repo/pull/123`, `…/pull/123/files`, `owner/repo#123`) or two branches, tags or commits compared (`…/compare/main...feature`, or one branch against the default branch), in the Open dialog or as an address (`#github=github.com/owner/repo/pull/123`, with the view and selection).
+- **Both versions are analyzed**: the head and the commit it branched off its base, as GitHub's "Files changed" compares them. Files the two share, or that a saved copy of the repository has, are downloaded once; a pull request costs four GitHub API calls. Changes are saved like repositories.
+- **What it touches, at any zoom**:
+  - added blocks are green, changed ones amber; a block with changes inside shows how many on a badge, and a folder holding changes is ringed
+  - what the change did not touch is faded
+  - a call into changed code has a dashed ring and an arrowed count, even inside faded code, so what the change affects shows
+  - new connections are green arrows, removed ones dashed red curves; a dependency still implied through others is neither
+  - a new input or result is named in green
+- **Walking the changes**: with nothing selected, the details panel lists them by file in the order the diagram reads, under the title, branches, state, counts and a link to GitHub; files changed without changing a block are listed after. `N` and `P` (or the arrows in the panel) step through them. The chip beside the project name (`#123 +3 ~5 −1`) brings the list back.
+- **A block's change**: the panel says whether it was added or changed, how many changes are inside it, or that it leads into changed code, and lists what was removed from it. Its code is shown as it changed: the definition around it, unchanged stretches folded (click to unfold), its own lines marked. A removed block says where it was and shows its old code.
+- **Matching the versions**: files by path (following renames), folders by name or by what they hold (a package moved under `src/`), blocks by kind and title among their siblings, identical code first. Code moved within a file (steps wrapped in a new `if`) is the same block in its new place. Only files the change touched have changes; a function renamed or moved to another file is one removed and one added.
+
 ## Moving around
 
 - **Unlimited nested zoom**: repository → folders and files → classes and functions → the steps inside them → the code a step calls, drawn inside the call.
