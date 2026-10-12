@@ -4,6 +4,8 @@ See inside a codebase the way architecture figures do: as nested block diagrams 
 
 Everything runs locally in the browser. A Rust core compiled to WebAssembly parses and lays out the whole project in a worker; the UI thread only draws.
 
+[FEATURES.md](FEATURES.md) lists everything the app does.
+
 ```
 npm install
 npm run build        # builds the wasm core, then the web app
