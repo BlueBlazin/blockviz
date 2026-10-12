@@ -81,7 +81,31 @@ pub struct Rect {
 /// points have one); a float's full precision would only lengthen the JSON.
 /// Adding zero turns the -0 that rounding leaves of tiny negatives into 0.
 fn rounded<S: serde::Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_f64((v * 100.).round() / 100. + 0.)
+    Number((v * 100.).round() / 100. + 0.).serialize(s)
+}
+
+fn numbers<S: serde::Serializer>(v: &[f64], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(v.iter().map(|&x| Number(x)))
+}
+
+fn point<S: serde::Serializer>(v: &Option<[f64; 2]>, s: S) -> Result<S::Ok, S::Error> {
+    v.map(|p| p.map(Number)).serialize(s)
+}
+
+/// A number in the JSON, written as an integer when it is one: `12`
+/// parses to the same number as `12.0`, from fewer bytes, sooner.
+struct Number(f64);
+
+impl Serialize for Number {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let i = self.0 as i64;
+        // Bit for bit, so that -0 stays a float.
+        if (i as f64).to_bits() == self.0.to_bits() {
+            s.serialize_i64(i)
+        } else {
+            s.serialize_f64(self.0)
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -115,9 +139,10 @@ pub struct Edge {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub label: String,
     /// Polyline in the parent's interior coordinates: x0, y0, x1, y1, ...
+    #[serde(serialize_with = "numbers")]
     pub points: Vec<f64>,
     /// Where the label is drawn (left-aligned baseline), when it is drawn.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "point")]
     pub label_at: Option<[f64; 2]>,
     /// The line continues into a region instead of ending in an arrowhead.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
