@@ -154,10 +154,10 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
     let edges = std::mem::take(&mut b.get_mut(id).edges);
     let mut edges = bundle(b, edges);
     edges.retain(|e| index.contains_key(&e.from) && index.contains_key(&e.to));
-    let mut ledges = vec![];
+    let mut ledges = Vec::with_capacity(edges.len());
     // Values a block sends share a line when they are one value, or always
     // with shared trunks: each distinct value is a group.
-    let mut values: Map<(&str, EdgeKind, Option<u64>), u64> = Map::default();
+    let mut values: Map<(&str, EdgeKind, Option<u64>), u64> = Map::with_capacity_and_hasher(edges.len(), Default::default());
     for e in &edges {
         let (from, to) = (index[&e.from], index[&e.to]);
         let to_x = e.to_port.and_then(|p| port_offset(b, e.to, p));
@@ -230,9 +230,9 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
 /// Values entering or leaving a collapsed box travel as one bundled edge;
 /// only inline regions keep one line per port.
 fn bundle(b: &Builder, edges: Vec<Edge>) -> Vec<Edge> {
-    let mut out: Vec<Edge> = vec![];
+    let mut out: Vec<Edge> = Vec::with_capacity(edges.len());
     // Edges by their ends, so a region with thousands of them bundles in linear time.
-    let mut at: Map<(Id, Id, Option<Id>, Option<Id>), usize> = Map::default();
+    let mut at: Map<(Id, Id, Option<Id>, Option<Id>), usize> = Map::with_capacity_and_hasher(edges.len(), Default::default());
     for mut e in edges {
         if e.to_port.is_some() && !b.get(e.to).hints.inline {
             e.to_port = None;
@@ -331,7 +331,11 @@ fn size(b: &mut Builder, id: Id, cx: &mut Ctx) {
     }
 }
 
-fn meta_line(n: &Node) -> String {
+fn meta_line(n: &Node) -> std::borrow::Cow<'_, str> {
+    // Most nodes have a subtitle alone, which is the line as it is.
+    if n.badges.is_empty() {
+        return n.subtitle.as_str().into();
+    }
     let mut parts: Vec<&str> = vec![];
     if !n.subtitle.is_empty() {
         parts.push(&n.subtitle);
@@ -339,7 +343,7 @@ fn meta_line(n: &Node) -> String {
     for badge in &n.badges {
         parts.push(badge);
     }
-    parts.join(" · ")
+    parts.join(" · ").into()
 }
 
 fn leaf_size(b: &mut Builder, id: Id) {
