@@ -200,6 +200,61 @@ fn inversions(pairs: &mut [(f64, f64)], bs: &mut Vec<f64>, tree: &mut Vec<usize>
     total
 }
 
+/// Puts each horizontal run `(start, end)`, in order, one track above the
+/// highest earlier run it overlaps. Overlaps are found in a max segment tree
+/// over the gaps between the runs' ends: O(n log n), where comparing every
+/// pair was quadratic in channels of thousands of runs.
+fn stack(runs: &[(f64, f64)]) -> Vec<usize> {
+    let mut ends: Vec<f64> = runs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    ends.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    ends.dedup();
+    let rank = |v: f64| ends.partition_point(|&e| e < v);
+    let span = (0, ends.len());
+    let mut tree = Tree { all: vec![0; 4 * ends.len()], any: vec![0; 4 * ends.len()] };
+    runs.iter()
+        .map(|&(a, b)| {
+            let gaps = (rank(a), rank(b));
+            let t = tree.highest(1, span, gaps);
+            tree.raise(1, span, gaps, t + 1);
+            t
+        })
+        .collect()
+}
+
+/// A segment tree whose values are only ever raised. Per node: the highest
+/// value raised over all of its span, and over any part of it.
+struct Tree {
+    all: Vec<usize>,
+    any: Vec<usize>,
+}
+
+impl Tree {
+    fn highest(&self, k: usize, (lo, hi): (usize, usize), (l, r): (usize, usize)) -> usize {
+        if r <= lo || hi <= l {
+            0
+        } else if l <= lo && hi <= r {
+            self.any[k]
+        } else {
+            let mid = (lo + hi) / 2;
+            self.all[k].max(self.highest(2 * k, (lo, mid), (l, r))).max(self.highest(2 * k + 1, (mid, hi), (l, r)))
+        }
+    }
+
+    fn raise(&mut self, k: usize, (lo, hi): (usize, usize), (l, r): (usize, usize), v: usize) {
+        if r <= lo || hi <= l {
+            return;
+        }
+        self.any[k] = self.any[k].max(v);
+        if l <= lo && hi <= r {
+            self.all[k] = self.all[k].max(v);
+        } else {
+            let mid = (lo + hi) / 2;
+            self.raise(2 * k, (lo, mid), (l, r), v);
+            self.raise(2 * k + 1, (mid, hi), (l, r), v);
+        }
+    }
+}
+
 struct Seg {
     a: usize,
     b: usize,
@@ -342,19 +397,20 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     let mut segs: Vec<Seg> = vec![];
     let mut seg_index: HashMap<(usize, usize, u64), usize> = HashMap::new();
     let mut chains: Vec<Vec<usize>> = vec![vec![]; edges.len()];
-    let mut trunks: HashMap<(usize, u64, bool), Vec<usize>> = HashMap::new();
+    // Edges by (source, group, reversed), in order of first appearance.
     let mut groups: Vec<((usize, u64, bool), Vec<usize>)> = vec![];
+    let mut group_at: HashMap<(usize, u64, bool), usize> = HashMap::with_capacity(edges.len());
     for (ei, e) in edges.iter().enumerate() {
         if !e.draw || e.from == e.to {
             continue;
         }
         let (a, _) = oriented(ei);
         let k = (a, e.group, reversed[ei]);
-        if let Some(g) = groups.iter_mut().find(|g| g.0 == k) {
-            g.1.push(ei);
-        } else {
-            groups.push((k, vec![ei]));
-        }
+        let g = *group_at.entry(k).or_insert_with(|| {
+            groups.push((k, vec![]));
+            groups.len() - 1
+        });
+        groups[g].1.push(ei);
     }
     let mut add_seg = |segs: &mut Vec<Seg>, a: usize, b: usize, port: u64, weight: f64, from_x: Option<f64>, to_x: Option<f64>| -> usize {
         let key = (a, b, if to_x.is_some() { to_x.unwrap().to_bits() } else { u64::MAX });
@@ -369,7 +425,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     for (k, eids) in &groups {
         let (a, group, rev) = *k;
         let deepest = eids.iter().map(|&ei| layer[oriented(ei).1]).max().unwrap_or(layer[a]);
-        let trunk = trunks.entry(*k).or_insert_with(Vec::new);
+        let mut trunk = vec![];
         // Dummy for each intermediate layer between source and the deepest consumer.
         for l in layer[a] + 1..deepest {
             let _ = l;
@@ -596,6 +652,8 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             ((width * 0.72) / (count - 1) as f64).min(26.)
         }
     };
+    // Where each (vertex, group) is among its vertex's ports.
+    let mut port_at: HashMap<(usize, u64), usize> = HashMap::with_capacity(segs.len());
     for v in 0..nv {
         if is_dummy(v) || nodes[v].converge {
             for &si in &vsucc[v] {
@@ -606,10 +664,11 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
         let mut ports: Vec<(u64, Vec<usize>)> = vec![];
         for &si in &vsucc[v] {
             let p = segs[si].port;
-            match ports.iter_mut().find(|q| q.0 == p) {
-                Some(q) => q.1.push(si),
-                None => ports.push((p, vec![si])),
-            }
+            let k = *port_at.entry((v, p)).or_insert_with(|| {
+                ports.push((p, vec![]));
+                ports.len() - 1
+            });
+            ports[k].1.push(si);
         }
         let target_x = |si: usize| -> f64 {
             let s = &segs[si];
@@ -687,6 +746,8 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     let mut track_of = vec![0usize; segs.len()];
     let mut channel_h = vec![LAYER_GAP; nlayers];
     let mut channel_label = vec![0f64; nlayers];
+    // Where each bus is in its layer's list, by its key.
+    let mut bus_at: HashMap<(usize, u64), usize> = HashMap::with_capacity(segs.len());
     for l in 0..nlayers.saturating_sub(1) {
         // bus key → (min, max, start x, segments)
         let mut buses: Vec<((usize, u64), f64, f64, f64, Vec<usize>)> = vec![];
@@ -697,14 +758,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
                     continue;
                 }
                 let key = (v, if is_dummy(v) { 0 } else { segs[si].port });
-                match buses.iter_mut().find(|b| b.0 == key) {
-                    Some(b) => {
-                        b.1 = b.1.min(x1.min(x2));
-                        b.2 = b.2.max(x1.max(x2));
-                        b.4.push(si);
-                    }
-                    None => buses.push((key, x1.min(x2), x1.max(x2), x1, vec![si])),
-                }
+                let i = *bus_at.entry(key).or_insert_with(|| {
+                    buses.push((key, x1.min(x2), x1.max(x2), x1, vec![]));
+                    buses.len() - 1
+                });
+                let b = &mut buses[i];
+                b.1 = b.1.min(x1.min(x2));
+                b.2 = b.2.max(x1.max(x2));
+                b.4.push(si);
             }
         }
         // Rightward buses whose start is further right sit higher; leftward mirror.
@@ -714,16 +775,10 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             let kb = (dir(b), if dir(b) == 0 { -b.3 } else { b.3 });
             ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
         });
-        let mut tracks: Vec<usize> = vec![];
-        for i in 0..buses.len() {
-            let mut t = 0;
-            for j in 0..i {
-                if buses[j].1 < buses[i].2 + 6. && buses[i].1 < buses[j].2 + 6. {
-                    t = t.max(tracks[j] + 1);
-                }
-            }
-            tracks.push(t);
-            for &si in &buses[i].4 {
+        // Buses closer than 6 px count as overlapping.
+        let tracks = stack(&buses.iter().map(|b| (b.1, b.2 + 6.)).collect::<Vec<_>>());
+        for (b, &t) in buses.iter().zip(&tracks) {
+            for &si in &b.4 {
                 track_of[si] = t;
             }
         }
@@ -854,6 +909,29 @@ mod tests {
             }
         }
         assert!(out.routes.iter().all(|r| r.len() >= 2));
+    }
+    #[test]
+    fn tracks_stack_as_if_every_pair_were_compared() {
+        let mut seed = 7u64;
+        let mut next = |max: f64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 31) as f64 * max).round()
+        };
+        for n in [0, 1, 2, 5, 40, 300] {
+            // Whole numbers, so runs often share ends or just touch.
+            let runs: Vec<(f64, f64)> = (0..n)
+                .map(|_| {
+                    let a = next(400.);
+                    (a, a + next(80.) + 6.)
+                })
+                .collect();
+            let mut pairwise: Vec<usize> = vec![];
+            for i in 0..n {
+                let t = (0..i).filter(|&j| runs[j].0 < runs[i].1 && runs[i].0 < runs[j].1).map(|j| pairwise[j] + 1).max().unwrap_or(0);
+                pairwise.push(t);
+            }
+            assert_eq!(stack(&runs), pairwise, "{n} runs");
+        }
     }
     #[test]
     fn disconnected_pieces_are_packed() {
