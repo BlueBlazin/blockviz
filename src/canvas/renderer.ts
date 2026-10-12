@@ -302,11 +302,19 @@ export class Renderer {
       const fits = room / Math.max(this.measure(fontAt(10), text) / 10, 1);
       return clamp(natural, Math.min(11.5, b.h * share, Math.max(fits, natural)), 18);
     };
+    // A box with room keeps a readable name; so does a landmark (a file, a
+    // class, a file on disk) whose name still fits it at a legible size,
+    // however narrow it is, unless it is in the thumbnail of a closed block
+    // (whose own name is the landmark there). Other names grow and shrink
+    // with the zoom, so they are never measured.
+    const roomy = b.w >= (named ? 44 : 70) && b.h >= 18;
+    const landmark = named && !this.thumbnails && b.h >= 14;
+    const prominent = t.s >= (named ? 0.08 : 0.14) && (roomy || landmark);
     let lines = [n.title];
-    let size = sizeFor(n.title, 0.55);
+    let size = prominent ? sizeFor(n.title, 0.55) : natural;
     // A name of several words too long for a narrow box goes on two lines
     // rather than shrinking out of sight.
-    if (size < 10 && n.title.includes(' ')) {
+    if (prominent && size < 10 && n.title.includes(' ')) {
       const split = splitTitle(n.title);
       const longer = this.measure(fontAt(10), split[0]) >= this.measure(fontAt(10), split[1]) ? split[0] : split[1];
       const two = sizeFor(longer, 0.3);
@@ -315,15 +323,8 @@ export class Renderer {
         size = two;
       }
     }
-    // A box with room keeps a readable name; so does a landmark (a file, a
-    // class, a file on disk) whose name still fits it at a legible size,
-    // however narrow it is, unless it is in the thumbnail of a closed block
-    // (whose own name is the landmark there). Other names grow and shrink
-    // with the zoom.
-    const roomy = b.w >= (named ? 44 : 70) && b.h >= 18;
-    const landmark = named && !this.thumbnails && b.h >= 14 && size >= LEGIBLE;
-    const prominent = t.s >= (named ? 0.08 : 0.14) && (roomy || landmark);
-    if (!prominent) {
+    // A landmark whose name no longer fits at a legible size is not one.
+    if (!roomy && size < LEGIBLE) {
       lines = [n.title];
       size = natural;
     }
