@@ -6,7 +6,7 @@ type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never;
 /** Owns the WebAssembly core's worker. Analysis is latest-request-wins:
  * terminating the worker is the only way to cancel synchronous WebAssembly,
  * so a new analysis (or `cancel`) replaces the worker and fails whatever was
- * still pending on it. Between analyses a fresh worker serves highlighting. */
+ * still pending on it. A worker starts when a request needs one. */
 export class Analyzer {
   private worker: Worker | null = null;
   private pending = new Map<number, { resolve: (r: Response) => void; reject: (e: Error) => void }>();
@@ -24,9 +24,8 @@ export class Analyzer {
     });
     const work = this.call({ kind: 'analyze', name: project.name, description: project.description, files: project.files, sharedTrunks }).then(r => {
       // WebAssembly memory never shrinks, and analysis can grow it to
-      // gigabytes: drop that worker and keep a fresh one for highlighting.
+      // gigabytes: drop that worker (highlighting will start a fresh one).
       this.cancel();
-      this.spawn();
       const { reply, elapsed } = r as Extract<Response, { kind: 'analyze' }>;
       // Parsed once, here: posting a parsed scene would parse it in the
       // worker and then copy it across, which takes longer still.
