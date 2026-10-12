@@ -22,50 +22,73 @@ export interface RepoCache {
   put(repo: SavedRepo): Promise<void>;
 }
 
-/** How many repositories are kept. */
-const KEEP = 5;
+/** How many repositories, and how many analyzed scenes (a comparison is two), are kept. */
+const KEEP = { repos: 5, scenes: 4 };
+type Store = keyof typeof KEEP;
 
-/** Repositories kept in this browser (IndexedDB). Never fails: without
- * storage (a private window, blocked site data) nothing is kept. */
-export function browserCache(): RepoCache {
-  let db: Promise<IDBDatabase | null> | null = null;
-  const open = () => (db ??= new Promise<IDBDatabase | null>(resolve => {
+let db: Promise<IDBDatabase | null> | undefined;
+
+/** This browser's database (IndexedDB), or null without storage (a private
+ * window, blocked site data). Everything kept is optional: nothing here fails. */
+function open(): Promise<IDBDatabase | null> {
+  return (db ??= new Promise(resolve => {
     try {
-      const req = indexedDB.open('blockviz', 1);
-      req.onupgradeneeded = () => req.result.createObjectStore('repos', { keyPath: 'key' }).createIndex('saved', 'saved');
-      req.onsuccess = () => resolve(req.result);
+      const req = indexedDB.open('blockviz', 2);
+      req.onupgradeneeded = () => {
+        for (const name of Object.keys(KEEP)) {
+          if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name, { keyPath: 'key' }).createIndex('saved', 'saved');
+        }
+      };
+      // A newer version of the page, open in another tab, may upgrade it.
+      req.onsuccess = () => { req.result.onversionchange = () => req.result.close(); resolve(req.result); };
       req.onerror = () => resolve(null);
       req.onblocked = () => resolve(null);
     } catch {
       resolve(null);
     }
   }));
-  const run = async <T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> => {
-    const d = await open();
-    if (!d) return undefined;
-    return new Promise(resolve => {
-      try {
-        const tx = d.transaction('repos', mode);
-        const req = work(tx.objectStore('repos'));
-        tx.oncomplete = () => resolve(req ? req.result : undefined);
-        tx.onerror = () => resolve(undefined);
-        tx.onabort = () => resolve(undefined);
-      } catch {
-        resolve(undefined);
-      }
-    });
-  };
+}
+
+async function run<T>(name: Store, mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> {
+  const d = await open();
+  if (!d) return undefined;
+  return new Promise(resolve => {
+    try {
+      const tx = d.transaction(name, mode);
+      const req = work(tx.objectStore(name));
+      tx.oncomplete = () => resolve(req ? req.result : undefined);
+      tx.onerror = () => resolve(undefined);
+      tx.onabort = () => resolve(undefined);
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+/** Keeps `value`, forgetting the longest kept beyond the few of its store (a
+ * repository in use is saved again when checked, daily). */
+async function save<T extends { key: string; saved: number }>(name: Store, value: T): Promise<void> {
+  await run(name, 'readwrite', store => {
+    store.put(value);
+    const keys = store.index('saved').getAllKeys();
+    keys.onsuccess = () => { for (const k of keys.result.slice(0, -KEEP[name])) store.delete(k); };
+  });
+}
+
+/** Repositories kept in this browser. */
+export function browserCache(): RepoCache {
   return {
-    get: key => run<SavedRepo>('readonly', s => s.get(key)),
-    async put(repo) {
-      await run('readwrite', s => { s.put(repo); });
-      // Forget the longest unchecked beyond the few kept (one in use is checked daily).
-      const keys = await run<IDBValidKey[]>('readonly', s => s.index('saved').getAllKeys());
-      const old = (keys ?? []).slice(0, -KEEP);
-      if (old.length) await run('readwrite', s => { for (const k of old) s.delete(k); });
-    },
+    get: key => run<SavedRepo>('repos', 'readonly', s => s.get(key)),
+    put: repo => save('repos', repo),
   };
 }
+
+/** Scenes the analyzer made (its reply's bytes), named by everything they
+ * were made from: see analysis.worker.ts. */
+export const scenes = {
+  get: async (key: string) => (await run<{ scene: Uint8Array }>('scenes', 'readonly', s => s.get(key)))?.scene,
+  put: (key: string, scene: Uint8Array) => save('scenes', { key, scene, saved: Date.now() }),
+};
 
 /** Repositories kept in memory, for tests. */
 export function memoryCache(): RepoCache & { repos: Map<string, SavedRepo> } {
