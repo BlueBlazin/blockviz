@@ -28,6 +28,19 @@ fn scene(name: &str) -> Scene {
     blockviz_core::analyze(name, files)
 }
 
+/// A node's code: its own, or the source at its span, which is all the scene
+/// keeps when the two are the same.
+fn code_of(s: &Scene, root: &Path, n: &Node) -> String {
+    match &n.span {
+        Some(sp) if n.code.is_empty() => {
+            let f = &s.files[sp.file as usize];
+            let text = f.source.clone().unwrap_or_else(|| std::fs::read_to_string(root.join(&f.path)).unwrap());
+            text[sp.start as usize..sp.end as usize].to_string()
+        }
+        _ => n.code.clone(),
+    }
+}
+
 /// The repository path a node is drawn at (directory titles end in `/`;
 /// single-child directories are folded into their child's title).
 fn path_of(s: &Scene, n: &Node) -> String {
@@ -270,11 +283,13 @@ fn titles_are_names_not_cut_code() {
     // A block is titled by a name or a short phrase; source code appears in a
     // title only when it fits whole, never cut off mid-expression.
     for name in ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corpus").join(name);
         let s = scene(name);
         for n in s.nodes.iter().filter(|n| matches!(n.kind, Kind::Op | Kind::Call | Kind::Table)) {
-            let squashed: String = n.code.split_whitespace().collect::<Vec<_>>().join(" ");
             if let Some(cut) = n.title.strip_suffix('…') {
-                assert!(cut.len() < 4 || !squashed.starts_with(cut.trim_end()), "{name}: {:?} is cut from `{}`", n.title, n.code);
+                let code = code_of(&s, &root, n);
+                let squashed: String = code.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(cut.len() < 4 || !squashed.starts_with(cut.trim_end()), "{name}: {:?} is cut from `{code}`", n.title);
             }
             for b in &n.badges {
                 if let Some(cut) = b.strip_prefix("if ").and_then(|b| b.strip_suffix('…')) {

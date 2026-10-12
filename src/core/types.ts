@@ -33,6 +33,7 @@ export interface SceneNode {
   title: string;
   subtitle?: string;
   doc?: string;
+  /** Source shown for the block when it is not simply the file's text at `span`. */
   code?: string;
   badges?: string[];
   effects?: string[];

@@ -670,7 +670,15 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     let python_files = py.files.len() as u32;
     let lines: u32 = metas.iter().map(|m| m.lines).sum();
     let max_depth = b.nodes.iter().map(|n| n.id).filter(|&id| b.get(id).parent.is_some()).map(|id| b.depth(id)).max().unwrap_or(0);
-    let (nodes, scene_root) = b.finish(scene_root);
+    let (mut nodes, scene_root) = b.finish(scene_root);
+    // Code that is just the source at a node's span is read there by the page.
+    for n in &mut nodes {
+        let Some(span) = &n.span else { continue };
+        let text = metas[span.file as usize].source.as_deref().or(entries[span.file as usize].text.as_deref());
+        if text.and_then(|t| t.get(span.start as usize..span.end as usize)) == Some(n.code.as_str()) {
+            n.code.clear();
+        }
+    }
     diagnostics.push("Static analysis: arrows show likely dataflow and dependencies inferred from source, not a runtime trace. Dynamic dispatch and code passed through strings may be missed.".into());
     let stats = Stats { files: metas.len() as u32, python_files, lines, nodes: nodes.len() as u32, max_depth };
     Scene { version: 2, title, description, root: scene_root, nodes, files: metas, diagnostics, stats }

@@ -26,6 +26,19 @@ fn root(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corpus-js").join(name)
 }
 
+/// A node's code: its own, or the source at its span, which is all the scene
+/// keeps when the two are the same.
+fn code_of(s: &Scene, root: &Path, n: &Node) -> String {
+    match &n.span {
+        Some(sp) if n.code.is_empty() => {
+            let f = &s.files[sp.file as usize];
+            let text = f.source.clone().unwrap_or_else(|| std::fs::read_to_string(root.join(&f.path)).unwrap());
+            text[sp.start as usize..sp.end as usize].to_string()
+        }
+        _ => n.code.clone(),
+    }
+}
+
 fn scene(name: &str) -> Scene {
     let root = root(name);
     let mut files = vec![];
@@ -237,13 +250,14 @@ fn workspace_packages_resolve_by_name() {
 fn titles_are_names_and_branch_arms_are_never_empty() {
     for name in ALL {
         let s = scene(name);
+        let root = root(name);
         for n in s.nodes.iter().filter(|n| matches!(n.kind, Kind::Op | Kind::Call | Kind::Table)) {
-            let squashed: String = n.code.split_whitespace().collect::<Vec<_>>().join(" ");
             if let Some(cut) = n.title.strip_suffix('…') {
-                assert!(cut.len() < 4 || !squashed.starts_with(cut.trim_end()), "{name}: {:?} is cut from `{}`", n.title, n.code);
+                let code = code_of(&s, &root, n);
+                let squashed: String = code.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(cut.len() < 4 || !squashed.starts_with(cut.trim_end()), "{name}: {:?} is cut from `{code}`", n.title);
             }
         }
-        let root = root(name);
         for lane in s.nodes.iter().filter(|n| n.kind == Kind::Lane) {
             if lane.children.iter().any(|&c| !s.nodes[c as usize].is_port()) {
                 continue;

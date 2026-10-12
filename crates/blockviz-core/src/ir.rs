@@ -67,10 +67,21 @@ pub enum EdgeKind {
 
 #[derive(Serialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
+    #[serde(serialize_with = "rounded")]
     pub x: f64,
+    #[serde(serialize_with = "rounded")]
     pub y: f64,
+    #[serde(serialize_with = "rounded")]
     pub w: f64,
+    #[serde(serialize_with = "rounded")]
     pub h: f64,
+}
+
+/// Layout geometry is sent to two decimals, finer than any zoom shows (edge
+/// points have one); a float's full precision would only lengthen the JSON.
+/// Adding zero turns the -0 that rounding leaves of tiny negatives into 0.
+fn rounded<S: serde::Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64((v * 100.).round() / 100. + 0.)
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -148,7 +159,8 @@ pub struct Node {
     pub subtitle: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub doc: String,
-    /// Full source text of a fused operation, for the inspector.
+    /// Full source text of a fused operation, for the inspector. Left empty
+    /// when it is exactly the source at `span`, which the page reads there.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub code: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -170,17 +182,21 @@ pub struct Node {
     /// Blocks that use this one without linking to it: the calls of a component.
     #[serde(rename = "usedBy", skip_serializing_if = "Vec::is_empty")]
     pub used_by: Vec<Id>,
+    #[serde(serialize_with = "rounded")]
     pub x: f64,
+    #[serde(serialize_with = "rounded")]
     pub y: f64,
+    #[serde(serialize_with = "rounded")]
     pub w: f64,
+    #[serde(serialize_with = "rounded")]
     pub h: f64,
     /// Box-local rectangle the interior is fitted into.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inner: Option<Rect>,
     /// Size of the interior this node owns (children or rows).
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(skip_serializing_if = "is_zero", serialize_with = "rounded")]
     pub cw: f64,
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(skip_serializing_if = "is_zero", serialize_with = "rounded")]
     pub ch: f64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Id>,

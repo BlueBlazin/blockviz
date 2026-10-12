@@ -91,7 +91,7 @@ function UsedBy({ model, id, onGo, onPeek }: { model: SceneModel; id: number; on
           const file = model.fileOf(n);
           const kind = USE_KIND[n.kind];
           return (
-            <button key={u} onClick={() => onGo(u)} onMouseEnter={() => onPeek(u)} title={n.code ?? n.title}>
+            <button key={u} onClick={() => onGo(u)} onMouseEnter={() => onPeek(u)} title={n.code || (n.span && model.source(n.span)) || n.title}>
               <span className="use-name">{where?.name ?? n.title}{kind ? <span className="dim"> · {kind}{n.title !== model.node(id).title ? ` ${n.title}` : ''}</span> : null}</span>
               {file && n.span && <span className="use-at">{file.split('/').pop()}:{n.span.line}</span>}
             </button>
