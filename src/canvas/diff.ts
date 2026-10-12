@@ -127,8 +127,8 @@ export class SceneDiff {
   /** Files pair by path wherever their folders are drawn (folders fold and regroup as files come and go). */
   private pairFiles() {
     const baseFiles = new Map<string, number[]>();
-    for (const [path, ids] of tops(this.base)) baseFiles.set(path, ids);
-    for (const [path, ids] of tops(this.head)) {
+    for (const [path, ids] of tops(this.base, n => this.untouched(this.base, n))) baseFiles.set(path, ids);
+    for (const [path, ids] of tops(this.head, n => this.untouched(this.head, n))) {
       const change = this.headChanges.get(path);
       const was = baseFiles.get(change?.status === 'renamed' && change.previous ? change.previous : path) ?? [];
       // One block for the file in each: the same file, whatever it is called now.
@@ -163,8 +163,10 @@ export class SceneDiff {
 
   private pairTree(h: number, b: number | undefined) {
     if (!this.match.has(h) && b !== undefined && !this.back.has(b)) this.pair(h, b);
+    const n = this.head.node(h);
+    if (this.untouched(this.head, n)) return;
     const mine = this.match.get(h);
-    const kids = this.head.node(h).children ?? [];
+    const kids = n.children ?? [];
     if (mine !== undefined) this.pairAmong(kids, this.base.node(mine).children ?? []);
     for (const c of kids) this.pairTree(c, undefined);
   }
@@ -175,6 +177,12 @@ export class SceneDiff {
     return file !== undefined && this.headChanges.has(file);
   }
 
+  /** Whether a block is code in a file the change did not touch: nothing in it can differ, so no walk goes in. */
+  private untouched(model: SceneModel, n: SceneNode): boolean {
+    const file = model.fileOf(n);
+    return file !== undefined && !(model === this.head ? this.headChanges : this.baseChanges).has(file);
+  }
+
   /**
    * A folder renamed or regrouped (a package moved under `src/`) is the base
    * folder most of what it holds came from. Inner folders first, so a moved
@@ -182,6 +190,7 @@ export class SceneDiff {
    */
   private pairFolders(h: number) {
     const n = this.head.node(h);
+    if (this.untouched(this.head, n)) return;
     for (const c of n.children ?? []) this.pairFolders(c);
     if (this.match.has(h) || n.span) return;
     const votes = new Map<number, number>();
@@ -250,9 +259,11 @@ export class SceneDiff {
   }
 
   private mark(h: number) {
+    const n = this.head.node(h);
+    if (this.untouched(this.head, n)) return;
     const s = this.statusOf(h);
     if (s) this.statuses.set(h, s);
-    for (const c of this.head.node(h).children ?? []) this.mark(c);
+    for (const c of n.children ?? []) this.mark(c);
   }
 
   private statusOf(h: number): Status | null {
@@ -281,6 +292,7 @@ export class SceneDiff {
     };
     const visit = (b: number) => {
       const n = this.base.node(b);
+      if (this.untouched(this.base, n)) return;
       if (gone(b) && !PORTS.has(n.kind)) {
         // The outermost removed block stands for what was in it.
         let p = n.parent;
@@ -297,6 +309,7 @@ export class SceneDiff {
 
   private count(h: number): number {
     const n = this.head.node(h);
+    if (this.untouched(this.head, n)) return 0;
     const s = this.statuses.get(h);
     let total = this.removedIn(h).length;
     // An added block is one change, whatever is in it.
@@ -335,12 +348,12 @@ export class SceneDiff {
    */
   private compareEdges() {
     for (const hn of this.head.nodes) {
-      if (!hn.edges?.length && !this.base.node(this.match.get(hn.id) ?? -1)?.edges?.length) continue;
       const b = this.match.get(hn.id);
       if (b === undefined) continue;
+      const bn = this.base.node(b);
+      if (!hn.edges?.length && !bn.edges?.length) continue;
       const file = scopeFile(this.head, hn);
       if (file !== undefined && !this.headChanges.get(file)) continue;
-      const bn = this.base.node(b);
       const key = (from: number, to: number, kind: string) => `${from}>${to}>${kind}`;
       const was = new Set<string>();
       for (const e of bn.edges ?? []) {
@@ -389,8 +402,8 @@ function isTop(model: SceneModel, n: SceneNode): boolean {
   return true;
 }
 
-/** The outermost blocks drawn for each file, by path. */
-function tops(model: SceneModel): Map<string, number[]> {
+/** The outermost blocks drawn for each file, by path (not looking inside blocks to `skip`). */
+function tops(model: SceneModel, skip: (n: SceneNode) => boolean): Map<string, number[]> {
   const out = new Map<string, number[]>();
   const visit = (id: number, seen: ReadonlySet<number>) => {
     const n = model.node(id);
@@ -400,7 +413,7 @@ function tops(model: SceneModel): Map<string, number[]> {
       if (path !== undefined) out.set(path, [...(out.get(path) ?? []), id]);
       inner = new Set([...seen, n.span.file]);
     }
-    for (const c of n.children ?? []) visit(c, inner);
+    if (!skip(n)) for (const c of n.children ?? []) visit(c, inner);
   };
   visit(model.root, new Set());
   return out;
