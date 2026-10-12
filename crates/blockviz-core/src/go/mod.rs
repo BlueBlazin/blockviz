@@ -101,6 +101,14 @@ pub fn front_end(_b: &mut Builder, inputs: Vec<GoInput>, resolver: &Resolver, di
     }
     // What code imports from a directory: (package name, the file standing for it).
     let targets: HashMap<String, (String, String)> = importable.iter().map(|(d, p)| (d.to_string(), (p.name.clone(), p.primary(&inputs).to_string()))).collect();
+    // The constraints of each package's generic types.
+    let mut generic: HashMap<(String, String), lower::TypeParams> = HashMap::new();
+    for pass in [false, true] {
+        for (i, p) in parsed.iter().enumerate() {
+            let pkg = p.file.name.as_ref().map(|n| n.name.clone()).unwrap_or_else(|| "main".into());
+            generic.entry((resolve::dir_of(&inputs[i].path).to_string(), pkg)).or_default().add_file(&p.file, pass);
+        }
+    }
     let mut modules = vec![];
     let mut headers = vec![];
     for (input, p) in inputs.into_iter().zip(parsed) {
@@ -116,7 +124,8 @@ pub fn front_end(_b: &mut Builder, inputs: Vec<GoInput>, resolver: &Resolver, di
             let local = spec.name.as_ref().map(|n| n.name.clone()).unwrap_or_else(|| name.clone());
             imports.insert(local, lower::Import { file: target.map(|t| t.1.clone()), path, name });
         }
-        let lowerer = lower::Lower::new(&input.text, &input.path, file, imports);
+        let type_params = generic.get(&(dir.clone(), pkg_name.clone())).cloned().unwrap_or_default();
+        let lowerer = lower::Lower::new(&input.text, &input.path, file, imports, type_params);
         let body = lowerer.file(file);
         let asserts = lowerer.asserts.take();
         let error = p.errors.first().map(|e| {

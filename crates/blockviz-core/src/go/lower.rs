@@ -55,6 +55,72 @@ pub struct Lower<'s> {
     prefixes: RefCell<HashMap<String, String>>,
     /// `var _ I = (*T)(nil)`: (I, T).
     pub asserts: RefCell<Vec<(Expr, Expr)>>,
+    /// The package's generic types and type-set interfaces.
+    pub type_params: TypeParams,
+    /// Type parameters in scope with the named interface each is
+    /// constrained by, innermost last.
+    generics: RefCell<Vec<HashMap<String, ast::Expr>>>,
+}
+
+/// A package's generic types and the interfaces that are only sets of
+/// types (`interface{ float64 | uint64 }`), which constrain values without
+/// saying what they do.
+#[derive(Clone, Default)]
+pub struct TypeParams {
+    /// Each generic type's constraints, in order: `Cache[K comparable, V
+    /// Store]` is `[None, Some(Store)]`.
+    pub types: HashMap<String, Vec<Option<ast::Expr>>>,
+    pub type_sets: HashSet<String>,
+}
+
+/// Type-set constraints of the standard library and x/exp.
+const ORDERING: &[&str] = &["Ordered", "Integer", "Float", "Signed", "Unsigned", "Complex", "Number"];
+
+impl TypeParams {
+    /// The interface a type parameter is constrained by, when it names one
+    /// with methods: not `any`, `comparable`, a union or a set of types.
+    fn constraint<'e>(&self, e: &'e ast::Expr) -> Option<&'e ast::Expr> {
+        match unparen(e) {
+            ast::Expr::Ident(i) if !BASIC_TYPES.contains(&i.name.as_str()) && i.name != "comparable" && !self.type_sets.contains(&i.name) => Some(e),
+            ast::Expr::Selector(s) if !ORDERING.contains(&s.sel.name.as_str()) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// A list of type parameters with their named constraints.
+    fn constrained(&self, list: Option<&ast::FieldList>) -> HashMap<String, ast::Expr> {
+        let mut out = HashMap::new();
+        for f in list.into_iter().flat_map(|l| &l.list) {
+            if let Some(c) = self.constraint(&f.typ) {
+                for n in &f.names {
+                    out.insert(n.name.clone(), c.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// The type-set interfaces a file declares (first pass), then its
+    /// generic types (second pass, once every file's type sets are known).
+    pub fn add_file(&mut self, f: &ast::File, generics: bool) {
+        for d in &f.decls {
+            let ast::Decl::Gen(g) = d else { continue };
+            for s in &g.specs {
+                let ast::Spec::Type(t) = s else { continue };
+                if !generics {
+                    if let ast::Expr::InterfaceType(i) = unparen(&t.typ) {
+                        if !i.methods.list.is_empty() && i.methods.list.iter().all(|m| m.names.is_empty() && !matches!(unparen(&m.typ), ast::Expr::Ident(e) if !BASIC_TYPES.contains(&e.name.as_str())) && !matches!(unparen(&m.typ), ast::Expr::Selector(_))) {
+                            self.type_sets.insert(t.name.name.clone());
+                        }
+                    }
+                    continue;
+                }
+                let Some(list) = &t.type_params else { continue };
+                let constraints = list.list.iter().flat_map(|f| std::iter::repeat_n(self.constraint(&f.typ).cloned(), f.names.len().max(1))).collect();
+                self.types.insert(t.name.name.clone(), constraints);
+            }
+        }
+    }
 }
 
 /// Methods that register a handler for a path, by router library: gin and
@@ -313,7 +379,7 @@ fn op_of(t: Token) -> Option<Operator> {
 }
 
 impl<'s> Lower<'s> {
-    pub fn new(text: &'s str, path: &'s str, f: &ast::File, imports: HashMap<String, Import>) -> Self {
+    pub fn new(text: &'s str, path: &'s str, f: &ast::File, imports: HashMap<String, Import>, type_params: TypeParams) -> Self {
         let mut types = HashSet::new();
         for d in &f.decls {
             if let ast::Decl::Gen(g) = d {
@@ -325,7 +391,40 @@ impl<'s> Lower<'s> {
             }
         }
         let test_file = path.ends_with("_test.go");
-        Lower { text, path, imports, types, test_file, depth: Cell::new(0), results: RefCell::new(vec![]), failed: RefCell::new(vec![]), prefixes: RefCell::new(HashMap::new()), asserts: RefCell::new(vec![]) }
+        Lower { text, path, imports, types, test_file, depth: Cell::new(0), results: RefCell::new(vec![]), failed: RefCell::new(vec![]), prefixes: RefCell::new(HashMap::new()), asserts: RefCell::new(vec![]), type_params, generics: RefCell::new(vec![]) }
+    }
+
+    /// Lowers `f` with `params` in scope: a value of a type parameter is a
+    /// value of the interface it is constrained by.
+    fn generic<T>(&self, params: HashMap<String, ast::Expr>, f: impl FnOnce() -> T) -> T {
+        self.generics.borrow_mut().push(params);
+        let out = f();
+        self.generics.borrow_mut().pop();
+        out
+    }
+
+    /// A function's type parameters and, for a method of a generic type,
+    /// the receiver's (`func (c *Cache[V]) Get()` with `Cache[V Store]`).
+    fn func_generics(&self, f: &ast::FuncDecl) -> HashMap<String, ast::Expr> {
+        let mut out = self.type_params.constrained(f.typ.type_params.as_ref());
+        let recv = f.recv.as_ref().and_then(|r| r.list.first()).map(|r| unparen(&r.typ));
+        let recv = match recv {
+            Some(ast::Expr::Star(s)) => unparen(&s.x),
+            Some(e) => e,
+            None => return out,
+        };
+        let (ty, names): (&ast::Expr, Vec<&ast::Expr>) = match recv {
+            ast::Expr::Index(i) => (&i.x, vec![&i.index]),
+            ast::Expr::IndexList(i) => (&i.x, i.indices.iter().collect()),
+            _ => return out,
+        };
+        let Some(constraints) = ident(ty).and_then(|t| self.type_params.types.get(t)) else { return out };
+        for (n, c) in names.into_iter().zip(constraints) {
+            if let (Some(n), Some(c)) = (ident(n), c) {
+                out.insert(n.to_string(), c.clone());
+            }
+        }
+        out
     }
 
     fn text_of(&self, r: TextRange) -> &str {
@@ -442,6 +541,10 @@ impl<'s> Lower<'s> {
     }
 
     fn type_spec(&self, t: &ast::TypeSpec, methods: Option<&Vec<&ast::FuncDecl>>, doc: Option<String>, range: TextRange) -> Stmt {
+        self.generic(self.type_params.constrained(t.type_params.as_ref()), || self.type_spec_inner(t, methods, doc, range))
+    }
+
+    fn type_spec_inner(&self, t: &ast::TypeSpec, methods: Option<&Vec<&ast::FuncDecl>>, doc: Option<String>, range: TextRange) -> Stmt {
         let name_ = t.name.name.clone();
         let methods: Vec<Stmt> = methods.into_iter().flatten().map(|f| Stmt::FunctionDef(self.func(f))).collect();
         match unparen(&t.typ) {
@@ -611,6 +714,10 @@ impl<'s> Lower<'s> {
     }
 
     fn func(&self, f: &ast::FuncDecl) -> FunctionDef {
+        self.generic(self.func_generics(f), || self.func_inner(f))
+    }
+
+    fn func_inner(&self, f: &ast::FuncDecl) -> FunctionDef {
         let mut params = vec![];
         let method = f.recv.is_some();
         if let Some(recv) = &f.recv {
@@ -1310,7 +1417,18 @@ impl<'s> Lower<'s> {
         let range = t.range();
         let seq = |kind: &str, elem: &ast::Expr| Expr::Subscript(ExprSubscript { value: Box::new(name(kind, TextRange::empty(range.start()), Ctx::Load)), slice: Box::new(self.type_expr(elem)), range });
         match t {
-            ast::Expr::Ident(i) => name(&i.name, range, Ctx::Load),
+            // `s S` where `S Store`: a Store.
+            ast::Expr::Ident(i) => {
+                let bound = self.generics.borrow().iter().rev().find_map(|g| g.get(&i.name).cloned());
+                match bound {
+                    Some(c) if ident(&c) != Some(i.name.as_str()) => {
+                        let mut e = self.type_expr(&c);
+                        set_range(&mut e, range);
+                        e
+                    }
+                    _ => name(&i.name, range, Ctx::Load),
+                }
+            }
             ast::Expr::Paren(p) => self.type_expr(&p.x),
             ast::Expr::Star(s) => {
                 let mut e = self.type_expr(&s.x);

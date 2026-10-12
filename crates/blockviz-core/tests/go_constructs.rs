@@ -216,6 +216,28 @@ fn signatures_match_however_types_are_written() {
 }
 
 #[test]
+fn type_parameters_are_the_interface_they_are_constrained_by() {
+    let s = analyze(&[
+        ("go.mod", "module example.com/m\n"),
+        ("store/store.go", "package store\n\nimport \"strings\"\n\n// Store keeps names.\ntype Store interface {\n\tGet(id int) string\n}\n\n// Number is any number.\ntype Number interface {\n\t~int | ~float64\n}\n\ntype mem struct{ names map[int]string }\n\nfunc (m *mem) Get(id int) string { return strings.ToUpper(m.names[id]) }\n\n// New makes a store.\nfunc New() Store { return &mem{names: map[int]string{}} }\n"),
+        (
+            "store/cache.go",
+            "package store\n\n// Cache sits in front of a store.\ntype Cache[S Store, N Number] struct {\n\tinner S\n\thits  N\n}\n\nfunc (c *Cache[S, N]) Get(id int) string { return c.inner.Get(id) + \"!\" }\n\n// Lookup asks any store.\nfunc Lookup[S Store](s S, id int) string { return s.Get(id) + \"?\" }\n",
+        ),
+    ]);
+    let mem_get = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == "Get" && s.nodes[n.parent.unwrap() as usize].title == "mem").expect("mem.Get");
+    // `s S` with `S Store`, and a field of a generic type with `S Store`, in
+    // a method declared in another file than the type's parameters.
+    for f in ["Lookup", "Cache"] {
+        let call = descendants(&s, find(&s, f)).into_iter().find(|n| n.kind == Kind::Call && n.title == "Get").unwrap_or_else(|| panic!("no Get call in {f}"));
+        assert_eq!(call.reference, Some(mem_get.id), "{f}");
+    }
+    // The cache holds a Store; a number is not a part.
+    let parts: Vec<(&str, &str)> = descendants(&s, find(&s, "Cache")).into_iter().filter(|n| n.kind == Kind::Symbol).map(|n| (n.title.as_str(), n.subtitle.as_str())).collect();
+    assert_eq!(parts, [("inner", "Store")]);
+}
+
+#[test]
 fn a_package_imported_twice_is_reached_either_way() {
     // `models` and `. models` in one file (gorm's tests do this). Each run
     // hashes differently, so a few runs catch an answer that depends on it.
