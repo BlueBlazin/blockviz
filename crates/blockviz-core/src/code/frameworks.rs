@@ -6,7 +6,7 @@
 
 use super::flow::string_literal;
 use super::syntax::{self as ast, Expr, Stmt};
-use std::collections::HashMap;
+use crate::hash::Map;
 
 /// A function's role in its framework.
 pub struct Role {
@@ -34,8 +34,8 @@ pub const APPS: &[&str] = &[
 
 /// Route prefixes of routers and blueprints defined at module level:
 /// `router = APIRouter(prefix="/items")`, `bp = Blueprint("auth", __name__, url_prefix="/auth")`.
-pub fn prefixes(body: &[Stmt]) -> HashMap<String, String> {
-    let mut out = HashMap::new();
+pub fn prefixes(body: &[Stmt]) -> Map<String, String> {
+    let mut out = Map::default();
     for s in body {
         let Stmt::Assign(a) = s else { continue };
         let (Some(Expr::Name(target)), Expr::Call(c)) = (a.targets.first(), &*a.value) else { continue };
@@ -79,7 +79,7 @@ pub fn join_path(prefix: &str, path: &str) -> String {
 }
 
 /// The framework role a decorator gives the function it wraps.
-pub fn role(d: &Expr, function: &str, prefixes: &HashMap<String, String>, class_prefix: Option<&str>, text: impl Fn(&Expr) -> String) -> Option<Role> {
+pub fn role(d: &Expr, function: &str, prefixes: &Map<String, String>, class_prefix: Option<&str>, text: impl Fn(&Expr) -> String) -> Option<Role> {
     let (func, call) = match d {
         Expr::Call(c) => (&*c.func, Some(c)),
         e => (e, None),
@@ -235,7 +235,7 @@ pub fn app_path(dir: &str) -> Option<String> {
 /// Where each module's router is mounted: `app.use("/api/users", usersRouter)`
 /// in one module gives the routes of the module `usersRouter` comes from that
 /// prefix. Mounts nest (`api.use("/users", users)` under `app.use("/api", api)`).
-pub fn mounts(modules: &[super::Module], ix: &super::index::Index) -> HashMap<usize, String> {
+pub fn mounts(modules: &[super::Module], ix: &super::index::Index) -> Map<usize, String> {
     let mut found: Vec<(usize, usize, String)> = vec![];
     for (mi, m) in modules.iter().enumerate() {
         if !m.lang.is_js() {
@@ -267,7 +267,7 @@ pub fn mounts(modules: &[super::Module], ix: &super::index::Index) -> HashMap<us
             }
         });
     }
-    let mut out: HashMap<usize, String> = HashMap::new();
+    let mut out: Map<usize, String> = Map::default();
     // Resolve nesting by repeatedly prefixing with the mounting module's own mount.
     for _ in 0..4 {
         for (from, to, prefix) in &found {
@@ -436,8 +436,8 @@ pub fn chain_tops<'e>(stmts: &'e [Stmt], f: &mut impl FnMut(&'e Expr)) {
 /// each handler function (`GET /api/articles`), and the prefix each
 /// router-building function is nested under.
 pub struct Routes {
-    pub handlers: HashMap<usize, String>,
-    pub prefixes: HashMap<usize, String>,
+    pub handlers: Map<usize, String>,
+    pub prefixes: Map<usize, String>,
 }
 
 pub fn routes(modules: &[super::Module], ix: &super::index::Index) -> Routes {
@@ -449,7 +449,7 @@ pub fn routes(modules: &[super::Module], ix: &super::index::Index) -> Routes {
         let mi = f.module;
         if modules[mi].lang == ast::Lang::Go {
             // The receiver and locals built from a type (`s := &Server{…}`) type method values.
-            let mut locals: HashMap<String, Ty> = HashMap::new();
+            let mut locals: Map<String, Ty> = Map::default();
             if let (Some(c), Some(p)) = (f.class, f.def.params().first()) {
                 locals.insert(p.clone(), Ty::Inst(c));
             }
@@ -532,14 +532,14 @@ pub fn routes(modules: &[super::Module], ix: &super::index::Index) -> Routes {
             }
         });
     }
-    let mut prefixes: HashMap<usize, String> = HashMap::new();
+    let mut prefixes: Map<usize, String> = Map::default();
     for _ in 0..4 {
         for (from, p, to) in &nests {
             let parent = prefixes.get(from).cloned().unwrap_or_default();
             prefixes.insert(*to, join_path(&parent, p));
         }
     }
-    let mut handlers: HashMap<usize, String> = HashMap::new();
+    let mut handlers: Map<usize, String> = Map::default();
     for (fid, verb, path, h) in regs {
         let full = join_path(prefixes.get(&fid).map(String::as_str).unwrap_or(""), &path);
         let label = format!("{verb} {full}").trim_start().to_string();

@@ -14,8 +14,8 @@
 use super::index::{docstring, ClassInfo, Index, Ty};
 use super::syntax::{self as ast, Expr, Lang, ParamKind, Stmt};
 use super::walk;
+use crate::hash::{Map, Set};
 use crate::text::squash;
-use std::collections::{HashMap, HashSet};
 
 /// What a call through a contract may run.
 pub struct Implementations {
@@ -54,9 +54,9 @@ impl<'p> Index<'p> {
     /// without saying so.
     fn satisfy_go_interfaces(&mut self) {
         let go = |c: &ClassInfo| self.modules[c.module].lang == Lang::Go;
-        let contracts: Vec<(usize, HashSet<String>)> = (0..self.classes.len())
+        let contracts: Vec<(usize, Set<String>)> = (0..self.classes.len())
             .filter(|&k| self.classes[k].def.kind == ast::ClassKind::Interface && go(&self.classes[k]))
-            .map(|k| (k, self.go_contract(k).into_iter().collect::<HashSet<String>>()))
+            .map(|k| (k, self.go_contract(k).into_iter().collect::<Set<String>>()))
             .filter(|(_, need)| !need.is_empty())
             .collect();
         if contracts.is_empty() {
@@ -80,7 +80,7 @@ impl<'p> Index<'p> {
     /// (Python, JS/TS `extends`), traits a Rust type implements (in its own
     /// module or in an `impl Trait for Type` elsewhere).
     fn declared_implementations(&mut self) {
-        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_name: Map<&str, Vec<usize>> = Map::default();
         for (k, c) in self.classes.iter().enumerate() {
             by_name.entry(c.name.as_str()).or_default().push(k);
         }
@@ -167,8 +167,8 @@ impl<'p> Index<'p> {
 
     /// The signatures of a Go type's methods, its own and those of the types
     /// it embeds.
-    fn go_method_set(&self, cid: usize) -> HashSet<String> {
-        let mut have = HashSet::new();
+    fn go_method_set(&self, cid: usize) -> Set<String> {
+        let mut have = Set::default();
         let mut stack = vec![cid];
         while let Some(k) = stack.pop() {
             let c = &self.classes[k];
@@ -354,7 +354,7 @@ impl<'p> Index<'p> {
     }
 
     fn find_named(&self) -> Vec<bool> {
-        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_name: Map<&str, Vec<usize>> = Map::default();
         for (k, c) in self.classes.iter().enumerate() {
             by_name.entry(c.name.as_str()).or_default().push(k);
         }
@@ -384,7 +384,7 @@ impl<'p> Index<'p> {
         if self.implementers[k].contains(&t) {
             return true;
         }
-        let names = |sigs: &mut dyn Iterator<Item = &String>| -> HashSet<String> { sigs.map(|s| s.split('(').next().unwrap_or(s).to_string()).collect() };
+        let names = |sigs: &mut dyn Iterator<Item = &String>| -> Set<String> { sigs.map(|s| s.split('(').next().unwrap_or(s).to_string()).collect() };
         let have = self.go_method_set(t);
         let have = names(&mut have.iter());
         let need = self.go_needs[k].as_ref().map(|n| names(&mut n.iter())).unwrap_or_default();
@@ -515,7 +515,7 @@ struct Flows<'i, 'p> {
     out: Vec<Vec<(usize, bool)>>,
 }
 
-type Locals = HashMap<String, Ty>;
+type Locals = Map<String, Ty>;
 
 impl Flows<'_, '_> {
     /// A value of type `value` goes into a slot of type `slot`.
@@ -556,11 +556,11 @@ impl Flows<'_, '_> {
             },
             _ => None,
         };
-        element.map(|e| self.ix.annotated(self.ix.classes[c].module, e, &Locals::new())).unwrap_or(Ty::Unknown)
+        element.map(|e| self.ix.annotated(self.ix.classes[c].module, e, &Locals::default())).unwrap_or(Ty::Unknown)
     }
 
     fn module(&mut self, body: &[Stmt]) {
-        let mut locals = Locals::new();
+        let mut locals = Locals::default();
         // `var _ Router = (*Mux)(nil)`: the compiler is told Mux is a Router.
         for (interface, t) in &self.ix.modules[self.mi].asserts {
             let slot = self.ix.annotated(self.mi, interface, &locals);

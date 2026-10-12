@@ -1,7 +1,8 @@
 //! Borrowing traversals over the shared syntax tree.
 
 use super::syntax::*;
-use std::collections::{BTreeSet, HashSet};
+use crate::hash::Set;
+use std::collections::BTreeSet;
 
 /// Immediate sub-expressions of an expression. A function expression's body
 /// is a scope of its own and is not included (see `loads_deep`).
@@ -87,7 +88,7 @@ pub fn walk<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
 }
 
 /// Names bound inside comprehensions and lambdas are local to them.
-fn local_binders<'a>(e: &'a Expr, out: &mut HashSet<&'a str>) {
+fn local_binders<'a>(e: &'a Expr, out: &mut Set<&'a str>) {
     match e {
         Expr::Comp(x) => {
             for g in &x.generators {
@@ -120,8 +121,8 @@ pub fn loads(e: &Expr) -> Vec<&str> {
 /// `loads`, and the function expressions anywhere in `e` (callbacks,
 /// handlers), in one walk.
 fn scan<'a>(e: &'a Expr, fns: &mut Vec<&'a FunctionDef>) -> Vec<&'a str> {
-    let mut bound = HashSet::new();
-    let mut seen = HashSet::new();
+    let mut bound = Set::default();
+    let mut seen = Set::default();
     let mut out = vec![];
     walk(e, &mut |x| match x {
         Expr::Name(n) => {
@@ -292,7 +293,7 @@ pub fn free_names<'a>(params: &[String], body: &'a [Stmt]) -> Vec<&'a str> {
     for g in &declared_global {
         local.remove(g);
     }
-    let mut seen = HashSet::new();
+    let mut seen = Set::default();
     let mut out = vec![];
     stmt_exprs(body, true, &mut |e| {
         out.extend(loads_deep(e).into_iter().filter(|n| !local.contains(*n) && seen.insert(*n)));
@@ -306,7 +307,7 @@ pub fn loads_deep(e: &Expr) -> Vec<&str> {
     let mut fns = vec![];
     let mut out = scan(e, &mut fns);
     if !fns.is_empty() {
-        let mut seen: HashSet<&str> = out.iter().copied().collect();
+        let mut seen: Set<&str> = out.iter().copied().collect();
         for f in fns {
             out.extend(free_names(&param_names(&f.params), &f.body).into_iter().filter(|n| seen.insert(*n)));
         }

@@ -55,7 +55,7 @@ impl Source {
 
     /// Marks the comments starting at these offsets as documentation.
     pub fn mark_docs(&mut self, starts: &[usize]) {
-        let lines: std::collections::HashSet<u32> = starts.iter().map(|&o| self.line_of(o)).collect();
+        let lines: crate::hash::Set<u32> = starts.iter().map(|&o| self.line_of(o)).collect();
         for c in &mut self.comments {
             if lines.contains(&c.line) {
                 c.doc = true;

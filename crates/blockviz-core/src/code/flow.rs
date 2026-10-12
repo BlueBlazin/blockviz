@@ -26,12 +26,13 @@ use super::frameworks::{self, Handler};
 use super::index::*;
 use super::names::Namer;
 use super::walk;
+use crate::hash::{Map, Set};
 use crate::ir::*;
 use crate::naming::{self, Dest, Step};
 use crate::text::{clip, heading, is_directive, squash, summary};
 use crate::vocabulary::{self, Domains};
 use super::syntax::{self as ast, Ctx as Load, Expr, Lang, Ranged, Stmt, TemplateKind, TextRange};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 /// A cross-file relation discovered while building flows.
@@ -57,9 +58,9 @@ pub struct Ctx<'p> {
     /// Framework roles found among each module's functions.
     pub handlers: Vec<Vec<Handler>>,
     /// Router prefixes per module, computed on first use.
-    pub prefixes: HashMap<usize, HashMap<String, String>>,
+    pub prefixes: HashMap<usize, Map<String, String>>,
     /// Paths modules' routers are mounted at (`app.use("/api/users", users)`).
-    pub mounts: HashMap<usize, String>,
+    pub mounts: Map<usize, String>,
     /// The domains each module works in, from the libraries it uses.
     pub domains: Vec<Domains>,
     /// Routes router builders register (axum, actix-web).
@@ -70,7 +71,7 @@ pub struct Ctx<'p> {
     pub component_calls: Vec<(usize, String, Id)>,
     /// Where each statement list reads each name last (`Fb::last_reads`),
     /// by the list's place in memory, while its module is built.
-    pub reads: HashMap<(*const Stmt, usize), Rc<HashMap<&'p str, usize>>>,
+    pub reads: HashMap<(*const Stmt, usize), Rc<Map<&'p str, usize>>>,
 }
 
 impl Ctx<'_> {
@@ -103,18 +104,18 @@ struct Region {
     /// One shared port carries every configuration value into the region.
     ctx_port: Option<Id>,
     ctx_names: Vec<String>,
-    env: HashMap<String, Bind>,
+    env: Map<String, Bind>,
     assigned: Vec<String>,
     /// Lanes of a branch merge their outputs instead of replacing them.
     merging: bool,
-    merged: HashSet<String>,
+    merged: Set<String>,
     returns: Vec<Val>,
     effects: BTreeSet<String>,
 }
 
 impl Region {
     fn new(node: Id) -> Self {
-        Region { node, ctx_port: None, ctx_names: vec![], env: HashMap::new(), assigned: vec![], merging: false, merged: HashSet::new(), returns: vec![], effects: BTreeSet::new() }
+        Region { node, ctx_port: None, ctx_names: vec![], env: Map::default(), assigned: vec![], merging: false, merged: Set::default(), returns: vec![], effects: BTreeSet::new() }
     }
 }
 
@@ -160,13 +161,13 @@ enum Callee {
 #[derive(Default)]
 struct Types<'a> {
     /// `None` where an outer scope's type no longer holds.
-    own: HashMap<String, Option<Ty>>,
+    own: Map<String, Option<Ty>>,
     outer: Option<&'a Types<'a>>,
 }
 
 impl<'a> Types<'a> {
     fn within(outer: &'a Types<'a>) -> Self {
-        Types { own: HashMap::new(), outer: Some(outer) }
+        Types { own: Map::default(), outer: Some(outer) }
     }
 
     fn get(&self, name: &str) -> Option<&Ty> {
@@ -201,14 +202,14 @@ impl Locals for Types<'_> {
 #[derive(Clone, Copy)]
 struct Later<'a> {
     /// The last statement of the list that reads each name.
-    last: &'a HashMap<&'a str, usize>,
+    last: &'a Map<&'a str, usize>,
     /// The first statement of the list that runs later.
     from: usize,
     outer: Option<&'a Later<'a>>,
 }
 
 impl<'a> Later<'a> {
-    fn new(last: &'a HashMap<&'a str, usize>, outer: Option<&'a Later<'a>>) -> Self {
+    fn new(last: &'a Map<&'a str, usize>, outer: Option<&'a Later<'a>>) -> Self {
         Later { last, from: 0, outer }
     }
 
@@ -246,22 +247,22 @@ pub struct Fb<'c, 'p> {
     m: &'p Module,
     regions: Vec<Region>,
     types: Types<'c>,
-    files: HashMap<String, Vec<String>>,
+    files: Map<String, Vec<String>>,
     this: Option<(String, usize)>,
-    outer: HashSet<String>,
+    outer: Set<String>,
     module_level: bool,
     /// Building a module's top level or one of its top-level functions.
     top: bool,
     in_init: bool,
-    out_ports: HashMap<(Id, String), Id>,
-    globals_declared: HashSet<String>,
+    out_ports: Map<(Id, String), Id>,
+    globals_declared: Set<String>,
     /// Loop variables that alias elements of a collection (`param_group` → `optimizer`).
-    loop_alias: HashMap<String, String>,
+    loop_alias: Map<String, String>,
     /// An imported module without a main guard: its top level defines things
     /// rather than doing things, so its constants form one table.
     library: bool,
     /// Module-level statements already accounted for by `declarations`.
-    handled: HashSet<u32>,
+    handled: Set<u32>,
     /// Building the body of a single guarded statement (`if c: x`).
     guarded: bool,
     /// Collecting the arguments of an iteration (`xs.map(…)`): blocks made
@@ -294,17 +295,17 @@ impl<'c, 'p> Fb<'c, 'p> {
             m: &modules[mi],
             regions: vec![Region::new(root)],
             types: Types::default(),
-            files: HashMap::new(),
+            files: Map::default(),
             this: None,
-            outer: HashSet::new(),
+            outer: Set::default(),
             module_level: false,
             top: false,
             in_init: false,
-            out_ports: HashMap::new(),
-            globals_declared: HashSet::new(),
-            loop_alias: HashMap::new(),
+            out_ports: Map::default(),
+            globals_declared: Set::default(),
+            loop_alias: Map::default(),
             library: false,
-            handled: HashSet::new(),
+            handled: Set::default(),
             guarded: false,
             each: false,
             event: None,
@@ -326,7 +327,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         fb.top = true;
         fb.library = library;
         // Nothing runs after the module body, so nothing is "read later" at its end.
-        let nothing = HashMap::new();
+        let nothing = Map::default();
         let body: &'p [Stmt] = if docstring(&m.ast).is_some() { &m.ast[1..] } else { &m.ast };
         fb.declarations(body);
         fb.statements(body, Later::new(&nothing, None), true);
@@ -541,12 +542,12 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// Which statement of a list reads each name last, anywhere inside it,
     /// ignoring what is only printed or logged. Worked out once per list,
     /// from the lists in it, though every list around it asks.
-    fn last_reads(&mut self, stmts: &'p [Stmt]) -> Rc<HashMap<&'p str, usize>> {
+    fn last_reads(&mut self, stmts: &'p [Stmt]) -> Rc<Map<&'p str, usize>> {
         let key = (stmts.as_ptr(), stmts.len());
         if let Some(last) = self.cx.reads.get(&key) {
             return last.clone();
         }
-        let mut last = HashMap::new();
+        let mut last = Map::default();
         for (i, s) in stmts.iter().enumerate() {
             let mut bodies = vec![];
             walk::parts(s, &mut |p| match p {
@@ -891,7 +892,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// naming the steps (`session` · add → commit → refresh).
     fn fused_run(&mut self, stmts: &'p [Stmt], later: Later) {
         let container = self.container();
-        let before: HashSet<Id> = self.cx.b.get(container).children.iter().copied().collect();
+        let before: Set<Id> = self.cx.b.get(container).children.iter().copied().collect();
         for (k, s) in stmts.iter().enumerate() {
             let _ = k;
             self.stmt(s, later);
@@ -1002,7 +1003,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         let fused = made[0];
         let others: Vec<Id> = made[1..].to_vec();
         // Rewire edges of the merged blocks onto the first one.
-        let merged: HashSet<Id> = made.iter().copied().collect();
+        let merged: Set<Id> = made.iter().copied().collect();
         let edges = std::mem::take(&mut self.cx.b.get_mut(container).edges);
         let mut kept: Vec<Edge> = vec![];
         for mut e in edges {
@@ -1160,8 +1161,8 @@ impl<'c, 'p> Fb<'c, 'p> {
         let mut types: Vec<&'p Stmt> = vec![];
         let mut consts: Vec<&'p Stmt> = vec![];
         // Names whose values are computed by blocks: anything reading them is dataflow.
-        let mut dynamic: HashSet<String> = HashSet::new();
-        let mut const_names: HashSet<String> = HashSet::new();
+        let mut dynamic: Set<String> = Set::default();
+        let mut const_names: Set<String> = Set::default();
         // Route tables: `urlpatterns = [path(...), ...]` and later `+=` additions.
         let mut tables: Vec<(String, Vec<Row>, &'p Stmt)> = vec![];
         for s in body {
@@ -1388,7 +1389,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     /// A library module's constant: a name bound to a value computed without
     /// I/O or other blocks. UPPER_CASE names may also hold constructed objects.
-    fn is_constant(&self, s: &Stmt, dynamic: &HashSet<String>) -> bool {
+    fn is_constant(&self, s: &Stmt, dynamic: &Set<String>) -> bool {
         let (target, value) = match s {
             Stmt::Assign(a) if a.targets.len() == 1 => (&a.targets[0], &*a.value),
             Stmt::AnnAssign(a) => match &a.value {
@@ -1450,11 +1451,11 @@ impl<'c, 'p> Fb<'c, 'p> {
     // ----- settings ----------------------------------------------------------------
 
     fn is_setting(&self, s: &Stmt) -> bool {
-        self.is_setting_after(s, &HashSet::new())
+        self.is_setting_after(s, &Set::default())
     }
 
     /// A setting, given the names that settings just above it define.
-    fn is_setting_after(&self, s: &Stmt, earlier: &HashSet<String>) -> bool {
+    fn is_setting_after(&self, s: &Stmt, earlier: &Set<String>) -> bool {
         let (target, value) = match s {
             Stmt::Assign(a) if a.targets.len() == 1 => (&a.targets[0], &*a.value),
             Stmt::AnnAssign(a) => match &a.value {
@@ -1469,7 +1470,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// Where a run of settings starting at `i` ends. Settings build on the
     /// ones above them: `BLOCK = 128; N = BLOCK * 2`, `total ||= 1n`.
     fn setting_run(&self, stmts: &[Stmt], i: usize) -> usize {
-        let mut earlier = HashSet::new();
+        let mut earlier = Set::default();
         let mut j = i;
         // Statements already gathered into the module's constants are not
         // listed again.
@@ -1488,7 +1489,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     /// Constants, other settings, module attributes (`torch.float32`) and
     /// arithmetic or conditionals over them. Calls only inside a condition.
-    fn literalish(&self, e: &Expr, earlier: &HashSet<String>) -> bool {
+    fn literalish(&self, e: &Expr, earlier: &Set<String>) -> bool {
         match e {
             e if is_constant(e) => true,
             Expr::Name(n) if earlier.contains(n.id.as_str()) => true,
@@ -2408,7 +2409,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 self.regions[parent].effects.insert(e.clone());
             }
         }
-        let mut seen = HashSet::new();
+        let mut seen = Set::default();
         for name in &r.assigned {
             if !seen.insert(name.clone()) || !later.contains(name) {
                 continue;
@@ -2462,7 +2463,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn link_condition(&mut self, cond: &[Val], region: Id) {
         let parent = self.cx.b.get(region).parent;
-        let fed: HashSet<Id> = parent.map(|p| self.cx.b.get(p).edges.iter().filter(|e| e.to == region).map(|e| e.from).collect()).unwrap_or_default();
+        let fed: Set<Id> = parent.map(|p| self.cx.b.get(p).edges.iter().filter(|e| e.to == region).map(|e| e.from).collect()).unwrap_or_default();
         for v in cond {
             if v.srcs.iter().all(|s| fed.contains(s)) {
                 continue;
@@ -2518,7 +2519,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         if lanes.len() == 1 && self.units(lanes[0].1) <= 1 && lanes[0].1.iter().all(|s| !is_compound(s)) {
             // Guard tag instead of a box for a single guarded statement.
             let container = self.container();
-            let before: HashSet<Id> = self.cx.b.get(container).children.iter().copied().collect();
+            let before: Set<Id> = self.cx.b.get(container).children.iter().copied().collect();
             let guarded = std::mem::replace(&mut self.guarded, true);
             self.statements(lanes[0].1, later, false);
             self.guarded = guarded;
@@ -2646,7 +2647,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.cx.b.get_mut(id).badges.push("until break".into());
         }
         // The test and the body run again.
-        let mut again = HashMap::clone(&self.last_reads(body));
+        let mut again = Map::clone(&self.last_reads(body));
         again.extend(walk::loads(test).into_iter().map(|n| (n, 0)));
         self.statements(body, Later::new(&again, Some(&later)), true);
         self.close_region(later);
@@ -2939,10 +2940,10 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     /// Values a nested function reads from the code around it flow into its
     /// node; returns the names it can look up from outside.
-    fn link_free_names(&mut self, f: FnDef<'p>, node: Id) -> HashSet<String> {
+    fn link_free_names(&mut self, f: FnDef<'p>, node: Id) -> Set<String> {
         let params = f.params();
         let free = walk::free_names(&params, f.body);
-        let mut outer = HashSet::new();
+        let mut outer = Set::default();
         for name in free {
             if self.peek(name).is_none() && self.module_level && self.regions.len() == 1 {
                 self.pending.push((node, name.to_string()));
@@ -3113,13 +3114,13 @@ impl<'c, 'p> Fb<'c, 'p> {
         attach(&mut self.cx.b, container, node);
         // Uses of other definitions anywhere in the class body.
         let mut free: Vec<&str> = vec![];
-        let mut seen = HashSet::new();
+        let mut seen = Set::default();
         walk::stmt_exprs(&c.body, true, &mut |e| free.extend(walk::loads(e).into_iter().filter(|n| seen.insert(*n))));
         // Bases, and what decorators wire in (`@Module({ controllers: [CatsController] })`).
         for e in class_bases(c).iter().chain(c.decorators.iter().map(|d| &d.expression)) {
             free.extend(walk::loads_deep(e).into_iter().filter(|n| seen.insert(*n)));
         }
-        let mut outer = HashSet::new();
+        let mut outer = Set::default();
         for name in free {
             if name == c.name.as_str() {
                 continue;
@@ -4183,7 +4184,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 for k in &all {
                     sources.extend(self.read(k, &mut g2));
                 }
-                let mut seen = HashSet::new();
+                let mut seen = Set::default();
                 for v in sources {
                     for s in v.srcs {
                         if seen.insert(s) {
@@ -4541,7 +4542,7 @@ pub fn attach(b: &mut Builder, parent: Id, child: Id) {
     b.get_mut(parent).children.push(child);
 }
 
-fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, types: &Types) {
+fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: Set<String>, types: &Types) {
     let info = &cx.ix.funcs[fid];
     let (mi, node, def, class, kind) = (info.module, info.node, info.def, info.class, info.kind);
     let top = class.is_none() && matches!(cx.ix.defs_at.get(&(mi, u32::from(def.range.start()))), Some(Sym::Func(f)) if *f == fid);
@@ -4578,7 +4579,7 @@ fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, type
         }
     }
     let body: &[Stmt] = if docstring(def.body).is_some() { &def.body[1..] } else { def.body };
-    fb.statements(body, Later::new(&HashMap::new(), None), true);
+    fb.statements(body, Later::new(&Map::default(), None), true);
     fb.finish_function(node);
     // A body with a single plain step is a leaf: the code says it all.
     let b = &mut fb.cx.b;
@@ -4598,7 +4599,7 @@ fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, type
     n.effects.dedup();
 }
 
-fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, types: &Types) {
+fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: Set<String>, types: &Types) {
     let (mi, node, def) = {
         let c = &cx.ix.classes[cid];
         (c.module, c.node, c.def)
@@ -5121,7 +5122,7 @@ fn import_only(body: &[Stmt]) -> bool {
 
 /// Statements that only adjust a module's constant tables:
 /// `if brotli is None: SUPPORTED_DECODERS.pop("br")`.
-fn adjusts(body: &[Stmt], consts: &HashSet<String>) -> bool {
+fn adjusts(body: &[Stmt], consts: &Set<String>) -> bool {
     let on_const = |e: &Expr| matches!(split_target(e).0, Some(b) if consts.contains(b));
     !body.is_empty()
         && body.iter().all(|s| match s {

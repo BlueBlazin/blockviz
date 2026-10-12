@@ -8,10 +8,11 @@
 use super::source::Source;
 use super::syntax::{self as ast, DefKind, Expr, Lang, Ranged, Stmt, TextRange};
 use super::walk;
+use crate::hash::{Map, Set};
 use crate::ir::Id;
 use crate::text::{clip, squash};
 use std::cell::{OnceCell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One source file, parsed and lowered to the shared syntax tree.
 pub struct Module {
@@ -169,23 +170,23 @@ pub struct FuncInfo<'p> {
 pub struct Index<'p> {
     pub modules: &'p [Module],
     /// Python modules by dotted name.
-    pub by_dotted: HashMap<String, usize>,
+    pub by_dotted: Map<String, usize>,
     /// Python modules by the ends of their dotted names (`core.db` and `db`
     /// for `app.core.db`); `None` where more than one module ends so.
-    by_suffix: HashMap<String, Option<usize>>,
+    by_suffix: Map<String, Option<usize>>,
     /// Every module by repository path.
-    pub by_path: HashMap<String, usize>,
+    pub by_path: Map<String, usize>,
     /// Modules whose names a module re-exports wholesale (`export * from "./x"`).
     pub stars: Vec<Vec<usize>>,
     /// Non-code project files a module imports (`import "./styles.css"`).
     pub assets: Vec<Vec<String>>,
-    pub syms: Vec<HashMap<String, Sym>>,
+    pub syms: Vec<Map<String, Sym>>,
     pub classes: Vec<ClassInfo<'p>>,
     pub funcs: Vec<FuncInfo<'p>>,
     /// Definitions found anywhere at module level, keyed by (module, def start offset).
-    pub defs_at: HashMap<(usize, u32), Sym>,
-    pub var_types: RefCell<HashMap<(usize, String), Ty>>,
-    returns: RefCell<HashMap<usize, Ty>>,
+    pub defs_at: Map<(usize, u32), Sym>,
+    pub var_types: RefCell<Map<(usize, String), Ty>>,
+    returns: RefCell<Map<usize, Ty>>,
     /// Which project modules each module imports, with the imported names.
     pub imports: Vec<Vec<(usize, Vec<String>)>>,
     /// External top-level packages each module imports.
@@ -193,13 +194,13 @@ pub struct Index<'p> {
     /// The namespace each module shares with others (a Go package), if any.
     pub namespace_of: Vec<Option<usize>>,
     /// Each namespace's definitions, as members of the module defining them.
-    pub namespaces: Vec<HashMap<String, Sym>>,
+    pub namespaces: Vec<Map<String, Sym>>,
     /// The project types that implement each contract (see `contracts`),
     /// by class; `implements` is the same relation from the other side.
     pub implementers: Vec<Vec<usize>>,
     pub implements: Vec<Vec<usize>>,
     /// A Go interface's method signatures, embedded interfaces included.
-    pub(super) go_needs: Vec<Option<HashSet<String>>>,
+    pub(super) go_needs: Vec<Option<Set<String>>>,
     /// The types Go code puts where each interface is expected, and whether
     /// in test code.
     pub(super) flows: Vec<Vec<(usize, bool)>>,
@@ -213,7 +214,7 @@ pub trait Locals {
     fn local(&self, name: &str) -> Option<Ty>;
 }
 
-impl Locals for HashMap<String, Ty> {
+impl Locals for Map<String, Ty> {
     fn local(&self, name: &str) -> Option<Ty> {
         self.get(name).cloned()
     }
@@ -249,11 +250,11 @@ pub fn count_text(e: &str) -> String {
 impl<'p> Index<'p> {
     /// Builds symbols for all modules. `alloc` creates a detached IR node for each definition.
     pub fn build(modules: &'p [Module], mut alloc: impl FnMut(&str, bool) -> Id) -> Self {
-        let mut by_dotted = HashMap::new();
+        let mut by_dotted = Map::default();
         for (i, m) in modules.iter().enumerate().filter(|(_, m)| m.lang == Lang::Python) {
             by_dotted.insert(m.dotted.clone(), i);
         }
-        let mut by_suffix: HashMap<String, Option<usize>> = HashMap::new();
+        let mut by_suffix: Map<String, Option<usize>> = Map::default();
         for (d, &i) in &by_dotted {
             for (at, _) in d.match_indices('.') {
                 by_suffix.entry(d[at + 1..].to_string()).and_modify(|t| *t = None).or_insert(Some(i));
@@ -267,12 +268,12 @@ impl<'p> Index<'p> {
             by_path,
             stars: vec![vec![]; modules.len()],
             assets: vec![vec![]; modules.len()],
-            syms: vec![HashMap::new(); modules.len()],
+            syms: vec![Map::default(); modules.len()],
             classes: vec![],
             funcs: vec![],
-            defs_at: HashMap::new(),
-            var_types: RefCell::new(HashMap::new()),
-            returns: RefCell::new(HashMap::new()),
+            defs_at: Map::default(),
+            var_types: RefCell::new(Map::default()),
+            returns: RefCell::new(Map::default()),
             imports: vec![vec![]; modules.len()],
             externals: vec![BTreeSet::new(); modules.len()],
             namespace_of: vec![None; modules.len()],
@@ -301,7 +302,7 @@ impl<'p> Index<'p> {
         }
         for peers in namespaces.values().filter(|p| p.len() > 1) {
             let ns = ix.namespaces.len();
-            let mut table: HashMap<String, Sym> = HashMap::new();
+            let mut table: Map<String, Sym> = Map::default();
             for &p in peers {
                 ix.namespace_of[p] = Some(ns);
                 let mut names: Vec<&String> = ix.syms[p].iter().filter(|(_, s)| matches!(s, Sym::Class(_) | Sym::Func(_) | Sym::Var)).map(|(n, _)| n).collect();
@@ -341,7 +342,7 @@ impl<'p> Index<'p> {
         // Objects a module creates once (`const users = new UsersService()`) are
         // known everywhere in it, including in functions written above them.
         for (mi, m) in modules.iter().enumerate() {
-            let mut seen: HashMap<&str, usize> = HashMap::new();
+            let mut seen: Map<&str, usize> = Map::default();
             for s in &m.ast {
                 if let Stmt::Assign(a) = s {
                     if let [Expr::Name(n)] = &a.targets[..] {
@@ -990,7 +991,7 @@ impl<'p> Index<'p> {
     }
 
     /// Types the names a `with` statement binds, as assignments do.
-    pub fn bind_entered(&self, mi: usize, with: &ast::StmtWith, locals: &mut HashMap<String, Ty>) {
+    pub fn bind_entered(&self, mi: usize, with: &ast::StmtWith, locals: &mut Map<String, Ty>) {
         for item in &with.items {
             if let Some(Expr::Name(n)) = item.optional_vars.as_deref() {
                 match self.entered(mi, &item.context_expr, with.is_async, locals) {
@@ -1009,7 +1010,7 @@ impl<'p> Index<'p> {
         }
         self.returns.borrow_mut().insert(f, Ty::Unknown);
         let info = &self.funcs[f];
-        let mut locals: HashMap<String, Ty> = HashMap::new();
+        let mut locals: Map<String, Ty> = Map::default();
         if let Some(c) = info.class {
             if info.kind == FnKind::ClassMethod {
                 if let Some(p) = info.def.params().first() {
@@ -1034,7 +1035,7 @@ impl<'p> Index<'p> {
         result
     }
 
-    fn scan_returns(&self, mi: usize, body: &[Stmt], locals: &mut HashMap<String, Ty>, result: &mut Ty) {
+    fn scan_returns(&self, mi: usize, body: &[Stmt], locals: &mut Map<String, Ty>, result: &mut Ty) {
         for s in body {
             match s {
                 Stmt::Assign(a) => {
@@ -1082,13 +1083,13 @@ impl<'p> Index<'p> {
         // Fields declared in the class body (`users = new Map()`, `users: Users`).
         let lang = self.modules[mi].lang;
         if lang.declares_fields() {
-            self.collect_self_fields(mi, src, &cls.def.body, lang.receiver(), &mut HashMap::new(), &mut fields);
+            self.collect_self_fields(mi, src, &cls.def.body, lang.receiver(), &mut Map::default(), &mut fields);
         }
         for f in methods.iter().copied() {
             let def = self.funcs[f].def;
             let params = def.params();
             let Some(this) = params.first().cloned() else { continue };
-            let mut locals: HashMap<String, Ty> = HashMap::new();
+            let mut locals: Map<String, Ty> = Map::default();
             self.collect_self_fields(mi, src, def.body, &this, &mut locals, &mut fields);
         }
         // A constructor's struct literal (`Self { blocks, .. }`) says what the
@@ -1096,14 +1097,14 @@ impl<'p> Index<'p> {
         // n_layer blocks.
         if lang == Lang::Rust {
             for f in methods {
-                let mut locals: HashMap<String, Ty> = HashMap::new();
+                let mut locals: Map<String, Ty> = Map::default();
                 self.struct_literal_fields(c, mi, self.funcs[f].def.body, &mut locals, &mut fields);
             }
         }
         fields
     }
 
-    fn struct_literal_fields(&self, c: usize, mi: usize, body: &[Stmt], locals: &mut HashMap<String, Ty>, fields: &mut [Field]) {
+    fn struct_literal_fields(&self, c: usize, mi: usize, body: &[Stmt], locals: &mut Map<String, Ty>, fields: &mut [Field]) {
         let name = self.classes[c].name.as_str();
         for s in body {
             if let Stmt::Assign(a) = s {
@@ -1138,7 +1139,7 @@ impl<'p> Index<'p> {
         }
     }
 
-    fn collect_self_fields(&self, mi: usize, src: &Source, body: &[Stmt], this: &str, locals: &mut HashMap<String, Ty>, fields: &mut Vec<Field>) {
+    fn collect_self_fields(&self, mi: usize, src: &Source, body: &[Stmt], this: &str, locals: &mut Map<String, Ty>, fields: &mut Vec<Field>) {
         for s in body {
             match s {
                 Stmt::Assign(a) => {
