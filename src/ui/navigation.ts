@@ -5,8 +5,21 @@ import type { SceneModel } from '../canvas/model';
 
 export interface Selection { id: number; path: number[] }
 
-/** A history entry: where the reader was, exactly, on which analysis. */
-interface Entry { key: string; i: number; view: CameraState; sel: Selection | null }
+/** A history entry: where the reader was, exactly, on which analysis. `i`
+ * counts entries across projects, and `max` is the last one ahead of it. */
+interface Entry { key: string; i: number; max: number; view: CameraState; sel: Selection | null }
+
+/** The position a history state records, whatever wrote it (an entry, or a project being opened). */
+function position(s: unknown): { i: number; max: number } | null {
+  if (!s || typeof s !== 'object' || typeof (s as { i?: unknown }).i !== 'number') return null;
+  const { i, max } = s as { i: number; max?: number };
+  return { i, max: Math.max(i, typeof max === 'number' ? max : i) };
+}
+
+/** Starts a history entry for opening another project, at `url`. */
+export function pushProject(from: Navigation | null, url: string) {
+  try { history.pushState({ i: (from?.index ?? 0) + 1 }, '', url); } catch { /* history is a convenience */ }
+}
 
 const isEntry = (s: unknown): s is Entry => !!s && typeof s === 'object' && 'key' in s && 'view' in s;
 
@@ -39,6 +52,9 @@ export class Navigation {
   max = 0;
   private sel: Selection | null = null;
   private timer = 0;
+  private written = '';
+  /** Another project is loading: this one no longer owns the address. */
+  private stopped = false;
 
   constructor(
     private model: SceneModel,
@@ -50,8 +66,11 @@ export class Navigation {
     private select: (sel: Selection | null) => void,
     private changed: () => void,
   ) {
-    const state: unknown = history.state;
-    if (isEntry(state) && state.key === key) this.index = this.max = state.i;
+    const at = position(history.state);
+    if (at) {
+      this.index = at.i;
+      this.max = at.max;
+    }
     this.fromUrl();
     this.write(false);
   }
@@ -82,6 +101,7 @@ export class Navigation {
 
   /** A jump is starting: the current entry keeps where the reader was, and a new one follows. */
   jump() {
+    if (this.stopped) return;
     this.write(false);
     this.index++;
     this.max = this.index;
@@ -91,6 +111,7 @@ export class Navigation {
 
   /** Back or forward landed on `state`; false when it belongs to another project. */
   pop(state: unknown): boolean {
+    if (this.stopped) return false;
     if (!isEntry(state)) {
       this.fromUrl();
       return true;
@@ -103,25 +124,46 @@ export class Navigation {
     return true;
   }
 
-  dispose() {
+  /** Stops writing the address: another project is being loaded into it. */
+  stop() {
+    this.stopped = true;
     clearTimeout(this.timer);
   }
 
+  /** The other project failed to load: this one, still on screen, owns the address again. */
+  resume() {
+    this.stopped = false;
+    this.written = '';
+    this.write(false);
+  }
+
+  dispose() {
+    this.stop();
+  }
+
   private schedule() {
+    if (this.stopped) return;
     clearTimeout(this.timer);
     this.timer = window.setTimeout(() => this.write(false), 250);
   }
 
   private write(push: boolean) {
     clearTimeout(this.timer);
-    const entry: Entry = { key: this.key, i: this.index, view: this.engine.state(), sel: this.sel };
+    if (this.stopped) return;
+    const entry: Entry = { key: this.key, i: this.index, max: this.max, view: this.engine.state(), sel: this.sel };
     const params = [...this.base];
     const at = encodePath(this.model, this.engine.focus());
     if (at) params.push(['at', at]);
     if (this.sel) params.push(['sel', encodePath(this.model, this.sel.path)]);
     const hash = params.map(([k, v]) => `${k}=${v}`).join('&');
     const url = `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`;
-    if (push) history.pushState(entry, '', url);
-    else history.replaceState(entry, '', url);
+    // Redraws that did not move anything leave history alone (browsers limit how often it may change).
+    const text = `${url} ${JSON.stringify(entry)}`;
+    if (!push && text === this.written) return;
+    this.written = text;
+    try {
+      if (push) history.pushState(entry, '', url);
+      else history.replaceState(entry, '', url);
+    } catch { /* over the browser's rate limit: the next change writes it */ }
   }
 }

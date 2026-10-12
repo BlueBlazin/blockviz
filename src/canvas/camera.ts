@@ -5,6 +5,9 @@ import type { SceneNode } from '../core/types';
  * diagram is legible), `fit` shows all of it. */
 export type Framing = 'open' | 'fit';
 
+/** A planned camera move: its duration, how far it goes (0: nowhere), and its frames. */
+export interface Plan { duration: number; length: number; step: (t: number) => void }
+
 /** Exactly where the camera is: its anchor path and the anchor's interior transform. */
 export interface CameraState { path: number[]; xf: Xf }
 import type { SceneModel } from './model';
@@ -100,7 +103,7 @@ export class Camera {
    * Plans a smooth flight to frame the node at the end of `target` (an
    * instance path). Returns a function of t∈[0,1] that positions the camera.
    */
-  flight(target: number[], width: number, height: number, how: Framing = 'fit', pad = 0.1): { duration: number; step: (t: number) => void } {
+  flight(target: number[], width: number, height: number, how: Framing = 'fit', pad = 0.1): Plan {
     let common = 0;
     while (common < this.path.length && common < target.length && this.path[common] === target[common]) common++;
     const lca = Math.max(0, common - 1);
@@ -112,6 +115,7 @@ export class Camera {
     const duration = Math.min(1400, Math.max(320, path.length * 260));
     return {
       duration,
+      length: path.length,
       step: (t: number) => {
         this.path = base.slice();
         this.xf = xfOf(path.at(t), width, height);
@@ -125,7 +129,7 @@ export class Camera {
   }
 
   /** Plans a flight back to a saved state (on the same scene). */
-  flightTo(saved: CameraState, width: number, height: number): { duration: number; step: (t: number) => void } {
+  flightTo(saved: CameraState, width: number, height: number): Plan {
     let common = 0;
     while (common < this.path.length && common < saved.path.length && this.path[common] === saved.path[common]) common++;
     const lca = Math.max(0, common - 1);
@@ -136,6 +140,7 @@ export class Camera {
     const path = smoothPath(viewOf(this.transforms()[lca], width, height), viewOf(t, width, height));
     return {
       duration: Math.min(1400, Math.max(320, path.length * 260)),
+      length: path.length,
       step: (u: number) => {
         this.path = base.slice();
         this.xf = xfOf(path.at(u), width, height);

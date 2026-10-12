@@ -14,7 +14,7 @@ import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspe
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Breadcrumbs } from './ui/Breadcrumbs';
-import { hashParam, hashParams, Navigation } from './ui/navigation';
+import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
 
 interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
 
@@ -58,6 +58,8 @@ export default function App() {
 
   const load = useCallback(async (make: (progress: (m: string) => void) => Promise<Project>) => {
     const id = ++request.current;
+    // The project on screen stops writing the address the new one is loaded into.
+    nav.current?.stop();
     setError(null);
     setBusy('Loading…');
     try {
@@ -78,6 +80,7 @@ export default function App() {
       document.title = `${result.scene.title} · blockviz`;
     } catch (e) {
       if (id !== request.current || String(e) === 'Error: cancelled') return;
+      nav.current?.resume();
       setError(e instanceof Error ? e.message : String(e));
       setDialog(d => d ?? 'open');
     } finally {
@@ -87,11 +90,11 @@ export default function App() {
 
   const open = useCallback((r: OpenRequest) => {
     // The URL names the project only when a link can load it again.
-    if (r.kind !== 'github') history.pushState(null, '', location.pathname + location.search);
+    if (r.kind !== 'github') pushProject(nav.current, location.pathname + location.search);
     if (r.kind === 'example') void load(() => exampleProject());
     if (r.kind === 'github') {
       storage.set('blockviz.github', r.url);
-      history.pushState(null, '', `#github=${encodeURIComponent(r.url.replace(/^https?:\/\//, ''))}`);
+      pushProject(nav.current, `#github=${encodeURIComponent(r.url.replace(/^https?:\/\//, ''))}`);
       void load(p => githubProject(r.url, p));
     }
     if (r.kind === 'folder') void load(p => folderProject(r.files, p));
@@ -244,7 +247,10 @@ export default function App() {
         e.preventDefault();
         setDragging(false);
         const items = e.dataTransfer.items;
-        if (items?.length) void load(p => droppedProject(items, p));
+        if (items?.length) {
+          pushProject(nav.current, location.pathname + location.search);
+          void load(p => droppedProject(items, p));
+        }
       }}
     >
       <canvas ref={canvas} tabIndex={0} aria-label="Code diagram. Scroll or pinch to zoom, drag to pan, double-click a block to zoom into it, press / to search." />

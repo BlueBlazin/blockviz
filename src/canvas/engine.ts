@@ -1,4 +1,4 @@
-import { Camera, type CameraState, type Framing } from './camera';
+import { Camera, type CameraState, type Framing, type Plan } from './camera';
 import { clamp, type Insets } from './geometry';
 import type { SceneModel } from './model';
 import { Renderer, type EdgeHit, type Trace } from './renderer';
@@ -242,8 +242,9 @@ export class Engine {
 
   // ----- frame loop ------------------------------------------------------------------
 
-  private animate(plan: { duration: number; step: (t: number) => void }, record = true) {
-    if (record) this.events.onJump?.();
+  private animate(plan: Plan, record = true) {
+    // A flight that goes nowhere (Esc or H where the view already is) is not a step back.
+    if (record && plan.length > 1e-3) this.events.onJump?.();
     this.framed = false;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
       plan.step(1);
