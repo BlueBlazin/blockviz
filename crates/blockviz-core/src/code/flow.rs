@@ -254,7 +254,8 @@ pub struct Fb<'c, 'p> {
     /// Building a module's top level or one of its top-level functions.
     top: bool,
     in_init: bool,
-    out_ports: Map<(Id, String), Id>,
+    /// The output ports of blocks and regions, by block, then by name.
+    out_ports: Map<Id, Map<String, Id>>,
     globals_declared: Set<String>,
     /// Loop variables that alias elements of a collection (`param_group` → `optimizer`).
     loop_alias: Map<String, String>,
@@ -411,7 +412,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         if style == Style::Ctx {
             let port = self.ctx_port(ri, name);
             for s in srcs {
-                let from_port = self.out_ports.get(&(s, name.to_string())).copied();
+                let from_port = self.out_port(s, name);
                 self.connect(s, region, EdgeKind::Data, name, from_port, Some(port));
             }
             self.regions[ri].env.insert(name.to_string(), Bind::Src(vec![port], style));
@@ -424,7 +425,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             Style::Def => "uses",
         };
         for s in srcs {
-            let from_port = self.out_ports.get(&(s, name.to_string())).copied();
+            let from_port = self.out_port(s, name);
             let label = if style == Style::Def { "" } else { name };
             self.connect(s, region, kind_of(style), label, from_port, Some(port));
         }
@@ -486,24 +487,26 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn link_as(&mut self, v: &Val, to: Id, kind: EdgeKind) {
-        let label = if v.style == Style::Def { String::new() } else { v.label.clone() };
+        let label = if v.style == Style::Def { "" } else { v.label.as_str() };
         for &s in &v.srcs {
-            let from_port = self.out_ports.get(&(s, label.clone())).copied();
-            self.connect(s, to, kind, &label, from_port, None);
+            let from_port = self.out_port(s, label);
+            self.connect(s, to, kind, label, from_port, None);
         }
     }
 
-    fn read(&mut self, name: &str, g: &mut Gather) -> Vec<Val> {
+    fn out_port(&self, node: Id, name: &str) -> Option<Id> {
+        self.out_ports.get(&node).and_then(|ports| ports.get(name)).copied()
+    }
+
+    fn read(&mut self, name: &str, g: &mut Gather) -> Option<Val> {
         if let Some(Bind::Const(c)) = self.peek(name) {
             if let Some(f) = effects::file_name(c) {
                 g.reads.push(f);
             }
-            return vec![];
+            return None;
         }
-        match self.lookup(name) {
-            Some((srcs, style)) => vec![Val { srcs, label: name.to_string(), style, scalar: style == Style::Ctx }],
-            None => vec![],
-        }
+        let (srcs, style) = self.lookup(name)?;
+        Some(Val { srcs, label: name.to_string(), style, scalar: style == Style::Ctx })
     }
 
     // ----- statement lists -------------------------------------------------------
@@ -2397,11 +2400,11 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let port = self.cx.b.add(Some(node), Kind::Output, Shape::Port, if label.is_empty() { "return".to_string() } else { label.clone() });
                 for v in &returns {
                     for &s in &v.srcs {
-                        let fp = self.out_ports.get(&(s, v.label.clone())).copied();
+                        let fp = self.out_port(s, &v.label);
                         self.connect(s, port, kind_of(v.style), &v.label, fp, None);
                     }
                 }
-                self.out_ports.insert((node, label.clone()), port);
+                self.out_ports.entry(node).or_default().insert(label.clone(), port);
             }
             self.regions[parent].returns.push(Val { srcs: if returns.is_empty() { vec![] } else { vec![node] }, label, style: Style::Data, scalar: false });
             for e in r.effects.iter().filter(|e| e.starts_with("__")) {
@@ -2410,7 +2413,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         let mut seen = Set::default();
         for name in &r.assigned {
-            if !seen.insert(name.clone()) || !later.contains(name) {
+            if !seen.insert(name.as_str()) || !later.contains(name) {
                 continue;
             }
             match r.env.get(name) {
@@ -2418,16 +2421,16 @@ impl<'c, 'p> Fb<'c, 'p> {
                     if srcs.len() == 1 && self.cx.b.get(srcs[0]).parent == Some(node) && self.cx.b.get(srcs[0]).kind == Kind::Input && self.cx.b.get(srcs[0]).title == *name {
                         continue;
                     }
-                    let port = match self.out_ports.get(&(node, name.clone())) {
-                        Some(&p) => p,
+                    let port = match self.out_port(node, name) {
+                        Some(p) => p,
                         None => {
                             let p = self.cx.b.add(Some(node), Kind::Output, Shape::Port, name.clone());
-                            self.out_ports.insert((node, name.clone()), p);
+                            self.out_ports.entry(node).or_default().insert(name.clone(), p);
                             p
                         }
                     };
                     for &s in srcs {
-                        let fp = self.out_ports.get(&(s, name.clone())).copied();
+                        let fp = self.out_port(s, name);
                         let label = if *style == Style::Def { "" } else { name.as_str() };
                         self.connect(s, port, kind_of(*style), label, fp, None);
                     }
@@ -2951,7 +2954,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             if let Some(Bind::Src(_, st)) = self.peek(name) {
                 let st = *st;
                 let mut g = Gather::default();
-                for v in self.read(name, &mut g) {
+                if let Some(v) = self.read(name, &mut g) {
                     let v = Val { style: if st == Style::Def { Style::Def } else { Style::Ctx }, ..v };
                     self.link(&v, node);
                 }
@@ -3130,7 +3133,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             if let Some(Bind::Src(_, st)) = self.peek(name) {
                 let st = *st;
                 let mut g = Gather::default();
-                for v in self.read(name, &mut g) {
+                if let Some(v) = self.read(name, &mut g) {
                     let v = Val { style: if st == Style::Def { Style::Def } else { Style::Ctx }, ..v };
                     self.link(&v, node);
                 }
@@ -3613,13 +3616,8 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// Collects the dataflow sources of an expression, creating blocks for major calls.
     fn collect(&mut self, e: &'p Expr, g: &mut Gather, fold: bool) -> Vec<Val> {
         match e {
-            Expr::Name(n) => {
-                if n.ctx == Load::Load {
-                    self.read(&n.id, g)
-                } else {
-                    vec![]
-                }
-            }
+            Expr::Name(n) if n.ctx == Load::Load => self.read(&n.id, g).into_iter().collect(),
+            Expr::Name(_) => vec![],
             e if is_constant(e) => vec![],
             Expr::Attribute(a) => {
                 if self.is_self(&a.value) {
@@ -4214,10 +4212,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 return Outcome { node: Some(id), ..Outcome::none() };
             }
-            Expr::Name(n) => {
-                let vals = self.read(&n.id, g);
-                return Outcome { alias: vals.into_iter().next(), ..Outcome::none() };
-            }
+            Expr::Name(n) => return Outcome { alias: self.read(&n.id, g), ..Outcome::none() },
             Expr::Attribute(_) | Expr::Subscript(_) if root_name(e).is_some() && !contains_call(e) => {
                 let mut vals = self.collect(e, g, false);
                 dedup_vals(&mut vals);
@@ -4473,7 +4468,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let port = self.cx.b.add(Some(node), Kind::Output, Shape::Port, title.trim());
             for v in &returns {
                 for &s in &v.srcs {
-                    let fp = self.out_ports.get(&(s, v.label.clone())).copied();
+                    let fp = self.out_port(s, &v.label);
                     self.connect(s, port, kind_of(v.style), &v.label, fp, None);
                 }
             }
@@ -4852,17 +4847,21 @@ fn kind_of(style: Style) -> EdgeKind {
 /// Removes repeated values. A value used both as data and for a property
 /// (`x[i]` and `len(x)`) is data.
 fn dedup_vals(vals: &mut Vec<Val>) {
-    let mut out: Vec<Val> = vec![];
-    for v in vals.drain(..) {
-        if v.srcs.is_empty() {
+    // In place: the first `kept` are the values kept so far.
+    let mut kept = 0;
+    for i in 0..vals.len() {
+        if vals[i].srcs.is_empty() {
             continue;
         }
-        match out.iter_mut().find(|o| o.srcs == v.srcs && o.label == v.label) {
-            Some(o) => o.scalar &= v.scalar,
-            None => out.push(v),
+        match (0..kept).find(|&k| vals[k].srcs == vals[i].srcs && vals[k].label == vals[i].label) {
+            Some(k) => vals[k].scalar &= vals[i].scalar,
+            None => {
+                vals.swap(kept, i);
+                kept += 1;
+            }
         }
     }
-    *vals = out;
+    vals.truncate(kept);
 }
 
 fn return_label(vals: &[Val]) -> String {

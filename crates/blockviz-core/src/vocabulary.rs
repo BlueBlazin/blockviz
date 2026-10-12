@@ -41,12 +41,27 @@ pub fn library_domains(root: &str) -> Domains {
 /// Splits an identifier into lowercase words: `CausalSelfAttention` →
 /// causal, self, attention; `c_attn` → c, attn; `BatchNorm2d` → batch, norm2d.
 pub fn words(ident: &str) -> Vec<String> {
-    let mut out: Vec<String> = vec![];
-    let mut cur = String::new();
+    let (text, ends) = word_ends(ident);
+    let mut start = 0;
+    ends.iter()
+        .map(|&end| {
+            let word = text[start..end].to_string();
+            start = end;
+            word
+        })
+        .collect()
+}
+
+/// `words` run together, and where each ends: a run of words is then a
+/// slice of one string.
+fn word_ends(ident: &str) -> (String, Vec<usize>) {
+    let mut text = String::with_capacity(ident.len());
+    let mut ends: Vec<usize> = vec![];
     for (i, c) in ident.char_indices() {
+        let open = text.len() > ends.last().copied().unwrap_or(0);
         if !c.is_alphanumeric() {
-            if !cur.is_empty() {
-                out.push(std::mem::take(&mut cur));
+            if open {
+                ends.push(text.len());
             }
             continue;
         }
@@ -54,39 +69,34 @@ pub fn words(ident: &str) -> Vec<String> {
         // at the last capital of an acronym (`HTTPServer` → http, server).
         let prev = ident[..i].chars().next_back();
         let next = ident[i + c.len_utf8()..].chars().next();
-        let boundary = c.is_uppercase()
-            && !cur.is_empty()
-            && prev.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit() || next.is_some_and(|n| n.is_lowercase()) && p.is_uppercase());
+        let boundary = c.is_uppercase() && open && prev.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit() || next.is_some_and(|n| n.is_lowercase()) && p.is_uppercase());
         if boundary {
-            out.push(std::mem::take(&mut cur));
+            ends.push(text.len());
         }
-        cur.extend(c.to_lowercase());
+        text.extend(c.to_lowercase());
     }
-    if !cur.is_empty() {
-        out.push(cur);
+    if text.len() > ends.last().copied().unwrap_or(0) {
+        ends.push(text.len());
     }
-    out
+    (text, ends)
 }
 
 /// Architecture-figure category of a neural-network name: `LayerNorm` → norm,
 /// `c_attn` → attention, `lm_head` → linear. Only meaningful in ML code.
 pub fn ml_category(name: &str) -> Option<&'static str> {
-    let ws = words(name);
-    let mut w = ws.concat();
-    if let Some(c) = ml_word(&w) {
+    let (text, ends) = word_ends(name);
+    if let Some(c) = ml_word(&text) {
         return Some(c);
     }
+    let start = |i: usize| if i == 0 { 0 } else { ends[i - 1] };
     // The head noun comes last: `attn_dropout` is a dropout.
-    for i in (0..ws.len()).rev() {
+    for i in (0..ends.len()).rev() {
         if i > 0 {
-            w.clear();
-            w.push_str(&ws[i - 1]);
-            w.push_str(&ws[i]);
-            if let Some(c) = ml_word(&w) {
+            if let Some(c) = ml_word(&text[start(i - 1)..ends[i]]) {
                 return Some(c);
             }
         }
-        if let Some(c) = ml_word(&ws[i]) {
+        if let Some(c) = ml_word(&text[start(i)..ends[i]]) {
             return Some(c);
         }
     }
