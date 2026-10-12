@@ -3,7 +3,10 @@ import { boxOf, clamp, intersects, smoothstep, type Box, type Xf } from './geome
 import type { SceneModel } from './model';
 import { swatch, theme } from './theme';
 
-export interface Hit { id: number; box: Box; parent: number }
+/** A block drawn this frame. `clear` when the reader can see what it is (its
+ * name is legible, or the box is large), so clicks never land on a block
+ * too small to make out. */
+export interface Hit { id: number; box: Box; parent: number; clear: boolean }
 
 export interface Paint {
   width: number;
@@ -104,7 +107,7 @@ export class Renderer {
         return;
       case 'glyph':
         this.glyph(n, b, t, alpha, p);
-        this.hit(n, b, parentHit);
+        this.hit(n, b, parentHit, Math.min(b.w, b.h) >= 12);
         return;
       case 'region':
         this.region(n, b, t, parentHit, pathPos, p, chain, alpha);
@@ -114,10 +117,16 @@ export class Renderer {
     }
   }
 
-  private hit(n: SceneNode, b: Box, parent: number): number {
+  private hit(n: SceneNode, b: Box, parent: number, clear = false): number {
     if (b.w < 5 || b.h < 4) return parent;
-    this.hits.push({ id: n.id, box: b, parent });
+    this.hits.push({ id: n.id, box: b, parent, clear: clear || (b.w >= 160 && b.h >= 100) });
     return this.hits.length - 1;
+  }
+
+  /** Marks the hit just recorded for `n` as one the reader can make out. */
+  private seen(at: number, n: SceneNode, size: number, alpha: number) {
+    const h = this.hits[at];
+    if (h?.id === n.id && size >= 7 && alpha >= 0.5) h.clear = true;
   }
 
   private box(n: SceneNode, b: Box, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {
@@ -165,17 +174,22 @@ export class Renderer {
     const legible = smoothstep(9, 10.5, 13 * t.s);
     const faceAlpha = Math.max(1 - open, open * (1 - legible));
     if (open > 0.01 && inner && owner) {
+      this.seen(me, n, Math.min(13 * t.s, 19), alpha * open * legible * smoothstep(4.2, 7, Math.min(13 * t.s, 19)));
       this.header(n, b, t, alpha * open * legible);
       const shown = owner.rows?.length ? alpha * open * legible : alpha * open;
       this.interior(owner, inner, me, pathPos, p, owner === n ? chain : [...chain, owner.id], shown);
     }
-    if (faceAlpha > 0.01) this.face(n, b, t, alpha * faceAlpha, !!owner && !recursive, open > 0.2);
+    if (faceAlpha > 0.01) {
+      const [size, shown] = this.face(n, b, t, alpha * faceAlpha, !!owner && !recursive, open > 0.2);
+      this.seen(me, n, size, shown);
+    }
     this.effectsMark(n, b, t, alpha);
     ctx.globalAlpha = 1;
   }
 
-  private face(n: SceneNode, b: Box, t: Xf, alpha: number, deep: boolean, overlay: boolean) {
-    if (alpha < 0.02) return;
+  /** Draws a closed box's name; returns the title's size and opacity. */
+  private face(n: SceneNode, b: Box, t: Xf, alpha: number, deep: boolean, overlay: boolean): [number, number] {
+    if (alpha < 0.02) return [0, 0];
     const ctx = this.ctx;
     const code = n.kind === 'op' || n.kind === 'table';
     // Names of boxes big enough to hold them stay readable at any zoom.
@@ -186,7 +200,7 @@ export class Renderer {
     // Readable minimum, but never larger than what fits the box.
     const fits = (b.w - 14 * Math.min(t.s, 1)) / Math.max(this.measure(fontAt(10), n.title) / 10, 1);
     const size = prominent ? clamp(natural, Math.min(11.5, b.h * 0.55, Math.max(fits, natural)), 18) : natural;
-    if (size < 4.2) return;
+    if (size < 4.2) return [0, 0];
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
     const textAlpha = alpha * smoothstep(4.2, 7, size);
     // The caption under a name is always smaller than the name.
@@ -230,6 +244,7 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.textAlign = 'left';
+    return [title ? size : 0, textAlpha];
   }
 
   private header(n: SceneNode, b: Box, t: Xf, alpha: number) {
@@ -285,6 +300,7 @@ export class Renderer {
     ctx.setLineDash([]);
     const me = this.hit(n, b, parentHit);
     const size = 11.5 * t.s;
+    if (n.title) this.seen(me, n, size, alpha * smoothstep(4.2, 7, size));
     if (n.title && size >= 4.2) {
       ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
       const code = CODE_KINDS.has(n.kind);
