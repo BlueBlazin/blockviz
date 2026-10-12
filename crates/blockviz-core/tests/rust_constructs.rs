@@ -604,3 +604,25 @@ fn generic_parameters_are_the_trait_they_are_bounded_by() {
     assert_eq!(parts("Searcher"), [("matcher".to_string(), "Matcher".to_string())]);
     assert!(parts("Form").is_empty(), "{:?}", parts("Form"));
 }
+
+#[test]
+fn inline_modules_hold_their_types() {
+    let s = analyze(&[
+        ("Cargo.toml", "[package]\nname = \"geo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        ("src/shape.rs", "pub trait Shape {\n    fn area(&self) -> f64;\n}\n\npub fn total(s: &dyn Shape) -> f64 {\n    s.area() + 1.0\n}\n"),
+        ("src/report.rs", "pub fn line(x: f64) -> String {\n    format!(\"{x:.2}\")\n}\n"),
+        (
+            "src/main.rs",
+            "mod report;\nmod shape;\n\nmod shapes {\n    use crate::shape::Shape;\n\n    /// A square.\n    pub struct Square(pub f64);\n\n    impl Shape for Square {\n        fn area(&self) -> f64 {\n            self.0.powi(2)\n        }\n    }\n}\n\nfn main() {\n    let a = shape::total(&shapes::Square(2.0));\n    println!(\"{a}\");\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use crate::report::line;\n\n    #[test]\n    fn prints() {\n        assert_eq!(line(shape::total(&shapes::Square(1.0))), \"2.00\");\n    }\n}\n",
+        ),
+    ]);
+    // The module draws its type, and the impl inside it, through the
+    // module's own `use`, is a Shape: `total` reaches it.
+    let square = within(&s, find(&s, "shapes"), "Square");
+    assert_eq!(square.kind, Kind::Class);
+    let area = descendants(&s, find(&s, "total")).into_iter().find(|n| n.kind == Kind::Call && n.title == "area").expect("area call");
+    assert_eq!(area.reference, Some(within(&s, square, "area").id));
+    // The test module uses report.rs; main.rs does not depend on it.
+    let edges: Vec<(String, String)> = s.nodes.iter().flat_map(|n| n.edges.iter()).map(|e| (s.nodes[e.from as usize].title.clone(), s.nodes[e.to as usize].title.clone())).collect();
+    assert!(!edges.iter().any(|(f, t)| f == "report.rs" && t == "main.rs"), "{edges:?}");
+}

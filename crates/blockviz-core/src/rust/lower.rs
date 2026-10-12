@@ -44,6 +44,8 @@ pub struct Lower<'s> {
     /// (`M: Matcher`), innermost last: a value of one is a value of the
     /// trait, as `impl Matcher` is.
     pub bounds: RefCell<Vec<HashMap<String, syn::Path>>>,
+    /// How many inline `mod … { }` the items being lowered are in.
+    pub inline: std::cell::Cell<usize>,
     /// Modules and crates named by paths in code (`crate::db::connect()`,
     /// `std::fs::read(p)`): (local name, path as written, project file).
     pub implicit: RefCell<Vec<(String, String, Option<String>)>>,
@@ -695,7 +697,9 @@ impl<'s> Lower<'s> {
                 _ => vec![],
             },
             Some((_, items)) => {
+                self.inline.set(self.inline.get() + 1);
                 let body = self.items(items);
+                self.inline.set(self.inline.get() - 1);
                 let tests = m.attrs.iter().any(|a| a.path().is_ident("cfg") && a.meta.require_list().is_ok_and(|l| l.tokens.to_string() == "test"));
                 let mut decorators = vec![];
                 if tests {
@@ -729,7 +733,20 @@ impl<'s> Lower<'s> {
             })
             .collect();
         for (segs, leaf) in leaves {
-            let names: Vec<&str> = segs.iter().map(|(s, _)| s.as_str()).filter(|s| !s.is_empty()).collect();
+            let mut names: Vec<&str> = segs.iter().map(|(s, _)| s.as_str()).filter(|s| !s.is_empty()).collect();
+            // In an inline module, `self::` and `super::` paths that stay in
+            // this file name what the file already sees; one that climbs out
+            // starts from the file's module.
+            let depth = self.inline.get();
+            if depth > 0 {
+                let ups = names.iter().take_while(|s| **s == "super").count();
+                if names.first() == Some(&"self") || (ups > 0 && ups <= depth) {
+                    continue;
+                }
+                if ups > depth {
+                    names.drain(..depth);
+                }
+            }
             if names.is_empty() {
                 continue;
             }

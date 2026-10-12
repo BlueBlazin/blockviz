@@ -4639,6 +4639,11 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         }
         build_function(cx, *fid, outer.clone(), types.clone());
     }
+    // A namespace's own types, drawn inside it.
+    for (_, k) in cx.ix.classes[cid].inner.clone() {
+        attach(&mut cx.b, node, cx.ix.classes[k].node);
+        build_class(cx, k, outer.clone(), types.clone());
+    }
     // Method → method dependencies (callee above caller).
     for (_, fid) in &methods {
         let info = &cx.ix.funcs[*fid];

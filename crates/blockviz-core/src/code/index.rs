@@ -152,6 +152,9 @@ pub struct ClassInfo<'p> {
     pub fields: Vec<Field>,
     pub data: bool,
     pub node: Id,
+    /// Types declared inside a namespace (a Rust inline `mod`, a TS
+    /// `namespace`), by name.
+    pub inner: Vec<(String, usize)>,
 }
 
 pub struct FuncInfo<'p> {
@@ -360,6 +363,15 @@ impl<'p> Index<'p> {
                     if c.kind != ast::ClassKind::Extension && (top || !self.syms[mi].contains_key(c.name.as_str())) {
                         self.syms[mi].insert(c.name.to_string(), Sym::Class(id));
                     }
+                    // A namespace's types are known in its file by name, after
+                    // the file's own (`Square` in `mod shapes`).
+                    let mut stack = self.classes[id].inner.clone();
+                    while let Some((name, k)) = stack.pop() {
+                        if self.classes[k].def.kind != ast::ClassKind::Extension {
+                            self.syms[mi].entry(name).or_insert(Sym::Class(k));
+                        }
+                        stack.extend(self.classes[k].inner.iter().cloned());
+                    }
                 }
                 Stmt::FunctionDef(_) => {
                     let f = FnDef::from_stmt(s).unwrap();
@@ -407,8 +419,19 @@ impl<'p> Index<'p> {
         let cid = self.classes.len();
         let src = &self.modules[mi].src;
         let base_text: Vec<String> = class_bases(c).iter().map(|b| squash(src.of(b))).collect();
-        self.classes.push(ClassInfo { name: c.name.to_string(), module: mi, def: c, bases: vec![], base_text, methods: vec![], extra: vec![], fields: vec![], data: false, node });
+        self.classes.push(ClassInfo { name: c.name.to_string(), module: mi, def: c, bases: vec![], base_text, methods: vec![], extra: vec![], fields: vec![], data: false, node, inner: vec![] });
         self.defs_at.insert((mi, u32::from(c.range.start())), Sym::Class(cid));
+        // Types declared in a namespace are its own.
+        if c.kind == ast::ClassKind::Namespace {
+            let mut inner = vec![];
+            for s in &c.body {
+                if let Stmt::ClassDef(n) = s {
+                    let k = self.register_class(mi, n, alloc);
+                    inner.push((n.name.to_string(), k));
+                }
+            }
+            self.classes[cid].inner = inner;
+        }
         let mut methods = vec![];
         // A Go interface lists signatures (its rows); there is nothing to draw or call.
         let contract = self.modules[mi].lang == Lang::Go && c.kind == ast::ClassKind::Interface && c.body.iter().all(|s| matches!(s, Stmt::FunctionDef(f) if f.body.is_empty()));
@@ -526,6 +549,18 @@ impl<'p> Index<'p> {
                     self.collect_imports(mi, &x.body, false);
                     for c in &x.elif_else_clauses {
                         self.collect_imports(mi, &c.body, false);
+                    }
+                }
+                // A Rust inline module's `use`s: seen in the file after its own.
+                // A test module's name things for its tests; they are not
+                // what the file depends on.
+                Stmt::ClassDef(c) if c.kind == ast::ClassKind::Namespace => {
+                    let test = c.decorators.iter().any(|d| decorator_name(&d.expression) == "test");
+                    let saved = test.then(|| (self.imports[mi].clone(), self.externals[mi].clone()));
+                    self.collect_imports(mi, &c.body, false);
+                    if let Some((imports, externals)) = saved {
+                        self.imports[mi] = imports;
+                        self.externals[mi] = externals;
                     }
                 }
                 Stmt::Try(x) => {
@@ -824,7 +859,8 @@ impl<'p> Index<'p> {
                         Some(f) => f.ty.clone(),
                         None => self.method(c, attr).map(Ty::Func).unwrap_or(Ty::Unknown),
                     },
-                    Ty::Class(c) => self.method(c, attr).map(Ty::Func).unwrap_or(Ty::Unknown),
+                    // `shapes::Square`: a type a namespace declares.
+                    Ty::Class(c) => self.method(c, attr).map(Ty::Func).or_else(|| self.classes[c].inner.iter().find(|(n, _)| n == attr).map(|(_, k)| Ty::Class(*k))).unwrap_or(Ty::Unknown),
                     Ty::Dict(fields) => fields.into_iter().find(|(k, _)| k == attr).map(|(_, t)| t).unwrap_or(Ty::Unknown),
                     _ => Ty::Unknown,
                 }
