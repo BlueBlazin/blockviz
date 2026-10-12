@@ -66,7 +66,6 @@ export function ChangesPanel({ diff, info, size, current, onResize, onClose, onG
   onGo: (index: number) => void;
   onPeek: (id: number | null) => void;
 }) {
-  useEffect(() => () => onPeek(null), []);
   const touch = useMedia(TOUCH);
   const list = useRef<HTMLDivElement>(null);
   const { groups, others } = useMemo(() => {

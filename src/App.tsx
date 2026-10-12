@@ -214,6 +214,9 @@ export default function App() {
 
   useEffect(() => engine.current?.select(selected), [selected]);
 
+  // A block pointed out from the details panel stops being pointed out when the panel shows something else.
+  useEffect(() => engine.current?.peek(null), [selected, value, removedSel, changesOpen]);
+
   const traced = useMemo(() => {
     const start = value && loaded?.model.nodes[value.owner]?.edges?.[value.index];
     if (!value || !start) return null;
@@ -293,10 +296,10 @@ export default function App() {
       // Esc closes a dialog, else the details panel (as its close button does); it never moves the view.
       if (e.key === 'Escape') {
         if (dialog) { if (dialog !== 'open' || loaded) setDialog(null); return; }
-        if (selected !== null) { setSelected(null); setSelectedPath(null); engine.current?.peek(null); }
+        if (selected !== null) { setSelected(null); setSelectedPath(null); }
         else if (removedSel !== null) setRemovedSel(null);
-        else if (value !== null) { setValue(null); engine.current?.peek(null); }
-        else if (loaded?.compare && changesOpen) { setChangesOpen(false); engine.current?.peek(null); }
+        else if (value !== null) setValue(null);
+        else if (loaded?.compare && changesOpen) setChangesOpen(false);
         return;
       }
       // Back and forward, as in a browser.
@@ -475,7 +478,7 @@ export default function App() {
           hover={hover}
           size={fitted}
           onResize={setPanel}
-          onClose={() => { setSelected(null); setSelectedPath(null); engine.current?.peek(null); }}
+          onClose={() => { setSelected(null); setSelectedPath(null); }}
           onZoom={() => selectedPath && engine.current?.flyTo(selectedPath)}
           onGo={goTo}
           onPick={pick}
@@ -505,7 +508,7 @@ export default function App() {
           size={fitted}
           current={changeIndex}
           onResize={setPanel}
-          onClose={() => { setChangesOpen(false); engine.current?.peek(null); }}
+          onClose={() => setChangesOpen(false)}
           onGo={goToChange}
           onPeek={id => engine.current?.peek(id)}
         />
@@ -518,7 +521,7 @@ export default function App() {
           edges={traced.edges}
           start={traced.start}
           size={fitted}
-          onClose={() => { setValue(null); engine.current?.peek(null); }}
+          onClose={() => setValue(null)}
           onPick={id => { setValue(null); pick(id); }}
           onPeek={id => engine.current?.peek(id)}
         />

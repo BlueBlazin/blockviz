@@ -1,5 +1,5 @@
 import { ArrowUpRight, Maximize2, X } from 'lucide-react';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import type { SceneNode } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
@@ -128,8 +128,6 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
   const file = model.fileOf(node);
   // A step is read in the definition around it, its own lines marked.
   const view = useMemo(() => model.sourceView(node), [model, node]);
-  // A block pointed out from this panel stops being pointed out with it.
-  useEffect(() => () => onPeek(null), [node.id]);
   const hasSource = !!view && !!model.fileBytes(view.span.file);
   const marked: LineRange | null = view && span && view.root !== node ? [span.line, span.endLine] : null;
   // Read by the code's lines themselves: the panel does not re-render as the pointer moves.
