@@ -110,26 +110,89 @@ pub fn param_names(p: &[Param]) -> Vec<String> {
 
 /// Free names loaded by an expression, in first-use order.
 pub fn loads(e: &Expr) -> Vec<&str> {
-    scan(e, &mut vec![])
+    let mut reads = Reads::default();
+    reads.expr(e);
+    reads.names
 }
 
-/// `loads`, and the function expressions anywhere in `e` (callbacks,
-/// handlers), in one walk.
-fn scan<'a>(e: &'a Expr, fns: &mut Vec<&'a FunctionDef>) -> Vec<&'a str> {
-    let mut bound = Set::default();
-    let mut seen = Set::default();
-    let mut out = vec![];
-    walk(e, &mut |x| match x {
-        Expr::Name(n) => {
-            if n.ctx == Ctx::Load && seen.insert(n.id.as_str()) {
-                out.push(n.id.as_str());
+/// Free names read, each once, in the order first read: one buffer for
+/// every expression of a statement, class or function.
+#[derive(Default)]
+pub struct Reads<'a> {
+    pub names: Vec<&'a str>,
+    seen: Set<&'a str>,
+}
+
+impl<'a> Reads<'a> {
+    /// The free names an expression loads.
+    pub fn expr(&mut self, e: &'a Expr) {
+        self.scan(e, &mut vec![]);
+    }
+
+    /// The free names an expression reads, including inside the functions
+    /// it contains (a callback reads what it closes over when it runs).
+    pub fn expr_deep(&mut self, e: &'a Expr) {
+        let mut fns = vec![];
+        self.scan(e, &mut fns);
+        for f in fns {
+            self.body(f.params.iter().map(|p| p.name.as_str()), &f.body);
+        }
+    }
+
+    /// The free names a function-like body reads: what it loads, less its
+    /// parameters and local bindings.
+    pub fn body<'b>(&mut self, params: impl IntoIterator<Item = &'b str>, body: &'a [Stmt]) {
+        let mut local: BTreeSet<String> = params.into_iter().map(str::to_string).collect();
+        let mut declared_global: BTreeSet<String> = BTreeSet::new();
+        collect_bindings(body, &mut local, &mut declared_global);
+        for g in &declared_global {
+            local.remove(g);
+        }
+        let start = self.names.len();
+        stmt_exprs(body, true, &mut |e| self.expr_deep(e));
+        self.forget(start, |n| local.contains(n));
+    }
+
+    /// The names read so far, starting over.
+    pub fn take(&mut self) -> std::vec::Drain<'_, &'a str> {
+        self.seen.clear();
+        self.names.drain(..)
+    }
+
+    /// Adds what `e` loads, and collects the function expressions in it,
+    /// in one walk.
+    fn scan(&mut self, e: &'a Expr, fns: &mut Vec<&'a FunctionDef>) {
+        let start = self.names.len();
+        let mut bound = Set::default();
+        walk(e, &mut |x| match x {
+            Expr::Name(n) => {
+                if n.ctx == Ctx::Load && self.seen.insert(n.id.as_str()) {
+                    self.names.push(n.id.as_str());
+                }
+            }
+            Expr::Function(f) => fns.push(f),
+            _ => local_binders(x, &mut bound),
+        });
+        if !bound.is_empty() {
+            self.forget(start, |n| bound.contains(n));
+        }
+    }
+
+    /// Takes back the names read since `start` that are bound where they
+    /// were read: not free there, they may be elsewhere.
+    fn forget(&mut self, start: usize, bound: impl Fn(&str) -> bool) {
+        let mut kept = start;
+        for i in start..self.names.len() {
+            let n = self.names[i];
+            if bound(n) {
+                self.seen.remove(n);
+            } else {
+                self.names[kept] = n;
+                kept += 1;
             }
         }
-        Expr::Function(f) => fns.push(f),
-        _ => local_binders(x, &mut bound),
-    });
-    out.retain(|n| !bound.contains(n));
-    out
+        self.names.truncate(kept);
+    }
 }
 
 /// Names a store target binds (`a`, `a, b`, `(a, *b)`).
@@ -278,36 +341,6 @@ pub fn parts<'a>(s: &'a Stmt, f: &mut impl FnMut(Part<'a>)) {
         Stmt::Expr(x) => f(E(&x.value)),
         Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Global(_) | Stmt::Nonlocal(_) | Stmt::Pass(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Export(_) | Stmt::Other(_) => {}
     }
-}
-
-/// Free names read by a function-like body: loads minus parameters and local bindings.
-pub fn free_names<'a>(params: &[String], body: &'a [Stmt]) -> Vec<&'a str> {
-    let mut local: BTreeSet<String> = params.iter().cloned().collect();
-    let mut declared_global: BTreeSet<String> = BTreeSet::new();
-    collect_bindings(body, &mut local, &mut declared_global);
-    for g in &declared_global {
-        local.remove(g);
-    }
-    let mut seen = Set::default();
-    let mut out = vec![];
-    stmt_exprs(body, true, &mut |e| {
-        out.extend(loads_deep(e).into_iter().filter(|n| !local.contains(*n) && seen.insert(*n)));
-    });
-    out
-}
-
-/// Free names an expression reads, including inside the functions it
-/// contains (a callback reads what it closes over when it runs).
-pub fn loads_deep(e: &Expr) -> Vec<&str> {
-    let mut fns = vec![];
-    let mut out = scan(e, &mut fns);
-    if !fns.is_empty() {
-        let mut seen: Set<&str> = out.iter().copied().collect();
-        for f in fns {
-            out.extend(free_names(&param_names(&f.params), &f.body).into_iter().filter(|n| seen.insert(*n)));
-        }
-    }
-    out
 }
 
 /// Names bound at the top level of a body (not inside nested functions).

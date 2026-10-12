@@ -549,16 +549,14 @@ impl<'c, 'p> Fb<'c, 'p> {
             return last.clone();
         }
         let mut last = Map::default();
+        let mut reads = walk::Reads::default();
         for (i, s) in stmts.iter().enumerate() {
-            let mut bodies = vec![];
             walk::parts(s, &mut |p| match p {
                 walk::Part::Expr(Expr::Call(c)) if matches!(&*c.func, Expr::Name(n) if matches!(n.id.as_str(), "print" | "pprint")) => {}
-                walk::Part::Expr(e) => last.extend(walk::loads_deep(e).into_iter().map(|n| (n, i))),
-                walk::Part::Body(body, _) => bodies.push(body),
+                walk::Part::Expr(e) => reads.expr_deep(e),
+                walk::Part::Body(body, _) => last.extend(self.last_reads(body).keys().map(|&n| (n, i))),
             });
-            for body in bodies {
-                last.extend(self.last_reads(body).keys().map(|&n| (n, i)));
-            }
+            last.extend(reads.take().map(|n| (n, i)));
         }
         let last = Rc::new(last);
         self.cx.reads.insert(key, last.clone());
@@ -2942,10 +2940,10 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// Values a nested function reads from the code around it flow into its
     /// node; returns the names it can look up from outside.
     fn link_free_names(&mut self, f: FnDef<'p>, node: Id) -> Set<String> {
-        let params = f.params();
-        let free = walk::free_names(&params, f.body);
+        let mut free = walk::Reads::default();
+        free.body(f.args.iter().map(|p| p.name.as_str()), f.body);
         let mut outer = Set::default();
-        for name in free {
+        for name in free.names {
             if self.peek(name).is_none() && self.module_level && self.regions.len() == 1 {
                 self.pending.push((node, name.to_string()));
                 continue;
@@ -3114,15 +3112,14 @@ impl<'c, 'p> Fb<'c, 'p> {
         let container = self.container();
         attach(&mut self.cx.b, container, node);
         // Uses of other definitions anywhere in the class body.
-        let mut free: Vec<&str> = vec![];
-        let mut seen = Set::default();
-        walk::stmt_exprs(&c.body, true, &mut |e| free.extend(walk::loads(e).into_iter().filter(|n| seen.insert(*n))));
+        let mut free = walk::Reads::default();
+        walk::stmt_exprs(&c.body, true, &mut |e| free.expr(e));
         // Bases, and what decorators wire in (`@Module({ controllers: [CatsController] })`).
         for e in class_bases(c).iter().chain(c.decorators.iter().map(|d| &d.expression)) {
-            free.extend(walk::loads_deep(e).into_iter().filter(|n| seen.insert(*n)));
+            free.expr_deep(e);
         }
         let mut outer = Set::default();
-        for name in free {
+        for name in free.names {
             if name == c.name.as_str() {
                 continue;
             }
