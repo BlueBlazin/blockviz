@@ -175,6 +175,21 @@ fn class_view_shows_components_and_method_calls() {
 }
 
 #[test]
+fn components_know_the_calls_that_use_them() {
+    let s = scene();
+    let attn = path(&s, &["model.py", "CausalSelfAttention"]);
+    let c_attn = child(&s, child(&s, attn, "components"), "c_attn");
+    let call = child(&s, child(&s, attn, "forward"), "c_attn");
+    assert_eq!(c_attn.used_by, vec![call.id]);
+    // Inside a group (`self.transformer.wte(idx)`), and on every branch that calls it.
+    let gpt = path(&s, &["model.py", "GPT"]);
+    let wte = child(&s, child(&s, child(&s, gpt, "components"), "transformer"), "wte");
+    assert_eq!(wte.used_by, vec![child(&s, child(&s, gpt, "forward"), "wte").id]);
+    let lm_head = child(&s, child(&s, gpt, "components"), "lm_head");
+    assert_eq!(lm_head.used_by.len(), 2);
+}
+
+#[test]
 fn scripts_open_with_settings_and_configuration() {
     let s = scene();
     for script in ["train.py", "sample.py", "bench.py"] {

@@ -382,6 +382,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             if n.link.is_some_and(|r| hidden_defs.contains(&r)) {
                 n.link = None;
             }
+            n.used_by.retain(|u| !hidden_defs.contains(u));
         }
     }
     for e in &entries {

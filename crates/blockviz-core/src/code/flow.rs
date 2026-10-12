@@ -63,6 +63,10 @@ pub struct Ctx<'p> {
     pub domains: Vec<Domains>,
     /// Routes router builders register (axum, actix-web).
     pub routes: frameworks::Routes,
+    /// Each class's component blocks, by field path (`transformer.wte`).
+    pub components: HashMap<(usize, String), Id>,
+    /// Calls of components, as (class, field path, call block).
+    pub component_calls: Vec<(usize, String, Id)>,
 }
 
 impl Ctx<'_> {
@@ -135,7 +139,9 @@ enum Callee {
     Dispatch { contract: usize, name: String, types: Vec<usize>, partial: bool },
     Ctor(usize),
     Instance { class: usize, var: String },
-    Component { name: String, ty: Ty },
+    /// A component called (`self.attn(x)`): its field, and the class and
+    /// field path (`transformer.wte`) it is declared under, when known.
+    Component { name: String, ty: Ty, of: Option<(usize, String)> },
     Ext(String),
     Builtin(String),
     Value(String),
@@ -3392,7 +3398,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     if let Expr::Attribute(f) = &*a.value {
                         if let (true, Some((_, cid))) = (self.is_self(&f.value), self.this.clone()) {
                             if let Some(field) = self.cx.ix.field(cid, f.attr.as_str()).filter(|x| is_callable_ty(&x.ty)) {
-                                return Callee::Component { name: f.attr.to_string(), ty: field.ty.clone() };
+                                return Callee::Component { name: f.attr.to_string(), ty: field.ty.clone(), of: Some((cid, f.attr.to_string())) };
                             }
                         }
                     }
@@ -3410,7 +3416,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     }
                     if let Some(field) = self.cx.ix.field(cid, attr) {
                         if is_callable_ty(&field.ty) {
-                            return Callee::Component { name: attr.into(), ty: field.ty.clone() };
+                            return Callee::Component { name: attr.into(), ty: field.ty.clone(), of: Some((cid, attr.into())) };
                         }
                     }
                     return Callee::Method(attr.into());
@@ -3430,7 +3436,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                         (Some(callee), _) => callee,
                         (None, Some(f)) => Callee::Func(f),
                         (None, None) => match self.cx.ix.field(k, attr) {
-                            Some(field) if is_callable_ty(&field.ty) => Callee::Component { name: attr.into(), ty: field.ty.clone() },
+                            Some(field) if is_callable_ty(&field.ty) => Callee::Component { name: attr.into(), ty: field.ty.clone(), of: Some((k, attr.into())) },
                             _ => Callee::Method(attr.into()),
                         },
                     },
@@ -3439,7 +3445,14 @@ impl<'c, 'p> Fb<'c, 'p> {
                         None => Callee::Method(attr.into()),
                     },
                     Ty::Dict(fields) => match fields.into_iter().find(|(k, _)| k == attr) {
-                        Some((_, t)) if is_callable_ty(&t) => Callee::Component { name: attr.into(), ty: t },
+                        // `self.transformer.wte(idx)`: a component declared in a group.
+                        Some((_, t)) if is_callable_ty(&t) => {
+                            let of = match (&*a.value, self.this.clone()) {
+                                (Expr::Attribute(g), Some((_, cid))) if self.is_self(&g.value) => Some((cid, format!("{}.{attr}", g.attr))),
+                                _ => None,
+                            };
+                            Callee::Component { name: attr.into(), ty: t, of }
+                        }
                         _ => Callee::Method(attr.into()),
                     },
                     _ => Callee::Method(attr.into()),
@@ -3880,7 +3893,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 };
                 (title, sub, self.cx.category(self.mi, &[&cls.name, var]).unwrap_or("component"), reference)
             }
-            Callee::Component { name, ty } => {
+            Callee::Component { name, ty, .. } => {
                 let display = self.cx.ix.display(ty);
                 let reference = match ty {
                     Ty::Inst(k) => self.cx.ix.call_target(*k).map(|f| self.cx.ix.funcs[f].node).or(Some(self.cx.ix.classes[*k].node)),
@@ -4061,6 +4074,9 @@ impl<'c, 'p> Fb<'c, 'p> {
             n.code = compact(src.of(c), 200);
             n.span = Some(span);
             n.effects = node_effects.into_iter().collect();
+        }
+        if let Callee::Component { of: Some((k, path)), .. } = callee {
+            self.cx.component_calls.push((*k, path.clone(), id));
         }
         for v in &vals {
             self.link(v, id);
@@ -4621,7 +4637,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         cx.b.get_mut(group).category = "region";
         cx.b.get_mut(group).hints.pack = -1;
         for (name, ty, ctor, range) in comps {
-            component_node(cx, mi, group, &name, &ty, &ctor, Some(src.span(range)));
+            component_node(cx, mi, cid, group, &name, &name, &ty, &ctor, Some(src.span(range)));
         }
     }
     let methods = cx.ix.classes[cid].methods.clone();
@@ -4686,14 +4702,15 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
     }
 }
 
-fn component_node(cx: &mut Ctx, mi: usize, parent: Id, name: &str, ty: &Ty, ctor: &str, span: Option<Span>) {
+#[allow(clippy::too_many_arguments)]
+fn component_node(cx: &mut Ctx, mi: usize, cid: usize, parent: Id, name: &str, path: &str, ty: &Ty, ctor: &str, span: Option<Span>) {
     if let Ty::Dict(fields) = ty {
         let group = cx.b.add(Some(parent), Kind::Group, Shape::Region, name);
         cx.b.get_mut(group).category = "region";
         cx.b.get_mut(group).span = span.clone();
         for (k, t) in fields {
             if is_component(t) {
-                component_node(cx, mi, group, k, t, "", span.clone());
+                component_node(cx, mi, cid, group, k, &format!("{path}.{k}"), t, "", span.clone());
             }
         }
         return;
@@ -4708,6 +4725,7 @@ fn component_node(cx: &mut Ctx, mi: usize, parent: Id, name: &str, ty: &Ty, ctor
         _ => None,
     };
     let id = cx.b.add(Some(parent), Kind::Symbol, Shape::Box, name);
+    cx.components.insert((cid, path.to_string()), id);
     let project = reference.is_some();
     let category = cx.category(mi, &[&display, name]);
     let n = cx.b.get_mut(id);

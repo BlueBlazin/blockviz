@@ -170,6 +170,9 @@ pub struct Node {
     /// Where "go to definition" leads (a class for a constructor call or component).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link: Option<Id>,
+    /// Blocks that use this one without linking to it: the calls of a component.
+    #[serde(rename = "usedBy", skip_serializing_if = "Vec::is_empty")]
+    pub used_by: Vec<Id>,
     pub x: f64,
     pub y: f64,
     pub w: f64,
@@ -270,6 +273,7 @@ impl Builder {
             span: None,
             reference: None,
             link: None,
+            used_by: vec![],
             x: 0.,
             y: 0.,
             w: 0.,
@@ -397,6 +401,7 @@ impl Builder {
             n.parent = n.parent.and_then(|p| map.get(&p).copied());
             n.reference = n.reference.and_then(|r| map.get(&r).copied());
             n.link = n.link.and_then(|r| map.get(&r).copied());
+            n.used_by = n.used_by.iter().filter_map(|u| map.get(u).copied()).collect();
             n.children = n.children.iter().filter_map(|c| map.get(c).copied()).collect();
             n.edges.retain(|e| map.contains_key(&e.from) && map.contains_key(&e.to));
             for e in &mut n.edges {

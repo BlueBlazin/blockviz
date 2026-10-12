@@ -193,9 +193,15 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
     }
     let mounts = frameworks::mounts(&modules, &ix);
     let routes = frameworks::routes(&modules, &ix);
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes };
+    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes, components: HashMap::new(), component_calls: vec![] };
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
+    }
+    // A component lists the blocks that call it, wherever they are drawn.
+    for (k, path, call) in std::mem::take(&mut cx.component_calls) {
+        if let Some(&c) = cx.components.get(&(k, path)) {
+            cx.b.get_mut(c).used_by.push(call);
+        }
     }
     let mut result = CodeResult { files: failed, ..CodeResult::default() };
     for (mi, m) in modules.iter().enumerate() {
