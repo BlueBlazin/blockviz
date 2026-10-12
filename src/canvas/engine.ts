@@ -161,16 +161,6 @@ export class Engine {
     this.flyTo(this.model.canonicalPath(id));
   }
 
-  /** Back out to the container around the current view. */
-  zoomOut() {
-    const path = this.camera.path;
-    if (path.length <= 1) {
-      this.fit();
-      return;
-    }
-    this.flyTo(path.slice(0, -1).length > 1 ? path.slice(0, -1) : [this.model.root], 'fit', 0.08);
-  }
-
   fit() {
     const path = this.camera.path;
     if (path.length <= 1) this.home();
@@ -250,7 +240,7 @@ export class Engine {
   // ----- frame loop ------------------------------------------------------------------
 
   private animate(plan: Plan, record = true) {
-    // A flight that goes nowhere (Esc or H where the view already is) is not a step back.
+    // A flight that goes nowhere (H where the view already is) is not a step back.
     if (record && plan.length > 1e-3) this.events.onJump?.();
     this.framed = false;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) {

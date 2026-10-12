@@ -35,7 +35,7 @@ function overlayInsets(panelOpen: boolean, panel: PanelSize): Insets {
   };
 }
 
-const KEYS = [['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Esc'], ['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']];
+const KEYS = [['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Click a breadcrumb'],['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']];
 const TOUCH_KEYS = [['Zoom', 'Pinch, + / −'], ['Pan', 'Drag'], ['Select a block', 'Tap'], ['Zoom into a block', 'Double-tap'], ['Back out', 'Tap a breadcrumb'], ['Back / forward', '← / →'], ['Whole project', 'Home button'], ['Follow a value', 'Tap an arrow'], ['Find a line\'s block', 'Tap the line']];
 
 export default function App() {
@@ -209,11 +209,9 @@ export default function App() {
     const key = (e: KeyboardEvent) => {
       const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName);
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setDialog(d => (d === 'search' ? null : 'search')); return; }
+      // Esc closes a dialog; it never moves the view or changes the selection.
       if (e.key === 'Escape') {
-        if (dialog) { if (dialog !== 'open' || loaded) setDialog(null); return; }
-        if (value !== null) { setValue(null); return; }
-        if (selected !== null) { setSelected(null); setSelectedPath(null); return; }
-        engine.current?.zoomOut();
+        if (dialog && (dialog !== 'open' || loaded)) setDialog(null);
         return;
       }
       // Back and forward, as in a browser.
@@ -237,7 +235,7 @@ export default function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [dialog, selected, selectedPath, loaded, value]);
+  }, [dialog, selectedPath, loaded]);
 
   const crumbs = useMemo(() => {
     if (!loaded) return [];
