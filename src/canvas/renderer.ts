@@ -1,7 +1,8 @@
 import type { Edge, SceneNode } from '../core/types';
 import { boxOf, clamp, intersects, smoothstep, type Box, type Xf } from './geometry';
+import type { RemovedEdge, SceneDiff, Status } from './diff';
 import type { SceneModel } from './model';
-import { swatch, theme } from './theme';
+import { changeColor, swatch, theme } from './theme';
 
 /** A block drawn this frame. `clear` when the reader can see what it is (its
  * name is legible, or the box is large), so clicks never land on a block
@@ -30,7 +31,12 @@ export interface Paint {
   trace?: Trace | null;
   /** The edge under the pointer. */
   hoverEdge?: Edge | null;
+  /** How the code differs from a base version (a pull request): what changed is coloured, the rest faded. */
+  diff?: SceneDiff | null;
 }
+
+/** How faint what a change did not touch is drawn. */
+const UNTOUCHED = 0.4;
 
 const ROW_H = 17;
 /** Largest on-screen size of a table's rows, as for names. */
@@ -58,6 +64,8 @@ export class Renderer {
   edgeHits: EdgeHit[] = [];
   /** How many closed blocks the one being drawn is in the thumbnail of. */
   private thumbnails = 0;
+  /** How many faded (untouched) blocks the one being drawn is in. */
+  private faded = 0;
   private widths = new Map<string, number>();
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
 
@@ -70,6 +78,7 @@ export class Renderer {
     this.hits = [];
     this.edgeHits = [];
     this.thumbnails = 0;
+    this.faded = 0;
     const root = this.model.node(this.model.root);
     this.interior(root, p.xfs[0], -1, 0, p, [root.id], 1);
   }
@@ -93,8 +102,12 @@ export class Renderer {
       if (traced) return traced.has(e);
       return focused ? e.from === focus || e.to === focus : null;
     };
+    const diff = p.diff;
+    // A connection the change made is green; one between blocks it did not touch fades with them.
+    const change = (e: Edge): 'added' | 'faded' | null => !diff ? null : diff.added.has(e) ? 'added' : !this.faded && !diff.touched(e.from) && !diff.touched(e.to) ? 'faded' : null;
     if (edgeAlpha > 0.02) {
-      for (const e of owner.edges ?? []) this.edge(e, t, p, edgeAlpha, lw, lit(e), owner.id, parentHit);
+      for (const e of owner.edges ?? []) this.edge(e, t, p, edgeAlpha, lw, lit(e), owner.id, parentHit, change(e));
+      for (const r of diff?.removed.get(owner.id) ?? []) this.removedEdge(r, t, edgeAlpha, lw, p);
     }
     for (const id of kids) {
       const n = this.model.node(id);
@@ -108,17 +121,17 @@ export class Renderer {
       // Labels of lit edges are placed first, so they are the ones shown.
       const all = owner.edges ?? [];
       const order = focused || traced || p.hoverEdge ? [...all].sort((a, b) => Number(!!lit(b)) - Number(!!lit(a))) : all;
-      for (const e of order) this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 11), lit(e), placed);
+      for (const e of order) this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 11), lit(e), placed, change(e));
     }
   }
 
   private node(n: SceneNode, b: Box, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {
     switch (n.shape) {
       case 'port':
-        this.port(n, b, t, alpha);
+        this.port(n, b, t, alpha, p.diff?.status(n.id) ?? null);
         return;
       case 'glyph':
-        this.glyph(n, b, t, alpha, p);
+        this.glyph(n, b, t, p.diff && !this.faded && !p.diff.touched(n.id) ? alpha * UNTOUCHED : alpha, p);
         this.hit(n, b, parentHit, Math.min(b.w, b.h) >= 12);
         return;
       case 'region':
@@ -151,11 +164,23 @@ export class Renderer {
     const radius = clamp(6 * t.s, 1.2, 10);
     const selected = p.selected === n.id;
     const hovered = p.hover === n.id;
+    // A change colours what it added or changed; what it did not touch fades.
+    const diff = p.diff;
+    const status = diff?.status(n.id) ?? null;
+    const unfaded = this.faded ? Math.min(1, alpha / UNTOUCHED) : alpha;
+    const fade = !!diff && !this.faded && !diff.touched(n.id);
+    if (fade) {
+      alpha *= UNTOUCHED;
+      this.faded++;
+    }
+    const fill = status ? mix(sw.fill, changeColor[status].tint, 0.7) : sw.fill;
+    // Opened, a changed block keeps its colour on the header band; the diagram inside stays plain.
+    const tint = status ? mix(sw.tint, changeColor[status].tint, 0.12) : sw.tint;
 
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.roundRect(b.x, b.y, b.w, b.h, radius);
-    ctx.fillStyle = open > 0 ? mix(sw.fill, sw.tint, open) : sw.fill;
+    ctx.fillStyle = open > 0 ? mix(fill, tint, open) : fill;
     ctx.fill();
     if (open > 0.01) {
       // Header band keeps the box's identity once it is open.
@@ -163,14 +188,14 @@ export class Renderer {
       ctx.save();
       ctx.clip();
       ctx.globalAlpha = alpha * open;
-      ctx.fillStyle = sw.fill;
+      ctx.fillStyle = fill;
       ctx.fillRect(b.x, b.y, b.w, hh);
       ctx.restore();
       ctx.globalAlpha = alpha;
     }
     const lw = clamp(1.25 * Math.sqrt(t.s), 0.5, 1.4);
-    ctx.lineWidth = selected ? 2.2 : hovered ? lw + 0.6 : lw;
-    ctx.strokeStyle = selected ? theme.accent : n.category === 'op' ? '#7d838c' : theme.outline;
+    ctx.lineWidth = selected ? 2.2 : status ? Math.max(lw + 0.5, 1.5) + (hovered ? 0.5 : 0) : hovered ? lw + 0.6 : lw;
+    ctx.strokeStyle = selected ? theme.accent : status ? changeColor[status].ink : n.category === 'op' ? '#7d838c' : theme.outline;
     ctx.stroke();
     if (selected) {
       ctx.beginPath();
@@ -209,7 +234,56 @@ export class Renderer {
       this.seen(me, n, size, shown);
     }
     this.effectsMark(n, b, t, alpha);
+    if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status);
+    if (fade) this.faded--;
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * How many changes a block holds, on a badge at its top edge; a block that
+   * holds changes without changing itself (a folder) is ringed. A block that
+   * leads into changed code (a call of a changed function) gets a dashed ring
+   * and an arrowed count, drawn even where its surroundings are faded.
+   */
+  private changeMarks(n: SceneNode, b: Box, t: Xf, alpha: number, unfaded: number, diff: SceneDiff, status: Status | null) {
+    const inside = diff.inside(n.id);
+    const through = inside || status === 'added' ? 0 : diff.through(n.id);
+    if ((!inside && !through) || b.w < 14 || b.h < 10) return;
+    const ctx = this.ctx;
+    const ink = changeColor.changed.ink;
+    const radius = clamp(6 * t.s, 1.2, 10) + 3;
+    if (!status || through) {
+      ctx.globalAlpha = through ? unfaded : alpha;
+      ctx.beginPath();
+      ctx.roundRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6, radius);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.5;
+      if (through) ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const count = inside || through;
+    const words = b.w >= 130 ? ` change${count === 1 ? '' : 's'}` : '';
+    const text = through ? `→ ${count}${words}` : `${count}${words}`;
+    ctx.font = `600 10px ${theme.sans}`;
+    const w = this.measure(ctx.font, text) + 10;
+    const h = 15;
+    const x = Math.max(b.x + 2, b.x + b.w - w - 6);
+    const y = b.y - h / 2 - (status ? 0 : 3);
+    ctx.globalAlpha = through ? unfaded : alpha;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, h / 2);
+    ctx.fillStyle = through ? '#ffffff' : ink;
+    ctx.fill();
+    if (through) {
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.fillStyle = through ? ink : '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x + w / 2, y + 11);
+    ctx.textAlign = 'left';
   }
 
   /** Draws a closed box's name; returns the title's size and opacity. */
@@ -344,13 +418,22 @@ export class Renderer {
     const lane = n.kind === 'lane';
     const sw = swatch(lane ? 'lane' : n.kind === 'table' ? 'config' : 'region');
     const radius = clamp(9 * t.s, 1.5, 14);
+    const diff = p.diff;
+    const status = diff?.status(n.id) ?? null;
+    const unfaded = this.faded ? Math.min(1, alpha / UNTOUCHED) : alpha;
+    const fade = !!diff && !this.faded && !diff.touched(n.id);
+    if (fade) {
+      alpha *= UNTOUCHED;
+      this.faded++;
+    }
+    const fill = n.kind === 'table' ? swatch('config').tint : sw.fill;
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.roundRect(b.x, b.y, b.w, b.h, radius);
-    ctx.fillStyle = n.kind === 'table' ? swatch('config').tint : sw.fill;
+    ctx.fillStyle = status ? mix(fill, changeColor[status].tint, 0.5) : fill;
     ctx.fill();
-    ctx.lineWidth = p.selected === n.id ? 2 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
-    ctx.strokeStyle = p.selected === n.id ? theme.accent : lane ? theme.laneOutline : theme.regionOutline;
+    ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
+    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? changeColor[status].ink : lane ? theme.laneOutline : theme.regionOutline;
     if (lane) ctx.setLineDash([4 * t.s, 3 * t.s]);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -378,6 +461,8 @@ export class Renderer {
     }
     const inner = pathPos >= 0 ? p.xfs[pathPos] : this.model.interior(t, n, n);
     if (inner) this.interior(n, inner, me, pathPos, p, chain, alpha);
+    if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status);
+    if (fade) this.faded--;
     ctx.globalAlpha = 1;
   }
 
@@ -391,8 +476,9 @@ export class Renderer {
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = clamp(1.25 * Math.sqrt(t.s), 0.5, 1.4);
-    ctx.strokeStyle = p.selected === n.id ? theme.accent : theme.outline;
+    const status = p.diff?.status(n.id) ?? null;
+    ctx.lineWidth = clamp(1.25 * Math.sqrt(t.s), 0.5, 1.4) + (status ? 0.5 : 0);
+    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? changeColor[status].ink : theme.outline;
     ctx.stroke();
     if (r < 2.5) return;
     if (n.title === '+') {
@@ -412,14 +498,15 @@ export class Renderer {
     }
   }
 
-  private port(n: SceneNode, b: Box, t: Xf, alpha: number) {
+  private port(n: SceneNode, b: Box, t: Xf, alpha: number, status: Status | null) {
     if (b.h === 0 || !n.title) return;
     const size = Math.min(11.5 * t.s, 15);
     if (size < 4.2) return;
     const ctx = this.ctx;
     ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
     ctx.font = `${size}px ${theme.mono}`;
-    ctx.fillStyle = theme.muted;
+    // A new input or result is named in the colour of what was added.
+    ctx.fillStyle = status ? changeColor[status].ink : theme.muted;
     ctx.textAlign = 'center';
     ctx.fillText(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
     ctx.textAlign = 'left';
@@ -485,8 +572,9 @@ export class Renderer {
     return b;
   }
 
-  /** Draws an edge; `state` is true when lit, false when faded beside lit ones. */
-  private edge(e: Edge, t: Xf, p: Paint, alpha: number, lw: number, state: boolean | null, owner: number, container: number) {
+  /** Draws an edge; `state` is true when lit, false when faded beside lit ones; `change` says
+   * whether a change being read added it or left it untouched. */
+  private edge(e: Edge, t: Xf, p: Paint, alpha: number, lw: number, state: boolean | null, owner: number, container: number, change: 'added' | 'faded' | null = null) {
     const pts = e.points;
     if (pts.length < 4) return;
     const [x0, y0, x1, y1] = this.bounds(e);
@@ -512,6 +600,12 @@ export class Renderer {
       color = theme.accent;
       a = Math.max(alpha, 0.9);
       width = lw + 0.7;
+    } else if (change === 'added') {
+      color = changeColor.added.ink;
+      a = Math.max(a, 0.9);
+      width = lw + 0.6;
+    } else if (change === 'faded') {
+      a *= UNTOUCHED;
     }
     ctx.globalAlpha = a;
     ctx.strokeStyle = color;
@@ -553,7 +647,7 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  private edgeLabel(e: Edge, t: Xf, p: Paint, alpha: number, state: boolean | null, placed: Box[]) {
+  private edgeLabel(e: Edge, t: Xf, p: Paint, alpha: number, state: boolean | null, placed: Box[], change: 'added' | 'faded' | null = null) {
     if (!e.label || !e.labelAt || alpha < 0.03) return;
     const x = t.x + e.labelAt[0] * t.s;
     const y = t.y + e.labelAt[1] * t.s;
@@ -566,14 +660,55 @@ export class Renderer {
     const r = { x: x - 1, y: y - size, w: this.measure(ctx.font, e.label) + 2, h: size + 2 };
     if (!lit && placed.some(q => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h)) return;
     placed.push(r);
-    ctx.globalAlpha = state === false ? alpha * 0.4 : alpha;
+    ctx.globalAlpha = state === false ? alpha * 0.4 : change === 'faded' && !lit ? alpha * UNTOUCHED : alpha;
     ctx.lineWidth = 3;
     ctx.strokeStyle = theme.labelHalo;
     ctx.lineJoin = 'round';
     ctx.strokeText(e.label, x, y);
     // Values read in ink; conditions stay muted like their dotted lines.
-    ctx.fillStyle = lit ? theme.accent : e.kind === 'control' ? theme.muted : theme.labelInk;
+    ctx.fillStyle = lit ? theme.accent : change === 'added' ? changeColor.added.ink : e.kind === 'control' ? theme.muted : theme.labelInk;
     ctx.fillText(e.label, x, y);
+    ctx.globalAlpha = 1;
+  }
+
+  /** A connection the change removed: a dashed red curve from the bottom of one block to the top of the other. */
+  private removedEdge(r: RemovedEdge, t: Xf, alpha: number, lw: number, p: Paint) {
+    const a = boxOf(t, this.model.node(r.from));
+    const b = boxOf(t, this.model.node(r.to));
+    const x0 = a.x + a.w / 2;
+    const y0 = a.y + a.h;
+    const x1 = b.x + b.w / 2;
+    const y1 = b.y;
+    if (!intersects({ x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 }, p.width, p.height, 20)) return;
+    const ctx = this.ctx;
+    const bend = Math.max(24 * t.s, Math.abs(y1 - y0) / 2);
+    const head = clamp(7 * Math.sqrt(t.s), 3, 8);
+    ctx.globalAlpha = Math.max(alpha, 0.85);
+    ctx.strokeStyle = changeColor.removed.ink;
+    ctx.fillStyle = changeColor.removed.ink;
+    ctx.lineWidth = lw + 0.3;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.bezierCurveTo(x0, y0 + bend, x1, y1 - bend, x1, y1 - head * 0.8);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - head * 0.42, y1 - head);
+    ctx.lineTo(x1 + head * 0.42, y1 - head);
+    ctx.closePath();
+    ctx.fill();
+    if (r.label && t.s * 11 >= 4.5) {
+      const size = Math.min(11 * t.s, 13.5);
+      ctx.font = `${size}px ${theme.mono}`;
+      const mx = (x0 + x1) / 2;
+      const my = (y0 + y1) / 2;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = theme.labelHalo;
+      ctx.strokeText(r.label, mx + 4, my);
+      ctx.fillText(r.label, mx + 4, my);
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -611,8 +746,8 @@ export class Renderer {
 function mix(a: string, b: string, t: number): string {
   const pa = parse(a);
   const pb = parse(b);
-  const c = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
+  // Hex, so a mixed colour can be mixed again.
+  return `#${pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')}`;
 }
 
 const parsed = new Map<string, number[]>();

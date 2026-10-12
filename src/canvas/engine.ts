@@ -1,5 +1,6 @@
 import { Camera, type CameraState, type Framing, type Plan } from './camera';
 import { clamp, type Insets, type Xf } from './geometry';
+import type { SceneDiff } from './diff';
 import type { SceneModel } from './model';
 import { Renderer, type EdgeHit, type Trace } from './renderer';
 import { distanceToPolyline } from './trace';
@@ -41,6 +42,8 @@ export class Engine {
   /** A block pointed out from outside the canvas (a line of its source). */
   private peeked: number | null = null;
   private selected: number | null = null;
+  /** How the code on screen differs from a base version (a pull request), when it is one. */
+  private diff: SceneDiff | null = null;
   private flight: { start: number; duration: number; step: (t: number) => void } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
   /** A press that may still be a tap or click; `touch` for a finger or pen. */
@@ -97,6 +100,12 @@ export class Engine {
 
   select(id: number | null) {
     this.selected = id;
+    this.invalidate();
+  }
+
+  /** Shows how the code differs from a base version (null: it is not a change). */
+  setDiff(diff: SceneDiff | null) {
+    this.diff = diff;
     this.invalidate();
   }
 
@@ -325,6 +334,7 @@ export class Engine {
       selected: this.selected,
       path: this.camera.path,
       xfs: this.camera.transforms(),
+      diff: this.diff,
     });
     if (now - this.lastEmit > 120 || !this.flight) {
       this.lastEmit = now;

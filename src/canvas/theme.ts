@@ -1,3 +1,5 @@
+import type { Status } from './diff';
+
 /**
  * Visual language, modelled on classic architecture figures: pastel fills by
  * role, dark hairline outlines, grey regions for repeated or conditional
@@ -60,6 +62,13 @@ export const theme = {
   effect: '#d97706',
   sans: '"Helvetica Neue", Helvetica, -apple-system, "Segoe UI", Arial, sans-serif',
   mono: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
+};
+
+/** Colours of a change being read (a pull request): outlines and text (`ink`), and the fill blocks are tinted with. */
+export const changeColor: Record<Status, { ink: string; tint: string }> = {
+  added: { ink: '#1a7f37', tint: '#c9f2d4' },
+  changed: { ink: '#bf8700', tint: '#fbecb3' },
+  removed: { ink: '#cf222e', tint: '#ffd8d6' },
 };
 
 export function swatch(category: string): Swatch {

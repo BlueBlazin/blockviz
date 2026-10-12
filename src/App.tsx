@@ -1,8 +1,9 @@
 import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
-import { droppedProject, exampleProject, folderProject, githubProject, pastedProject } from './core/loaders';
-import type { Project, Scene } from './core/types';
+import { droppedProject, exampleProject, folderProject, githubComparison, githubProject, isComparison, parseGitHub, pastedProject, type Progress } from './core/loaders';
+import type { Comparison, Project, Scene } from './core/types';
+import { SceneDiff } from './canvas/diff';
 import { Engine, type EdgeRef, type ViewState } from './canvas/engine';
 import { traceValue } from './canvas/trace';
 import { ValuePanel } from './ui/ValuePanel';
@@ -17,7 +18,15 @@ import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
 import { NARROW, TOUCH, useMedia } from './ui/media';
 
-interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
+/** A change being read: both versions of the code and how the head (on screen) differs from the base. */
+interface Compared { comparison: Comparison; base: SceneModel; baseHighlights: Highlights; diff: SceneDiff }
+
+interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number; compare?: Compared }
+
+/** A GitHub link's code: a repository, or both versions of a pull request or comparison. */
+function fromGitHub(url: string, progress: Progress, latest = false): Promise<Project | Comparison> {
+  return isComparison(parseGitHub(url)) ? githubComparison(url, progress, { latest }) : githubProject(url, progress, { latest });
+}
 
 const storage = {
   get(key: string) { try { return localStorage.getItem(key) ?? ''; } catch { return ''; } },
@@ -69,28 +78,43 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const touch = useMedia(TOUCH);
 
-  const load = useCallback(async (make: (progress: (m: string) => void) => Promise<Project>) => {
+  const load = useCallback(async (make: (progress: (m: string) => void) => Promise<Project | Comparison>) => {
     const id = ++request.current;
     // The project on screen stops writing the address the new one is loaded into.
     nav.current?.stop();
     setError(null);
     setBusy('Loading…');
     try {
-      const project = await make(m => { if (id === request.current) setBusy(m); });
+      const made = await make(m => { if (id === request.current) setBusy(m); });
       if (id !== request.current) return;
+      const comparison = 'info' in made ? made : null;
+      const project = comparison ? comparison.head : made as Project;
       if (!project.files.length) throw new Error('No files found.');
-      setBusy(`Analyzing ${project.files.length} files…`);
+      setBusy(comparison ? `Analyzing the change's ${project.files.length} files…` : `Analyzing ${project.files.length} files…`);
       const result = await analyzer.current.analyze(project, { sharedTrunks: trunksRef.current });
       if (id !== request.current) return;
       if (!result.ok) throw new Error(result.error);
+      const model = new SceneModel(result.scene, project);
+      let compare: Compared | undefined;
+      let elapsed = result.elapsed;
+      if (comparison) {
+        // The base is analyzed the same way, only to be compared with.
+        setBusy('Comparing with the base…');
+        const before = await analyzer.current.analyze(comparison.base, { sharedTrunks: trunksRef.current });
+        if (id !== request.current) return;
+        if (!before.ok) throw new Error(before.error);
+        const base = new SceneModel(before.scene, comparison.base);
+        compare = { comparison, base, baseHighlights: new Highlights(analyzer.current, base), diff: new SceneDiff(base, model, comparison.info.files) };
+        elapsed += before.elapsed;
+      }
       setSelected(null);
       setSelectedPath(null);
       setValue(null);
       setView({ path: [], zoom: 1 });
-      const model = new SceneModel(result.scene, project);
-      setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed: result.elapsed });
+      setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed, compare });
       setDialog(null);
-      document.title = `${result.scene.title} · blockviz`;
+      const info = comparison?.info;
+      document.title = info ? `${info.kind === 'pr' ? `#${info.number} ` : ''}${info.title} · ${result.scene.title} · blockviz` : `${result.scene.title} · blockviz`;
     } catch (e) {
       if (id !== request.current || String(e) === 'Error: cancelled') return;
       nav.current?.resume();
@@ -109,7 +133,7 @@ export default function App() {
       storage.set('blockviz.github', r.url);
       pushProject(nav.current, `#github=${encodeURIComponent(r.url.replace(/^https?:\/\//, ''))}`);
       // Opened on purpose: check GitHub for the latest commit (a reload or a link opens the saved copy).
-      void load(p => githubProject(r.url, p, { latest: true }));
+      void load(p => fromGitHub(r.url, p, true));
     }
     if (r.kind === 'folder') void load(p => folderProject(r.files, p));
     if (r.kind === 'paste') void load(async () => pastedProject(r.filename, r.text));
@@ -118,7 +142,7 @@ export default function App() {
   // First load: a shared GitHub link, else the bundled example.
   const loadFromUrl = useCallback(() => {
     const repo = hashParam('github');
-    if (repo) void load(p => githubProject(repo, p));
+    if (repo) void load(p => fromGitHub(repo, p));
     else void load(() => exampleProject());
   }, [load]);
   useEffect(() => {
@@ -137,6 +161,7 @@ export default function App() {
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); },
       onHover: id => setHoverId(id),
     }, insets);
+    e.setDiff(loaded.compare?.diff ?? null);
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
     const repo = hashParams().get('github');
@@ -332,7 +357,7 @@ export default function App() {
             trunksRef.current = on;
             storage.set('blockviz.trunks', on ? '1' : '');
             // Lay the same project out again; the address brings the view back.
-            if (loaded) void load(async () => loaded.project);
+            if (loaded) void load(async () => loaded.compare?.comparison ?? loaded.project);
           }}
         ><Split size={15} /><span className="switch" aria-hidden="true"><i /></span></button>
       </div>
