@@ -12,6 +12,7 @@ pub mod source;
 pub mod syntax;
 pub mod walk;
 
+use crate::hash::{Map, Set};
 use crate::ir::*;
 use crate::text::summary;
 use crate::vocabulary::{self, Domains};
@@ -57,7 +58,7 @@ pub struct CodeResult {
 /// members it reads of names (`store.Open` is `("store", "Open")`), in order.
 #[derive(Default)]
 struct Used<'a> {
-    names: std::collections::HashSet<&'a str>,
+    names: Set<&'a str>,
     members: Vec<(&'a str, &'a str)>,
 }
 
@@ -119,7 +120,7 @@ fn names_used(body: &[syntax::Stmt]) -> Used<'_> {
     let mut out = Used::default();
     stmts(body, &mut out);
     // Each member where it is first read.
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = Set::default();
     out.members.retain(|m| seen.insert(*m));
     out
 }
@@ -171,7 +172,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
     let reach = |mi: usize| {
         let mut d = direct[mi];
         let mut stack: Vec<usize> = ix.imports[mi].iter().map(|(t, _)| *t).collect();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = Set::default();
         while let Some(t) = stack.pop() {
             if !seen.insert(t) || seen.len() > 64 {
                 continue;
@@ -209,7 +210,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
         }
     }
     // Code that is just the source at a node's span is read there by the page.
-    let texts: crate::hash::Map<u32, &str> = modules.iter().map(|m| (m.file, m.src.text.as_str())).collect();
+    let texts: Map<u32, &str> = modules.iter().map(|m| (m.file, m.src.text.as_str())).collect();
     for n in &mut cx.b.nodes {
         let Some(span) = &n.span else { continue };
         if texts.get(&span.file).and_then(|t| t.get(span.start as usize..span.end as usize)) == Some(n.code.as_str()) {
@@ -248,8 +249,8 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
                 // known; elsewhere (TypeScript types are kept as text) only
                 // names re-exported by `export { … }` are left out.
                 let Used { names: used, members } = names_used(&m.ast);
-                let exported: std::collections::HashSet<&str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::Export(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().filter(|(local, exported)| local == exported).map(|(local, _)| local.as_str())).collect();
-                let local: HashMap<&str, &str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::ImportFrom(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().map(|a| (a.name.as_str(), a.asname.as_deref().unwrap_or(&a.name)))).collect();
+                let exported: Set<&str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::Export(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().filter(|(local, exported)| local == exported).map(|(local, _)| local.as_str())).collect();
+                let local: Map<&str, &str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::ImportFrom(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().map(|a| (a.name.as_str(), a.asname.as_deref().unwrap_or(&a.name)))).collect();
                 let depends = |n: &str| {
                     let l = *local.get(n).unwrap_or(&n);
                     if matches!(m.lang, Lang::Rust | Lang::Go) {

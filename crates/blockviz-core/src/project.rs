@@ -10,7 +10,8 @@ use crate::outline::{self, Class};
 use crate::code;
 use crate::python::{self, PyInput};
 use crate::text::clip;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use crate::hash::{Map, Set};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct InFile {
     pub path: String,
@@ -190,7 +191,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     failed.extend(go_failed);
     let (b2, py) = code::analyze(b, modules, headers, failed);
     let mut b = b2;
-    let mut py_by_file: HashMap<u32, &code::CodeFile> = HashMap::new();
+    let mut py_by_file: Map<u32, &code::CodeFile> = Map::default();
     for pf in &py.files {
         py_by_file.insert(pf.file, pf);
     }
@@ -245,7 +246,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         }
         if !o.symbols.is_empty() {
             b.get_mut(id).badges.push("outline".into());
-            let mut by_name: HashMap<String, Id> = HashMap::new();
+            let mut by_name: Map<String, Id> = Map::default();
             for s in &o.symbols {
                 let sid = b.add(Some(id), Kind::Symbol, Shape::Box, s.name.clone());
                 let line = text[..s.start].matches('\n').count() as u32 + 1;
@@ -273,7 +274,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         }
     }
     // Commands in scripts and manifests that run project files.
-    let paths: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
+    let paths: Map<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
     let mut invocations: Vec<(usize, usize, String)> = vec![];
     for (runner, found) in &runs {
         let mut steps: Vec<(usize, &crate::invocations::Run)> = vec![];
@@ -293,12 +294,12 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
             pipeline(&mut b, &entries, *runner, &steps);
         }
     }
-    let run_targets: HashSet<u32> = invocations.iter().map(|(_, t, _)| *t as u32).collect();
+    let run_targets: Set<u32> = invocations.iter().map(|(_, t, _)| *t as u32).collect();
     // Python file roles: an entry point is run (main guard, `__main__.py`,
     // an application object, or top-level actions in a file nobody imports);
     // tests, configuration and framework handlers say what they are; everything
     // else is a module.
-    let imported: HashSet<u32> = py.files.iter().flat_map(|f| f.imports.iter().map(|(t, _)| *t)).collect();
+    let imported: Set<u32> = py.files.iter().flat_map(|f| f.imports.iter().map(|(t, _)| *t)).collect();
     for pf in &py.files {
         let node = pf.node;
         let path = entries[pf.file as usize].path.as_str();
@@ -379,7 +380,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     // Directory tree.
     let mut dirs: BTreeMap<String, Id> = BTreeMap::new();
     // What generated files define is not drawn, so nothing leads into it.
-    let mut hidden_defs: HashSet<Id> = HashSet::new();
+    let mut hidden_defs: Set<Id> = Set::default();
     for e in entries.iter().filter(|e| e.generated && !e.hidden) {
         let mut stack: Vec<Id> = b.get(e.node).children.clone();
         while let Some(id) = stack.pop() {
@@ -453,7 +454,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         compose_services(&mut b, e.node, dir, &services, &dirs, root);
     }
     // A directory of generated files (migrations) is one block.
-    let generated_nodes: HashSet<Id> = entries.iter().filter(|e| e.generated).map(|e| e.node).collect();
+    let generated_nodes: Set<Id> = entries.iter().filter(|e| e.generated).map(|e| e.node).collect();
     for &c in dirs.values() {
         let mut files = vec![];
         if b.get(c).parent.is_some() && all_generated(&b, c, &generated_nodes, &mut files) && files.len() >= 2 {
@@ -517,7 +518,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         }
     }
     // A directory holding a single item reads better as that item.
-    let mut replaced: HashMap<Id, Id> = HashMap::new();
+    let mut replaced: Map<Id, Id> = Map::default();
     collapse_single_children(&mut b, root, &mut replaced);
     // References to directories folded into their only child follow the child.
     if !replaced.is_empty() {
@@ -535,10 +536,10 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     }
 
     // Relations.
-    let mut ports: HashMap<(Id, String, bool), Id> = HashMap::new();
-    let all_paths: HashMap<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
+    let mut ports: Map<(Id, String, bool), Id> = Map::default();
+    let all_paths: Map<&str, usize> = entries.iter().enumerate().map(|(i, e)| (e.path.as_str(), i)).collect();
     let node_of_file = |f: u32| entries[f as usize].node;
-    let mut linked: HashSet<(Id, Id)> = HashSet::new();
+    let mut linked: Set<(Id, Id)> = Set::default();
     let skip = |f: u32| entries[f as usize].generated || entries[f as usize].hidden;
     for pf in &py.files {
         for (target, names) in &pf.uses {
@@ -732,14 +733,14 @@ fn transitive_reduction(b: &mut Builder, container: Id) {
     if uses.len() < 3 {
         return;
     }
-    let mut adj: HashMap<Id, Vec<Id>> = HashMap::new();
+    let mut adj: Map<Id, Vec<Id>> = Map::default();
     for &(a, c) in &uses {
         adj.entry(a).or_default().push(c);
     }
     let reaches_without = |from: Id, to: Id| -> bool {
         // Is `to` reachable from `from` by a path of length ≥ 2?
         let mut stack: Vec<Id> = adj.get(&from).map(|v| v.iter().copied().filter(|&n| n != to).collect()).unwrap_or_default();
-        let mut seen: HashSet<Id> = stack.iter().copied().collect();
+        let mut seen: Set<Id> = stack.iter().copied().collect();
         while let Some(n) = stack.pop() {
             if n == to {
                 return true;
@@ -755,7 +756,7 @@ fn transitive_reduction(b: &mut Builder, container: Id) {
         }
         false
     };
-    let redundant: HashSet<(Id, Id)> = uses.iter().copied().filter(|&(a, c)| reaches_without(a, c)).collect();
+    let redundant: Set<(Id, Id)> = uses.iter().copied().filter(|&(a, c)| reaches_without(a, c)).collect();
     if redundant.is_empty() {
         return;
     }
@@ -763,7 +764,7 @@ fn transitive_reduction(b: &mut Builder, container: Id) {
 }
 
 /// Maps an import specifier to a repo file, per language convention.
-fn resolve_import(from: &str, lang: &str, spec: &str, paths: &HashMap<&str, usize>) -> Option<usize> {
+fn resolve_import(from: &str, lang: &str, spec: &str, paths: &Map<&str, usize>) -> Option<usize> {
     let dir = from.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
     let join = |base: &str, rel: &str| -> String {
         let mut parts: Vec<&str> = if base.is_empty() { vec![] } else { base.split('/').collect() };
@@ -855,7 +856,7 @@ fn compose_services(b: &mut Builder, node: Id, dir: &str, services: &[crate::com
         parts.join("/")
     };
     b.get_mut(node).rows.clear();
-    let mut ids: HashMap<&str, Id> = HashMap::new();
+    let mut ids: Map<&str, Id> = Map::default();
     for s in services {
         let id = b.add(Some(node), Kind::Call, Shape::Box, s.name.clone());
         // The code a service is built from: its Dockerfile's directory, else its context.
@@ -933,7 +934,7 @@ fn pipeline(b: &mut Builder, entries: &[FileEntry], runner: usize, steps: &[(usi
 /// The file a command runs: relative to the directory it runs in, the
 /// runner's directory or the root, else by a unique path suffix (container
 /// paths like `/app/scripts/prestart.sh` rarely match the repository's).
-fn resolve_run(runner: &str, run: &crate::invocations::Run, paths: &HashMap<&str, usize>) -> Option<usize> {
+fn resolve_run(runner: &str, run: &crate::invocations::Run, paths: &Map<&str, usize>) -> Option<usize> {
     use crate::invocations::Target;
     let dir = runner.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
     let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else if b.is_empty() { a.to_string() } else { format!("{a}/{b}") };
@@ -1051,7 +1052,7 @@ fn is_empty_python(text: &str) -> bool {
 }
 
 /// Whether every file below `id` is generated (collecting them).
-fn all_generated(b: &Builder, id: Id, generated: &HashSet<Id>, files: &mut Vec<Id>) -> bool {
+fn all_generated(b: &Builder, id: Id, generated: &Set<Id>, files: &mut Vec<Id>) -> bool {
     let n = b.get(id);
     if n.children.is_empty() {
         return false;
@@ -1071,7 +1072,7 @@ fn all_generated(b: &Builder, id: Id, generated: &HashSet<Id>, files: &mut Vec<I
     })
 }
 
-fn collapse_single_children(b: &mut Builder, id: Id, replaced: &mut HashMap<Id, Id>) {
+fn collapse_single_children(b: &mut Builder, id: Id, replaced: &mut Map<Id, Id>) {
     let kids = b.get(id).children.clone();
     for k in kids {
         collapse_single_children(b, k, replaced);
@@ -1101,12 +1102,12 @@ fn collapse_single_children(b: &mut Builder, id: Id, replaced: &mut HashMap<Id, 
 }
 
 /// Connects two nodes anywhere in the tree, adding ports on every container crossed.
-fn lift(b: &mut Builder, from: Id, to: Id, kind: EdgeKind, label: &str, ports: &mut HashMap<(Id, String, bool), Id>) {
+fn lift(b: &mut Builder, from: Id, to: Id, kind: EdgeKind, label: &str, ports: &mut Map<(Id, String, bool), Id>) {
     lift_titled(b, from, to, kind, label, "", ports)
 }
 
 /// Like `lift`, with an explicit title for the ports it creates.
-fn lift_titled(b: &mut Builder, from: Id, to: Id, kind: EdgeKind, label: &str, title: &str, ports: &mut HashMap<(Id, String, bool), Id>) {
+fn lift_titled(b: &mut Builder, from: Id, to: Id, kind: EdgeKind, label: &str, title: &str, ports: &mut Map<(Id, String, bool), Id>) {
     let chain = |b: &Builder, mut x: Id| {
         let mut v = vec![x];
         while let Some(p) = b.get(x).parent {
@@ -1171,7 +1172,7 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 }
 
 /// Files written by one program and read by another become nodes between them.
-fn artifacts(b: &mut Builder, uses: &[(u32, String, bool)], entries: &[FileEntry], ports: &mut HashMap<(Id, String, bool), Id>) {
+fn artifacts(b: &mut Builder, uses: &[(u32, String, bool)], entries: &[FileEntry], ports: &mut Map<(Id, String, bool), Id>) {
     let concrete: BTreeSet<String> = uses.iter().filter(|(_, n, _)| !n.contains('*')).map(|(_, n, _)| n.clone()).collect();
     let mut writers: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
     let mut readers: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
