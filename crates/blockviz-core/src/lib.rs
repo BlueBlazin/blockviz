@@ -74,9 +74,12 @@ pub fn highlight_source(path: &str, text: &str) -> Vec<u32> {
 
 /// `{"name": "...", "files": [{"path", "text", "bytes"}]}` → `{"ok": true, "scene": ...}`,
 /// both UTF-8 JSON: as bytes, the reply is handed on (and kept) without decoding it.
+/// The request is taken, not borrowed, to be freed once read: it is as large
+/// as every file's text.
 #[wasm_bindgen]
-pub fn analyze_project(input: &[u8]) -> Vec<u8> {
-    let parsed: Result<WireProject, _> = serde_json::from_slice(input);
+pub fn analyze_project(input: Vec<u8>) -> Vec<u8> {
+    let parsed: Result<WireProject, _> = serde_json::from_slice(&input);
+    drop(input);
     match parsed {
         Ok(p) => {
             let files = p
