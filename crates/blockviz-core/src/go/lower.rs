@@ -43,7 +43,7 @@ pub struct Lower<'s> {
     pub imports: HashMap<String, Import>,
     /// Types this file declares: methods for them are drawn inside them.
     pub types: HashSet<String>,
-    /// Interfaces of the package, by name: what a value of one may be.
+    /// A `_test.go` file.
     pub test_file: bool,
     depth: Cell<u32>,
     /// The function being lowered: its named results and whether the last
@@ -53,6 +53,8 @@ pub struct Lower<'s> {
     failed: RefCell<Vec<String>>,
     /// Route groups by variable: `api := r.Group("/api")` serves under `/api`.
     prefixes: RefCell<HashMap<String, String>>,
+    /// `var _ I = (*T)(nil)`: (I, T).
+    pub asserts: RefCell<Vec<(Expr, Expr)>>,
 }
 
 /// Methods that register a handler for a path, by router library: gin and
@@ -110,6 +112,21 @@ fn ident(e: &ast::Expr) -> Option<&str> {
     match e {
         ast::Expr::Ident(i) => Some(i.name.as_str()),
         ast::Expr::Paren(p) => ident(&p.x),
+        _ => None,
+    }
+}
+
+/// The type a value of an interface assertion is: `(*T)(nil)`, `&T{}`,
+/// `T{}`, `new(T)`.
+fn asserted_type(e: &ast::Expr) -> Option<&ast::Expr> {
+    match unparen(e) {
+        ast::Expr::Call(c) => match unparen(&c.fun) {
+            ast::Expr::Star(s) => Some(&s.x),
+            ast::Expr::Ident(i) if i.name == "new" => c.args.first(),
+            _ => None,
+        },
+        ast::Expr::Unary(u) if u.op == Token::And => asserted_type(&u.x),
+        ast::Expr::CompositeLit(l) => l.typ.as_ref(),
         _ => None,
     }
 }
@@ -308,7 +325,7 @@ impl<'s> Lower<'s> {
             }
         }
         let test_file = path.ends_with("_test.go");
-        Lower { text, path, imports, types, test_file, depth: Cell::new(0), results: RefCell::new(vec![]), failed: RefCell::new(vec![]), prefixes: RefCell::new(HashMap::new()) }
+        Lower { text, path, imports, types, test_file, depth: Cell::new(0), results: RefCell::new(vec![]), failed: RefCell::new(vec![]), prefixes: RefCell::new(HashMap::new()), asserts: RefCell::new(vec![]) }
     }
 
     fn text_of(&self, r: TextRange) -> &str {
@@ -403,6 +420,11 @@ impl<'s> Lower<'s> {
         }
         for (i, n) in v.names.iter().enumerate() {
             if n.name == "_" {
+                // `var _ Router = (*Mux)(nil)`, `&Mux{}`, `Mux{}`: Mux is a Router.
+                if let (Some(t), Some(of)) = (typ, v.values.get(i).and_then(asserted_type)) {
+                    self.asserts.borrow_mut().push((self.type_expr(t), self.type_expr(of)));
+                    continue;
+                }
                 if let Some(value) = v.values.get(i) {
                     out.extend(self.discard(value, range));
                 }

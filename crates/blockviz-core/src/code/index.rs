@@ -32,6 +32,9 @@ pub struct Module {
     /// Modules of one namespace (the files of a Go package) see each other's
     /// top-level definitions without importing them.
     pub namespace: Option<String>,
+    /// Types the code asserts implement an interface, apart from using them
+    /// (Go's `var _ Router = (*Mux)(nil)`): (interface, type).
+    pub asserts: Vec<(Expr, Expr)>,
 }
 
 #[derive(Clone, Copy)]

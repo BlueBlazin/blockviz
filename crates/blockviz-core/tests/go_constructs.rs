@@ -198,6 +198,24 @@ fn calls_through_interfaces_reach_what_the_program_puts_behind_them() {
 }
 
 #[test]
+fn signatures_match_however_types_are_written() {
+    let s = analyze(&[
+        ("go.mod", "module example.com/m\n"),
+        ("shapes/shape.go", "package shapes\n\n// Point is a place.\ntype Point struct{ X, Y int }\n\n// ID names a shape.\ntype ID = int\n\n// Path is drawn.\ntype Path interface {\n\tDraw(pts []Point) error\n}\n\n// Named has a name.\ntype Named interface {\n\tName(id ID) string\n}\n"),
+        (
+            "draw/svg.go",
+            "package draw\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/m/shapes\"\n)\n\n// SVG draws paths.\ntype SVG struct{}\n\nfunc (SVG) Draw(pts []shapes.Point) error { return fmt.Errorf(\"%v\", pts) }\n\n// Label names by number: `int` where Named says `ID`.\ntype Label struct{}\n\nfunc (Label) Name(id int) string { return fmt.Sprint(id) }\n\nvar _ shapes.Named = Label{}\n\n// Describe names a shape.\nfunc Describe(n shapes.Named) string { return n.Name(1) + \"!\" }\n",
+        ),
+    ]);
+    // `[]shapes.Point` is the `[]Point` the interface says.
+    assert_eq!(find(&s, "SVG").subtitle, "Path");
+    // Label goes in as a Named, but `int` is not `ID` as written: listed,
+    // not taken for the method that runs.
+    let name = descendants(&s, find(&s, "Describe")).into_iter().find(|n| n.title == "Name").expect("Name call");
+    assert_eq!((name.subtitle.as_str(), name.reference), ("Label", Some(find(&s, "Named").id)));
+}
+
+#[test]
 fn a_package_imported_twice_is_reached_either_way() {
     // `models` and `. models` in one file (gorm's tests do this). Each run
     // hashes differently, so a few runs catch an answer that depends on it.

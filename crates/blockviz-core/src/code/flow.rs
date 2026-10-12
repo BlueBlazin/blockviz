@@ -3462,7 +3462,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         let accessors = !found.open && found.funcs.iter().all(|&f| self.cx.ix.is_accessor(f));
         match (&found.funcs[..], found.open) {
             _ if found.types.is_empty() || accessors => None,
-            ([f], false) => Some(Callee::Func(*f)),
+            ([f], false) if !found.unsure => Some(Callee::Func(*f)),
             _ => Some(Callee::Dispatch { contract: found.contract, name: name.into(), types: found.types, partial: found.partial }),
         }
     }

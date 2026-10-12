@@ -28,6 +28,10 @@ pub struct Implementations {
     /// Some type runs a method the project does not define (a Go type's
     /// method from a library type it embeds).
     pub open: bool,
+    /// Some Go type was put where the interface is expected but has only
+    /// its method names, not their signatures as written: its method may
+    /// not be the one that runs.
+    pub unsure: bool,
     /// Some implementations are not known by name.
     pub partial: bool,
 }
@@ -131,7 +135,7 @@ impl<'p> Index<'p> {
         let norm = |e: &Expr| {
             let t = squash(src.of(e));
             // `interface{}` is `any`.
-            t.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '[' || c == ']')).filter(|w| !w.is_empty()).map(|w| w.rsplit('.').next().unwrap_or(w)).map(|w| if w == "interface" { "any" } else { w }).collect::<Vec<_>>().join(" ")
+            t.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '[' || c == ']')).filter(|w| !w.is_empty()).map(unqualified).map(|w| if w == "interface" { "any".to_string() } else { w }).collect::<Vec<_>>().join(" ")
         };
         let params: Vec<String> = params.iter().map(|a| a.annotation.as_ref().map(norm).unwrap_or_default()).collect();
         // Results by type, named or not: `(peer ProtoGetter, ok bool)` is `(ProtoGetter, bool)`.
@@ -198,12 +202,17 @@ impl<'p> Index<'p> {
         let tests = crate::project::is_test_path(&self.modules[from].path);
         let go = self.modules[self.classes[contract].module].lang == Lang::Go;
         let candidates = if go { self.go_candidates(contract, tests) } else { self.implementers[contract].iter().copied().filter(|&c| tests || !self.is_double(c)).collect() };
-        let mut out = Implementations { contract, types: vec![], funcs: vec![], open: false, partial: false };
+        let mut out = Implementations { contract, types: vec![], funcs: vec![], open: false, unsure: false, partial: false };
         for c in candidates {
             match self.method(c, name).filter(|&f| !self.is_abstract(f) && self.funcs[f].class.is_some_and(|o| !self.contract_kind(o))) {
                 Some(f) => {
                     if !out.funcs.contains(&f) {
                         out.funcs.push(f);
+                    }
+                    // Go: put where the interface is expected, but only its
+                    // method names match.
+                    if go && !self.implementers[contract].contains(&c) {
+                        out.unsure = true;
                     }
                 }
                 // Go: from a library type or an interface it embeds.
@@ -407,6 +416,27 @@ impl<'p> Index<'p> {
     }
 }
 
+/// A Go type as written without its package qualifiers:
+/// `[]caddyfile.ServerBlock` is `[]ServerBlock`, `map[string]caddy.App` is
+/// `map[string]App`.
+fn unqualified(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    let mut word = String::new();
+    for c in t.chars() {
+        match c {
+            '.' if !word.is_empty() => word.clear(),
+            c if c.is_alphanumeric() || c == '_' => word.push(c),
+            c => {
+                out.push_str(&word);
+                word.clear();
+                out.push(c);
+            }
+        }
+    }
+    out.push_str(&word);
+    out
+}
+
 /// Every name and attribute in a body, type annotations included, with
 /// where it is.
 fn each_name<'a>(stmts: &'a [Stmt], f: &mut dyn FnMut(&'a str, ast::TextSize)) {
@@ -531,26 +561,13 @@ impl Flows<'_, '_> {
 
     fn module(&mut self, body: &[Stmt]) {
         let mut locals = Locals::new();
+        // `var _ Router = (*Mux)(nil)`: the compiler is told Mux is a Router.
+        for (interface, t) in &self.ix.modules[self.mi].asserts {
+            let slot = self.ix.annotated(self.mi, interface, &locals);
+            let value = self.ix.annotated(self.mi, t, &locals);
+            self.put(&slot, &value);
+        }
         for s in body {
-            // `var _ Router = (*Mux)(nil)`: the compiler is told Mux is a Router.
-            if let Stmt::AnnAssign(a) = s {
-                if matches!(&*a.target, Expr::Name(n) if n.id == "_") {
-                    let slot = self.ix.annotated(self.mi, &a.annotation, &locals);
-                    let text = self.ix.modules[self.mi].src.of(a);
-                    if let Some(t) = text.split_once('=').and_then(|(_, v)| v.trim().strip_prefix("(*")).and_then(|v| v.split_once(')')).map(|(t, _)| t.trim()) {
-                        let ty = match t.split_once('.') {
-                            Some((pkg, name)) => match self.ix.sym_ty(self.mi, pkg, 0) {
-                                Ty::Module(m) => self.ix.module_member(m, name),
-                                _ => Ty::Unknown,
-                            },
-                            None => self.ix.sym_ty(self.mi, t, 0),
-                        };
-                        if let Ty::Class(c) = ty {
-                            self.put(&slot, &Ty::Inst(c));
-                        }
-                    }
-                }
-            }
             self.stmt(s, &mut locals, &[]);
         }
     }

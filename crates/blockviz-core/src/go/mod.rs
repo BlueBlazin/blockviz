@@ -118,6 +118,7 @@ pub fn front_end(_b: &mut Builder, inputs: Vec<GoInput>, resolver: &Resolver, di
         }
         let lowerer = lower::Lower::new(&input.text, &input.path, file, imports);
         let body = lowerer.file(file);
+        let asserts = lowerer.asserts.take();
         let error = p.errors.first().map(|e| {
             let line = input.text[..(e.offset as usize).min(input.text.len())].bytes().filter(|c| *c == b'\n').count() + 1;
             format!("{}:{}: {}", input.path, line, e.message)
@@ -190,7 +191,7 @@ pub fn front_end(_b: &mut Builder, inputs: Vec<GoInput>, resolver: &Resolver, di
         let package = resolver.import_path(&dir);
         let dotted = input.path.trim_end_matches(".go").replace('/', ".");
         let namespace = Some(format!("{dir}\u{0}{pkg_name}"));
-        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: false, lang: Lang::Go, tags, error, namespace });
+        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: false, lang: Lang::Go, tags, error, namespace, asserts });
     }
     (modules, headers, vec![])
 }
