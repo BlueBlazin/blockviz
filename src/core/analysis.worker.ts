@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import init, { analyze_project, highlight_source } from '../wasm/blockviz_core';
+import init, { analyze_project, highlight_source, type Reply } from '../wasm/blockviz_core';
 import { scenes } from './cache';
 import type { AnalysisResult, InputFile } from './types';
 
@@ -27,9 +27,22 @@ async function analyze(input: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
   const kept = key && await scenes.get(key);
   if (kept) return kept;
   await ready;
-  const reply = analyze_project(input);
+  const reply = bytes(analyze_project(input));
   if (key) await scenes.put(key, reply);
   return reply;
+}
+
+/** The reply, copied out of WebAssembly memory a piece at a time: joined
+ * there, it would need one block of memory as large as itself. */
+function bytes(reply: Reply): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(reply.len);
+  let at = 0;
+  for (let piece = reply.next(); piece; piece = reply.next()) {
+    out.set(piece, at);
+    at += piece.length;
+  }
+  reply.free();
+  return out;
 }
 
 scope.onmessage = async (event: MessageEvent<Request>) => {

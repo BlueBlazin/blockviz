@@ -58,29 +58,38 @@ struct Analyzed<'a> {
     scene: &'a ir::Scene,
 }
 
-/// The reply, written in pieces and joined once the scene is freed: one
-/// growing buffer would need a block as large as the reply (and, while
-/// doubling, half as large again) beside the whole scene.
+/// `analyze_project`'s reply, in the pieces it is written in. The page
+/// copies them out one at a time: joined here, they would need one block of
+/// memory as large as the reply, which a fragmented heap rarely has free, so
+/// WebAssembly memory would grow by the reply's size just to hold it.
+#[wasm_bindgen]
 #[derive(Default)]
-struct Pieces {
-    full: Vec<Vec<u8>>,
+pub struct Reply {
+    full: std::collections::VecDeque<Vec<u8>>,
     last: Vec<u8>,
 }
 
-impl Pieces {
-    fn join(mut self) -> Vec<u8> {
-        self.full.push(self.last);
-        self.full.concat()
+#[wasm_bindgen]
+impl Reply {
+    /// Its length in bytes.
+    #[wasm_bindgen(getter)]
+    pub fn len(&self) -> usize {
+        self.full.iter().map(Vec::len).sum::<usize>() + self.last.len()
+    }
+
+    /// The next piece, freed here as it is handed over.
+    pub fn next(&mut self) -> Option<Vec<u8>> {
+        self.full.pop_front().or_else(|| Some(std::mem::take(&mut self.last)).filter(|p| !p.is_empty()))
     }
 }
 
-impl std::io::Write for Pieces {
+impl std::io::Write for Reply {
     // serde_json writes every token with this: inlined, as `Vec`'s is, it costs no more.
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         if self.last.capacity() - self.last.len() < buf.len() {
             let full = std::mem::replace(&mut self.last, Vec::with_capacity(buf.len().max(1 << 16)));
-            self.full.push(full);
+            self.full.push_back(full);
         }
         self.last.extend_from_slice(buf);
         Ok(())
@@ -115,9 +124,10 @@ pub fn highlight_source(path: &str, text: &str) -> Vec<u32> {
 /// The request is taken, not borrowed, to be freed once read: it is as large
 /// as every file's text.
 #[wasm_bindgen]
-pub fn analyze_project(input: Vec<u8>) -> Vec<u8> {
+pub fn analyze_project(input: Vec<u8>) -> Reply {
     let parsed: Result<WireProject, _> = serde_json::from_slice(&input);
     drop(input);
+    let mut reply = Reply::default();
     match parsed {
         Ok(p) => {
             let files = p
@@ -132,11 +142,9 @@ pub fn analyze_project(input: Vec<u8>) -> Vec<u8> {
             if !p.description.trim().is_empty() {
                 scene.description = p.description.trim().to_string();
             }
-            let mut reply = Pieces::default();
             serde_json::to_writer(&mut reply, &Analyzed { ok: true, scene: &scene }).unwrap();
-            drop(scene);
-            reply.join()
         }
-        Err(e) => serde_json::json!({ "ok": false, "error": format!("Invalid input: {e}") }).to_string().into_bytes(),
+        Err(e) => serde_json::to_writer(&mut reply, &serde_json::json!({ "ok": false, "error": format!("Invalid input: {e}") })).unwrap(),
     }
+    reply
 }

@@ -175,8 +175,9 @@ fn browser_reply_is_the_scene() {
     let input = serde_json::to_vec(&serde_json::json!({ "name": "nanoGPT", "files": files })).unwrap();
     // The scene's bytes as the CLI writes them, wrapped.
     let scene = serde_json::to_vec(&scene()).unwrap();
-    assert_eq!(blockviz_core::analyze_project(input), [&br#"{"ok":true,"scene":"#[..], &scene, b"}"].concat());
-    let error: serde_json::Value = serde_json::from_slice(&blockviz_core::analyze_project(b"{".to_vec())).unwrap();
+    let bytes = |mut reply: blockviz_core::Reply| std::iter::from_fn(|| reply.next()).flatten().collect::<Vec<u8>>();
+    assert_eq!(bytes(blockviz_core::analyze_project(input)), [&br#"{"ok":true,"scene":"#[..], &scene, b"}"].concat());
+    let error: serde_json::Value = serde_json::from_slice(&bytes(blockviz_core::analyze_project(b"{".to_vec()))).unwrap();
     assert_eq!(error["ok"], false);
 }
 
