@@ -590,7 +590,7 @@ impl<'a> Namer<'a> {
             names = names.split_off(names.len() - 1);
         }
         let receiver = receiver.map(|r| self.path(r).unwrap_or_else(|| self.code(r, 20))).unwrap_or_default();
-        Step::Calls { names, receiver, reads: super::walk::loads(e), path }
+        Step::Calls { names, receiver, reads: super::walk::loads(e).into_iter().map(str::to_string).collect(), path }
     }
 
     /// Where an assignment target stores its result.

@@ -1,10 +1,10 @@
 //! Borrowing traversals over the shared syntax tree.
 
 use super::syntax::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Immediate sub-expressions of an expression. A function expression's body
-/// is a scope of its own and is not included (see `function_bodies`).
+/// is a scope of its own and is not included (see `loads_deep`).
 pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
     match e {
         Expr::BoolOp(x) => out.extend(&x.values),
@@ -76,38 +76,31 @@ pub fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
 
 /// Pre-order walk of an expression tree.
 pub fn walk<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
-    f(e);
-    let mut kids = vec![];
-    children(e, &mut kids);
-    for k in kids {
-        walk(k, f);
+    // One stack for the whole walk: children go on reversed, to come off in order.
+    let mut stack = vec![e];
+    while let Some(e) = stack.pop() {
+        f(e);
+        let at = stack.len();
+        children(e, &mut stack);
+        stack[at..].reverse();
     }
 }
 
-/// Function expressions anywhere in an expression (callbacks, handlers).
-pub fn function_bodies<'a>(e: &'a Expr, out: &mut Vec<&'a FunctionDef>) {
-    walk(e, &mut |x| {
-        if let Expr::Function(f) = x {
-            out.push(f);
-        }
-    });
-}
-
 /// Names bound inside comprehensions and lambdas are local to them.
-fn local_binders(e: &Expr, out: &mut BTreeSet<String>) {
+fn local_binders<'a>(e: &'a Expr, out: &mut HashSet<&'a str>) {
     match e {
         Expr::Comp(x) => {
             for g in &x.generators {
                 walk(&g.target, &mut |t| {
                     if let Expr::Name(n) = t {
-                        out.insert(n.id.to_string());
+                        out.insert(&n.id);
                     }
                 });
             }
         }
         Expr::Lambda(x) => {
             for p in &x.params {
-                out.insert(p.name.clone());
+                out.insert(&p.name);
             }
         }
         _ => {}
@@ -120,17 +113,26 @@ pub fn param_names(p: &[Param]) -> Vec<String> {
 }
 
 /// Free names loaded by an expression, in first-use order.
-pub fn loads(e: &Expr) -> Vec<String> {
-    let mut bound = BTreeSet::new();
-    walk(e, &mut |x| local_binders(x, &mut bound));
-    let mut out: Vec<String> = vec![];
-    walk(e, &mut |x| {
-        if let Expr::Name(n) = x {
-            if n.ctx == Ctx::Load && !bound.contains(n.id.as_str()) && !out.iter().any(|o| o == n.id.as_str()) {
-                out.push(n.id.to_string());
+pub fn loads(e: &Expr) -> Vec<&str> {
+    scan(e, &mut vec![])
+}
+
+/// `loads`, and the function expressions anywhere in `e` (callbacks,
+/// handlers), in one walk.
+fn scan<'a>(e: &'a Expr, fns: &mut Vec<&'a FunctionDef>) -> Vec<&'a str> {
+    let mut bound = HashSet::new();
+    let mut seen = HashSet::new();
+    let mut out = vec![];
+    walk(e, &mut |x| match x {
+        Expr::Name(n) => {
+            if n.ctx == Ctx::Load && seen.insert(n.id.as_str()) {
+                out.push(n.id.as_str());
             }
         }
+        Expr::Function(f) => fns.push(f),
+        _ => local_binders(x, &mut bound),
     });
+    out.retain(|n| !bound.contains(n));
     out
 }
 
@@ -144,6 +146,13 @@ pub fn target_names(t: &Expr, out: &mut Vec<String>) {
     }
 }
 
+/// What a statement is made of, in source order.
+pub enum Part<'a> {
+    Expr(&'a Expr),
+    /// A statement list in it, and whether it is a function's or class's body.
+    Body(&'a [Stmt], bool),
+}
+
 /// Visits every expression rooted in a statement list, descending into nested
 /// statements; nested function and class bodies are included when `deep`.
 pub fn stmt_exprs<'a>(stmts: &'a [Stmt], deep: bool, f: &mut impl FnMut(&'a Expr)) {
@@ -153,149 +162,153 @@ pub fn stmt_exprs<'a>(stmts: &'a [Stmt], deep: bool, f: &mut impl FnMut(&'a Expr
 }
 
 pub fn stmt_expr<'a>(s: &'a Stmt, deep: bool, f: &mut impl FnMut(&'a Expr)) {
-    match s {
-        Stmt::FunctionDef(x) => {
-            x.decorators.iter().for_each(|d| f(&d.expression));
-            for a in &x.params {
-                if let Some(d) = &a.default {
-                    f(d);
-                }
-            }
-            if deep {
-                stmt_exprs(&x.body, deep, f);
+    parts(s, &mut |p| match p {
+        Part::Expr(e) => f(e),
+        Part::Body(body, def) => {
+            if deep || !def {
+                stmt_exprs(body, deep, f)
             }
         }
-        Stmt::ClassDef(x) => {
-            x.bases.iter().for_each(&mut *f);
-            x.keywords.iter().for_each(|k| f(&k.value));
-            x.decorators.iter().for_each(|d| f(&d.expression));
-            if deep {
-                stmt_exprs(&x.body, deep, f);
+    });
+}
+
+/// A statement's own expressions and the statement lists nested in it.
+pub fn parts<'a>(s: &'a Stmt, f: &mut impl FnMut(Part<'a>)) {
+    use Part::{Body, Expr as E};
+    match s {
+        Stmt::FunctionDef(x) => {
+            x.decorators.iter().for_each(|d| f(E(&d.expression)));
+            for a in &x.params {
+                if let Some(d) = &a.default {
+                    f(E(d));
+                }
             }
+            f(Body(&x.body, true))
+        }
+        Stmt::ClassDef(x) => {
+            x.bases.iter().for_each(|b| f(E(b)));
+            x.keywords.iter().for_each(|k| f(E(&k.value)));
+            x.decorators.iter().for_each(|d| f(E(&d.expression)));
+            f(Body(&x.body, true))
         }
         Stmt::Return(x) => {
             if let Some(v) = &x.value {
-                f(v)
+                f(E(v))
             }
         }
-        Stmt::Delete(x) => x.targets.iter().for_each(&mut *f),
+        Stmt::Delete(x) => x.targets.iter().for_each(|t| f(E(t))),
         Stmt::TypeAlias(x) => {
-            f(&x.name);
-            f(&x.value)
+            f(E(&x.name));
+            f(E(&x.value))
         }
         Stmt::Assign(x) => {
-            x.targets.iter().for_each(&mut *f);
-            f(&x.value)
+            x.targets.iter().for_each(|t| f(E(t)));
+            f(E(&x.value))
         }
         Stmt::AugAssign(x) => {
-            f(&x.target);
-            f(&x.value)
+            f(E(&x.target));
+            f(E(&x.value))
         }
         Stmt::AnnAssign(x) => {
-            f(&x.target);
+            f(E(&x.target));
             if let Some(v) = &x.value {
-                f(v)
+                f(E(v))
             }
         }
         Stmt::For(x) => {
-            f(&x.target);
-            f(&x.iter);
-            stmt_exprs(&x.body, deep, f);
-            stmt_exprs(&x.orelse, deep, f)
+            f(E(&x.target));
+            f(E(&x.iter));
+            f(Body(&x.body, false));
+            f(Body(&x.orelse, false))
         }
         Stmt::While(x) => {
-            f(&x.test);
-            stmt_exprs(&x.body, deep, f);
-            stmt_exprs(&x.orelse, deep, f)
+            f(E(&x.test));
+            f(Body(&x.body, false));
+            f(Body(&x.orelse, false))
         }
         Stmt::If(x) => {
-            f(&x.test);
-            stmt_exprs(&x.body, deep, f);
+            f(E(&x.test));
+            f(Body(&x.body, false));
             for c in &x.elif_else_clauses {
                 if let Some(t) = &c.test {
-                    f(t);
+                    f(E(t));
                 }
-                stmt_exprs(&c.body, deep, f);
+                f(Body(&c.body, false));
             }
         }
         Stmt::With(x) => {
             for i in &x.items {
-                f(&i.context_expr);
+                f(E(&i.context_expr));
                 if let Some(v) = &i.optional_vars {
-                    f(v);
+                    f(E(v));
                 }
             }
-            stmt_exprs(&x.body, deep, f)
+            f(Body(&x.body, false))
         }
         Stmt::Match(x) => {
-            f(&x.subject);
+            f(E(&x.subject));
             for c in &x.cases {
                 if let Some(g) = &c.guard {
-                    f(g);
+                    f(E(g));
                 }
-                stmt_exprs(&c.body, deep, f);
+                f(Body(&c.body, false));
             }
         }
         Stmt::Raise(x) => {
             if let Some(v) = &x.exc {
-                f(v)
+                f(E(v))
             }
             if let Some(v) = &x.cause {
-                f(v)
+                f(E(v))
             }
         }
         Stmt::Try(x) => {
-            stmt_exprs(&x.body, deep, f);
+            f(Body(&x.body, false));
             for h in &x.handlers {
                 if let Some(t) = &h.type_ {
-                    f(t);
+                    f(E(t));
                 }
-                stmt_exprs(&h.body, deep, f);
+                f(Body(&h.body, false));
             }
-            stmt_exprs(&x.orelse, deep, f);
-            stmt_exprs(&x.finalbody, deep, f)
+            f(Body(&x.orelse, false));
+            f(Body(&x.finalbody, false))
         }
         Stmt::Assert(x) => {
-            f(&x.test);
+            f(E(&x.test));
             if let Some(m) = &x.msg {
-                f(m)
+                f(E(m))
             }
         }
-        Stmt::Expr(x) => f(&x.value),
+        Stmt::Expr(x) => f(E(&x.value)),
         Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Global(_) | Stmt::Nonlocal(_) | Stmt::Pass(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Export(_) | Stmt::Other(_) => {}
     }
 }
 
 /// Free names read by a function-like body: loads minus parameters and local bindings.
-pub fn free_names(params: &[String], body: &[Stmt]) -> Vec<String> {
+pub fn free_names<'a>(params: &[String], body: &'a [Stmt]) -> Vec<&'a str> {
     let mut local: BTreeSet<String> = params.iter().cloned().collect();
     let mut declared_global: BTreeSet<String> = BTreeSet::new();
     collect_bindings(body, &mut local, &mut declared_global);
     for g in &declared_global {
         local.remove(g);
     }
-    let mut out: Vec<String> = vec![];
+    let mut seen = HashSet::new();
+    let mut out = vec![];
     stmt_exprs(body, true, &mut |e| {
-        for n in loads_deep(e) {
-            if !local.contains(&n) && !out.contains(&n) {
-                out.push(n);
-            }
-        }
+        out.extend(loads_deep(e).into_iter().filter(|n| !local.contains(*n) && seen.insert(*n)));
     });
     out
 }
 
 /// Free names an expression reads, including inside the functions it
 /// contains (a callback reads what it closes over when it runs).
-pub fn loads_deep(e: &Expr) -> Vec<String> {
-    let mut out = loads(e);
+pub fn loads_deep(e: &Expr) -> Vec<&str> {
     let mut fns = vec![];
-    function_bodies(e, &mut fns);
-    for f in fns {
-        for n in free_names(&param_names(&f.params), &f.body) {
-            if !out.contains(&n) {
-                out.push(n);
-            }
+    let mut out = scan(e, &mut fns);
+    if !fns.is_empty() {
+        let mut seen: HashSet<&str> = out.iter().copied().collect();
+        for f in fns {
+            out.extend(free_names(&param_names(&f.params), &f.body).into_iter().filter(|n| seen.insert(*n)));
         }
     }
     out

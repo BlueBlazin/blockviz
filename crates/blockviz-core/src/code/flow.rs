@@ -32,6 +32,7 @@ use crate::text::{clip, heading, is_directive, squash, summary};
 use crate::vocabulary::{self, Domains};
 use super::syntax::{self as ast, Ctx as Load, Expr, Lang, Ranged, Stmt, TemplateKind, TextRange};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 /// A cross-file relation discovered while building flows.
 pub enum Relation {
@@ -67,6 +68,9 @@ pub struct Ctx<'p> {
     pub components: HashMap<(usize, String), Id>,
     /// Calls of components, as (class, field path, call block).
     pub component_calls: Vec<(usize, String, Id)>,
+    /// Where each statement list reads each name last (`Fb::last_reads`),
+    /// by the list's place in memory, while its module is built.
+    pub reads: HashMap<(*const Stmt, usize), Rc<HashMap<&'p str, usize>>>,
 }
 
 impl Ctx<'_> {
@@ -197,14 +201,14 @@ impl Locals for Types<'_> {
 #[derive(Clone, Copy)]
 struct Later<'a> {
     /// The last statement of the list that reads each name.
-    last: &'a HashMap<String, usize>,
+    last: &'a HashMap<&'a str, usize>,
     /// The first statement of the list that runs later.
     from: usize,
     outer: Option<&'a Later<'a>>,
 }
 
 impl<'a> Later<'a> {
-    fn new(last: &'a HashMap<String, usize>, outer: Option<&'a Later<'a>>) -> Self {
+    fn new(last: &'a HashMap<&'a str, usize>, outer: Option<&'a Later<'a>>) -> Self {
         Later { last, from: 0, outer }
     }
 
@@ -336,6 +340,8 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         let effects = fb.regions[0].effects.clone();
         fb.cx.b.get_mut(root).effects.extend(effects);
+        // The module's statements are built: nothing asks what they read again.
+        fb.cx.reads.clear();
     }
 
     fn container(&self) -> Id {
@@ -532,8 +538,33 @@ impl<'c, 'p> Fb<'c, 'p> {
         total
     }
 
+    /// Which statement of a list reads each name last, anywhere inside it,
+    /// ignoring what is only printed or logged. Worked out once per list,
+    /// from the lists in it, though every list around it asks.
+    fn last_reads(&mut self, stmts: &'p [Stmt]) -> Rc<HashMap<&'p str, usize>> {
+        let key = (stmts.as_ptr(), stmts.len());
+        if let Some(last) = self.cx.reads.get(&key) {
+            return last.clone();
+        }
+        let mut last = HashMap::new();
+        for (i, s) in stmts.iter().enumerate() {
+            let mut bodies = vec![];
+            walk::parts(s, &mut |p| match p {
+                walk::Part::Expr(Expr::Call(c)) if matches!(&*c.func, Expr::Name(n) if matches!(n.id.as_str(), "print" | "pprint")) => {}
+                walk::Part::Expr(e) => last.extend(walk::loads_deep(e).into_iter().map(|n| (n, i))),
+                walk::Part::Body(body, _) => bodies.push(body),
+            });
+            for body in bodies {
+                last.extend(self.last_reads(body).keys().map(|&n| (n, i)));
+            }
+        }
+        let last = Rc::new(last);
+        self.cx.reads.insert(key, last.clone());
+        last
+    }
+
     fn statements(&mut self, stmts: &'p [Stmt], later: Later, sections: bool) {
-        let last = last_reads(stmts);
+        let last = self.last_reads(stmts);
         let here = Later::new(&last, Some(&later));
         if sections && self.units(stmts) > SECTION_MIN {
             let paras = self.join_runs(stmts, self.paragraphs(stmts));
@@ -2596,7 +2627,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
         }
         // The body runs again: what any of it reads is read later.
-        let again = last_reads(body);
+        let again = self.last_reads(body);
         self.statements(body, Later::new(&again, Some(&later)), true);
         self.close_region(later);
         if data_iter.is_none() {
@@ -2615,7 +2646,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.cx.b.get_mut(id).badges.push("until break".into());
         }
         // The test and the body run again.
-        let mut again = last_reads(body);
+        let mut again = HashMap::clone(&self.last_reads(body));
         again.extend(walk::loads(test).into_iter().map(|n| (n, 0)));
         self.statements(body, Later::new(&again, Some(&later)), true);
         self.close_region(later);
@@ -2913,19 +2944,19 @@ impl<'c, 'p> Fb<'c, 'p> {
         let free = walk::free_names(&params, f.body);
         let mut outer = HashSet::new();
         for name in free {
-            if self.peek(&name).is_none() && self.module_level && self.regions.len() == 1 {
-                self.pending.push((node, name));
+            if self.peek(name).is_none() && self.module_level && self.regions.len() == 1 {
+                self.pending.push((node, name.to_string()));
                 continue;
             }
-            if let Some(Bind::Src(_, st)) = self.peek(&name) {
+            if let Some(Bind::Src(_, st)) = self.peek(name) {
                 let st = *st;
                 let mut g = Gather::default();
-                for v in self.read(&name, &mut g) {
+                for v in self.read(name, &mut g) {
                     let v = Val { style: if st == Style::Def { Style::Def } else { Style::Ctx }, ..v };
                     self.link(&v, node);
                 }
                 if st != Style::Def {
-                    outer.insert(name);
+                    outer.insert(name.to_string());
                 }
             }
         }
@@ -3081,40 +3112,31 @@ impl<'c, 'p> Fb<'c, 'p> {
         let container = self.container();
         attach(&mut self.cx.b, container, node);
         // Uses of other definitions anywhere in the class body.
-        let mut free: Vec<String> = vec![];
-        walk::stmt_exprs(&c.body, true, &mut |e| {
-            for n in walk::loads(e) {
-                if !free.contains(&n) {
-                    free.push(n);
-                }
-            }
-        });
+        let mut free: Vec<&str> = vec![];
+        let mut seen = HashSet::new();
+        walk::stmt_exprs(&c.body, true, &mut |e| free.extend(walk::loads(e).into_iter().filter(|n| seen.insert(*n))));
         // Bases, and what decorators wire in (`@Module({ controllers: [CatsController] })`).
         for e in class_bases(c).iter().chain(c.decorators.iter().map(|d| &d.expression)) {
-            for n in walk::loads_deep(e) {
-                if !free.contains(&n) {
-                    free.push(n);
-                }
-            }
+            free.extend(walk::loads_deep(e).into_iter().filter(|n| seen.insert(*n)));
         }
         let mut outer = HashSet::new();
         for name in free {
             if name == c.name.as_str() {
                 continue;
             }
-            if self.peek(&name).is_none() && self.module_level && self.regions.len() == 1 {
-                self.pending.push((node, name));
+            if self.peek(name).is_none() && self.module_level && self.regions.len() == 1 {
+                self.pending.push((node, name.to_string()));
                 continue;
             }
-            if let Some(Bind::Src(_, st)) = self.peek(&name) {
+            if let Some(Bind::Src(_, st)) = self.peek(name) {
                 let st = *st;
                 let mut g = Gather::default();
-                for v in self.read(&name, &mut g) {
+                for v in self.read(name, &mut g) {
                     let v = Val { style: if st == Style::Def { Style::Def } else { Style::Ctx }, ..v };
                     self.link(&v, node);
                 }
                 if st != Style::Def {
-                    outer.insert(name);
+                    outer.insert(name.to_string());
                 }
             }
         }
@@ -5159,31 +5181,6 @@ fn stmt_start_line(src: &super::source::Source, s: &Stmt) -> u32 {
         start = start.min(usize::from(d.start()));
     }
     src.line_of(start)
-}
-
-/// Where each name is last read in a statement list.
-fn last_reads(stmts: &[Stmt]) -> HashMap<String, usize> {
-    let mut last = HashMap::new();
-    for (i, s) in stmts.iter().enumerate() {
-        for name in stmt_loads(s) {
-            last.insert(name, i);
-        }
-    }
-    last
-}
-
-/// Names a statement reads, ignoring what is only printed or logged.
-fn stmt_loads(s: &Stmt) -> HashSet<String> {
-    let mut out = HashSet::new();
-    walk::stmt_expr(s, true, &mut |e| {
-        if let Expr::Call(c) = e {
-            if matches!(&*c.func, Expr::Name(n) if matches!(n.id.as_str(), "print" | "pprint")) {
-                return;
-            }
-        }
-        out.extend(walk::loads_deep(e))
-    });
-    out
 }
 
 /// Expressions that compute a path (and so carry file names to a variable).
