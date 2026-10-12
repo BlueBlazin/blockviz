@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 import type { Edge } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { PanelSize } from './Inspector';
@@ -33,6 +33,7 @@ export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, 
   onPick: (id: number) => void;
   onPeek: (id: number | null) => void;
 }) {
+  useEffect(() => () => onPeek(null), []);
   const list = [...edges];
   // Ports and branches only pass the value on; the steps are what read and make it.
   const step = (id: number) => { const n = model.node(id); return n.shape !== 'region' && !(n.kind === 'input' && n.parent !== undefined && model.node(n.parent).shape === 'region') && !(n.kind === 'output' && n.parent !== undefined && model.node(n.parent).shape === 'region'); };

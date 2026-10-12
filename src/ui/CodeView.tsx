@@ -33,7 +33,8 @@ export function CodeView({ model, highlights, span, marked, hovered, onLine, onL
   }, [highlights, span.file]);
 
   const bytes = model.fileBytes(span.file);
-  const { lines, more } = useMemo(() => (bytes ? codeLines(bytes, runs ?? null, span) : { lines: [], more: 0 }), [bytes, runs, span]);
+  // By value: the same lines may come as a new span object on each render.
+  const { lines, more } = useMemo(() => (bytes ? codeLines(bytes, runs ?? null, span) : { lines: [], more: 0 }), [bytes, runs, span.start, span.end, span.line]);
 
   // Bring the selected block's lines into view, with some code above them.
   useLayoutEffect(() => {
@@ -43,7 +44,7 @@ export function CodeView({ model, highlights, span, marked, hovered, onLine, onL
     const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
     const view = scroller.clientHeight;
     if (top < scroller.scrollTop + 40 || top > scroller.scrollTop + view - 60) scroller.scrollTop = Math.max(0, top - view / 3);
-  }, [span, marked?.[0], marked?.[1], lines.length]);
+  }, [span.file, span.start, span.end, marked?.[0], marked?.[1], lines.length]);
 
   if (!lines.length) return null;
   const digits = String(lines[lines.length - 1].no).length;

@@ -70,6 +70,7 @@ export default function App() {
       if (!result.ok) throw new Error(result.error);
       setSelected(null);
       setSelectedPath(null);
+      setValue(null);
       setView({ path: [], zoom: 1 });
       const model = new SceneModel(result.scene, project);
       setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed: result.elapsed });
@@ -147,7 +148,7 @@ export default function App() {
   useEffect(() => engine.current?.select(selected), [selected]);
 
   const traced = useMemo(() => {
-    const start = value && loaded?.model.node(value.owner).edges?.[value.index];
+    const start = value && loaded?.model.nodes[value.owner]?.edges?.[value.index];
     if (!value || !start) return null;
     const model = loaded!.model;
     return { owner: value.owner, start, ...traceValue(id => model.node(id), value.owner, start) };
@@ -183,7 +184,8 @@ export default function App() {
   const pick = useCallback((id: number) => {
     if (!loaded) return;
     const path = loaded.model.instancePath(id, selectedPath ?? view.path);
-    setSelected(id);
+    // Read through a call, the call is where the definition is drawn.
+    setSelected(path[path.length - 1]);
     setSelectedPath(path);
     engine.current?.reveal(path);
   }, [loaded, selectedPath, view.path]);
