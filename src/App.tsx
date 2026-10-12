@@ -308,8 +308,8 @@ export default function App() {
           className={`trunk-switch ${trunks ? 'on' : ''}`}
           role="switch"
           aria-checked={trunks}
-          aria-label="One line per block"
-          title="One line per block: all the values a block sends share a line that branches to each reader"
+          aria-label="Tidy arrows"
+          title="Tidy arrows: draw one branching line out of each block, not a separate line for every value"
           onClick={() => {
             const on = !trunks;
             setTrunks(on);
