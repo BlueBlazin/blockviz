@@ -75,7 +75,9 @@ export default function App() {
   fittedRef.current = fitted;
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
-  const analyzer = useRef(new Analyzer());
+  const analyzer = useRef<Analyzer>(null!);
+  // Made on the first render only: an initial value given to useRef is built on every render.
+  analyzer.current ??= new Analyzer();
   /** The load in progress: a new one, or leaving, stops it. */
   const loading = useRef<AbortController | null>(null);
   const nav = useRef<Navigation | null>(null);
