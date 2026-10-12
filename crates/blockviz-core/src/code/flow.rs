@@ -191,6 +191,33 @@ impl Locals for Types<'_> {
     }
 }
 
+/// The names read after a statement: by the statements after it in its
+/// list, then after each list around it. Each list keeps where it reads a
+/// name last, rather than every statement a set of what follows it.
+#[derive(Clone, Copy)]
+struct Later<'a> {
+    /// The last statement of the list that reads each name.
+    last: &'a HashMap<String, usize>,
+    /// The first statement of the list that runs later.
+    from: usize,
+    outer: Option<&'a Later<'a>>,
+}
+
+impl<'a> Later<'a> {
+    fn new(last: &'a HashMap<String, usize>, outer: Option<&'a Later<'a>>) -> Self {
+        Later { last, from: 0, outer }
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.last.get(name).is_some_and(|&i| i >= self.from) || self.outer.is_some_and(|o| o.contains(name))
+    }
+
+    /// Later, `n` statements further on.
+    fn skip(self, n: usize) -> Self {
+        Later { from: self.from + n, ..self }
+    }
+}
+
 const SECTION_MIN: usize = 12;
 /// Branches with more arms are drawn as a table of the arms.
 const MAX_LANES: usize = 24;
@@ -295,10 +322,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         fb.top = true;
         fb.library = library;
         // Nothing runs after the module body, so nothing is "read later" at its end.
-        let later = HashSet::new();
+        let nothing = HashMap::new();
         let body: &'p [Stmt] = if docstring(&m.ast).is_some() { &m.ast[1..] } else { &m.ast };
         fb.declarations(body);
-        fb.statements(body, &later, true);
+        fb.statements(body, Later::new(&nothing, None), true);
         // Definitions use each other whatever order they are written in.
         for (node, name) in std::mem::take(&mut fb.pending) {
             if let Some(Bind::Src(srcs, Style::Def)) = fb.peek(&name).cloned() {
@@ -505,23 +532,16 @@ impl<'c, 'p> Fb<'c, 'p> {
         total
     }
 
-    fn statements(&mut self, stmts: &'p [Stmt], later: &HashSet<String>, sections: bool) {
-        let n = stmts.len();
-        let loads: Vec<HashSet<String>> = stmts.iter().map(stmt_loads).collect();
-        let mut suffix: Vec<HashSet<String>> = vec![HashSet::new(); n + 1];
-        suffix[n] = later.clone();
-        for i in (0..n).rev() {
-            let mut s = suffix[i + 1].clone();
-            s.extend(loads[i].iter().cloned());
-            suffix[i] = s;
-        }
+    fn statements(&mut self, stmts: &'p [Stmt], later: Later, sections: bool) {
+        let last = last_reads(stmts);
+        let here = Later::new(&last, Some(&later));
         if sections && self.units(stmts) > SECTION_MIN {
             let paras = self.join_runs(stmts, self.paragraphs(stmts));
             if paras.len() > 1 {
                 for (start, end, title, doc) in paras {
                     let (mut start, mut title, mut doc) = (start, title, doc);
                     while start < end && self.units(&stmts[start..start + 1]) == 0 && !self.is_setting(&stmts[start]) {
-                        self.stmt(&stmts[start], &suffix[start + 1]);
+                        self.stmt(&stmts[start], here.skip(start + 1));
                         start += 1;
                     }
                     if start == end {
@@ -542,25 +562,25 @@ impl<'c, 'p> Fb<'c, 'p> {
                     let slice = &stmts[start..end];
                     // A paragraph that is one run of statements is one block, not a section.
                     if self.subject_run(stmts, start) >= end && end - start > 1 {
-                        self.run(slice, &suffix[start..=end], title, doc);
+                        self.run(slice, here.skip(start), title, doc);
                         continue;
                     }
                     let units = self.units(slice);
                     let defs = slice.iter().filter(|s| matches!(s, Stmt::FunctionDef(_) | Stmt::ClassDef(_))).count();
                     match title {
-                        Some(t) if units >= 3 => self.section(t, doc, slice, &suffix[end]),
+                        Some(t) if units >= 3 => self.section(t, doc, slice, here.skip(end)),
                         // Untitled runs of code get a generated title; runs of definitions don't need one.
                         None if units >= 5 && defs * 2 < slice.len() => {
                             let t = self.generated_title(slice);
-                            self.section(t, doc, slice, &suffix[end])
+                            self.section(t, doc, slice, here.skip(end))
                         }
-                        t => self.run(slice, &suffix[start..=end], t, doc),
+                        t => self.run(slice, here.skip(start), t, doc),
                     }
                 }
                 return;
             }
         }
-        self.run(stmts, &suffix, None, String::new());
+        self.run(stmts, here, None, String::new());
     }
 
     /// Paragraphs separated by blank lines; a paragraph opened by a comment takes it as its title.
@@ -651,7 +671,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         format!("{}{more}", names.iter().take(3).cloned().collect::<Vec<_>>().join(", "))
     }
 
-    fn section(&mut self, title: String, doc: String, stmts: &'p [Stmt], later: &HashSet<String>) {
+    fn section(&mut self, title: String, doc: String, stmts: &'p [Stmt], later: Later) {
         let id = self.add(Kind::Section, Shape::Box, title);
         {
             let n = self.cx.b.get_mut(id);
@@ -668,7 +688,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.cx.b.get_mut(id).outputs = outs;
     }
 
-    fn run(&mut self, stmts: &'p [Stmt], suffix: &[HashSet<String>], title: Option<String>, doc: String) {
+    fn run(&mut self, stmts: &'p [Stmt], later: Later, title: Option<String>, doc: String) {
         let mut i = 0;
         let first_child = self.cx.b.get(self.container()).children.len();
         while i < stmts.len() {
@@ -699,7 +719,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                         ("else".to_string(), tail, None, TextRange::new(tail[0].start(), tail[tail.len() - 1].end())),
                     ];
                     let whole = RangeOf(TextRange::new(x.range.start(), tail[tail.len() - 1].end()));
-                    self.branch(&whole, lanes, &suffix[stmts.len()]);
+                    self.branch(&whole, lanes, later.skip(stmts.len()));
                     break;
                 }
             }
@@ -708,17 +728,17 @@ impl<'c, 'p> Fb<'c, 'p> {
             // fuse runs of statements on one subject.
             let run = self.subject_run(stmts, i);
             if run > i + 1 {
-                self.fused_run(&stmts[i..run], &suffix[run]);
+                self.fused_run(&stmts[i..run], later.skip(run));
                 i = run;
                 continue;
             }
             let run = self.assign_run(stmts, i);
             if run > i + 2 {
-                self.fused_run(&stmts[i..run], &suffix[run]);
+                self.fused_run(&stmts[i..run], later.skip(run));
                 i = run;
                 continue;
             }
-            self.stmt(&stmts[i], &suffix[i + 1]);
+            self.stmt(&stmts[i], later.skip(i + 1));
             i += 1;
         }
         // A titled paragraph that became a single block lends it its comment.
@@ -838,7 +858,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// Builds a run's statements as usual, then merges their blocks into one:
     /// a table when the same call repeats (each row one call), else one block
     /// naming the steps (`session` · add → commit → refresh).
-    fn fused_run(&mut self, stmts: &'p [Stmt], later: &HashSet<String>) {
+    fn fused_run(&mut self, stmts: &'p [Stmt], later: Later) {
         let container = self.container();
         let before: HashSet<Id> = self.cx.b.get(container).children.iter().copied().collect();
         for (k, s) in stmts.iter().enumerate() {
@@ -1604,7 +1624,7 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     // ----- statements ------------------------------------------------------------
 
-    fn stmt(&mut self, s: &'p Stmt, later: &HashSet<String>) {
+    fn stmt(&mut self, s: &'p Stmt, later: Later) {
         if self.module_level && self.handled.contains(&u32::from(s.start())) {
             return;
         }
@@ -2327,7 +2347,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         id
     }
 
-    fn close_region(&mut self, later: &HashSet<String>) {
+    fn close_region(&mut self, later: Later) {
         let r = self.regions.pop().unwrap();
         let node = r.node;
         let parent = self.regions.len() - 1;
@@ -2427,7 +2447,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         vals
     }
 
-    fn if_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtIf, later: &HashSet<String>) {
+    fn if_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtIf, later: Later) {
         if self.module_level && self.regions.len() == 1 && is_main_guard(&x.test) {
             let file = self.cx.file_nodes[self.mi];
             self.cx.entry[self.mi] = true;
@@ -2496,7 +2516,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     /// A branch drawn as side-by-side lanes, one per arm.
-    fn branch(&mut self, s: &impl Ranged, lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)>, later: &HashSet<String>) {
+    fn branch(&mut self, s: &impl Ranged, lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)>, later: Later) {
         let mut cond: Vec<Val> = vec![];
         for t in lanes.iter().filter_map(|l| l.2) {
             cond.extend(self.condition_vals(t));
@@ -2520,7 +2540,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.link_condition(&cond, id);
     }
 
-    fn for_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtFor, later: &HashSet<String>) {
+    fn for_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtFor, later: Later) {
         let (target, iter, body): (&'p Expr, &'p Expr, &'p [Stmt]) = (&x.target, &x.iter, &x.body);
         let title = match x.kind {
             ast::ForKind::In | ast::ForKind::Keys => format!("for {} in {}", self.namer().code(target, 16), self.namer().code(iter, 32)),
@@ -2575,11 +2595,9 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
             }
         }
-        let mut body_later = later.clone();
-        for st in body {
-            body_later.extend(stmt_loads(st));
-        }
-        self.statements(body, &body_later, true);
+        // The body runs again: what any of it reads is read later.
+        let again = last_reads(body);
+        self.statements(body, Later::new(&again, Some(&later)), true);
         self.close_region(later);
         if data_iter.is_none() {
             for v in &iter_vals {
@@ -2588,7 +2606,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
-    fn while_stmt(&mut self, s: &'p Stmt, test: &'p Expr, body: &'p [Stmt], later: &HashSet<String>) {
+    fn while_stmt(&mut self, s: &'p Stmt, test: &'p Expr, body: &'p [Stmt], later: Later) {
         let forever = matches!(test, Expr::BooleanLiteral(b) if b.value);
         let title = if forever { "repeat".to_string() } else { format!("while {}", self.namer().code(test, 36)) };
         let cond = if forever { vec![] } else { self.condition_vals(test) };
@@ -2596,17 +2614,15 @@ impl<'c, 'p> Fb<'c, 'p> {
         if forever && has_break(body) {
             self.cx.b.get_mut(id).badges.push("until break".into());
         }
-        let mut body_later = later.clone();
-        for st in body {
-            body_later.extend(stmt_loads(st));
-        }
-        body_later.extend(walk::loads(test));
-        self.statements(body, &body_later, true);
+        // The test and the body run again.
+        let mut again = last_reads(body);
+        again.extend(walk::loads(test).into_iter().map(|n| (n, 0)));
+        self.statements(body, Later::new(&again, Some(&later)), true);
         self.close_region(later);
         self.link_condition(&cond, id);
     }
 
-    fn with_stmt(&mut self, with: &'p ast::StmtWith, later: &HashSet<String>) {
+    fn with_stmt(&mut self, with: &'p ast::StmtWith, later: Later) {
         let (items, body) = (&with.items[..], &with.body[..]);
         // Go's `go f()` and `defer f()`: the steps run, marked with when.
         if let ([item], Lang::Go) = (items, self.m.lang) {
@@ -2672,7 +2688,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.statements(body, later, false);
     }
 
-    fn try_stmt(&mut self, s: &'p Stmt, body: &'p [Stmt], handlers: &'p [ast::ExceptHandler], orelse: &'p [Stmt], finalbody: &'p [Stmt], later: &HashSet<String>) {
+    fn try_stmt(&mut self, s: &'p Stmt, body: &'p [Stmt], handlers: &'p [ast::ExceptHandler], orelse: &'p [Stmt], finalbody: &'p [Stmt], later: Later) {
         let trivial = handlers.iter().all(|h| self.units(&h.body) == 0) && self.units(finalbody) == 0;
         if trivial {
             self.statements(body, later, true);
@@ -2771,7 +2787,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
-    fn match_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtMatch, later: &HashSet<String>) {
+    fn match_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtMatch, later: Later) {
         let cond = self.condition_vals(&x.subject);
         if x.cases.len() > MAX_LANES {
             let title = format!("{} {}", if self.m.lang.is_js() || self.m.lang == Lang::Go { "switch" } else { "match" }, self.namer().code(&x.subject, 30));
@@ -4540,7 +4556,7 @@ fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, type
         }
     }
     let body: &[Stmt] = if docstring(def.body).is_some() { &def.body[1..] } else { def.body };
-    fb.statements(body, &HashSet::new(), true);
+    fb.statements(body, Later::new(&HashMap::new(), None), true);
     fb.finish_function(node);
     // A body with a single plain step is a leaf: the code says it all.
     let b = &mut fb.cx.b;
@@ -5143,6 +5159,17 @@ fn stmt_start_line(src: &super::source::Source, s: &Stmt) -> u32 {
         start = start.min(usize::from(d.start()));
     }
     src.line_of(start)
+}
+
+/// Where each name is last read in a statement list.
+fn last_reads(stmts: &[Stmt]) -> HashMap<String, usize> {
+    let mut last = HashMap::new();
+    for (i, s) in stmts.iter().enumerate() {
+        for name in stmt_loads(s) {
+            last.insert(name, i);
+        }
+    }
+    last
 }
 
 /// Names a statement reads, ignoring what is only printed or logged.
