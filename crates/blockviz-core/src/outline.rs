@@ -131,36 +131,71 @@ macro_rules! rx {
     }};
 }
 
-/// A pattern matched at line starts (see `line_matches`). Anchored, each try
-/// stops where it fails: regex-lite has no literal search, and across the
-/// whole text it ran its machine over every byte.
+/// A pattern matched at line starts (see `line_matches`), and its lead: a
+/// cheap test of a line start that rules out those it cannot match. Anchored,
+/// a try stops where it fails (regex-lite has no literal search, and across
+/// the whole text it ran its machine over every byte), yet still costs about
+/// a microsecond: too much to spend on every line.
+struct LinePattern {
+    re: Regex,
+    lead: fn(&[u8]) -> bool,
+}
+
 macro_rules! line_rx {
-    ($p:expr) => {{
-        static CELL: OnceLock<Regex> = OnceLock::new();
-        CELL.get_or_init(|| Regex::new(&format!(r"\A(?:{})", $p)).expect("valid outline pattern"))
+    ($p:expr) => {
+        line_rx!($p, |_| true)
+    };
+    ($p:expr, $lead:expr) => {{
+        static CELL: OnceLock<LinePattern> = OnceLock::new();
+        CELL.get_or_init(|| LinePattern { re: Regex::new(&format!(r"\A(?:{})", $p)).expect("valid outline pattern"), lead: $lead })
     }};
 }
 
-/// Matches of a `line_rx!` pattern tried at each line start, in order and
-/// not overlapping as `captures_iter` finds them, with where each starts.
-fn line_matches<'t>(re: &'static Regex, text: &'t str) -> impl Iterator<Item = (usize, Captures<'t>)> {
+/// Matches of a `line_rx!` pattern tried at each line start its lead allows,
+/// in order and not overlapping as `captures_iter` finds them, with where each starts.
+fn line_matches<'t>(p: &'static LinePattern, text: &'t str) -> impl Iterator<Item = (usize, Captures<'t>)> {
     let mut end = 0;
     std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).filter_map(move |at| {
-        if at < end {
+        if at < end || !(p.lead)(&text.as_bytes()[at..]) {
             return None;
         }
-        let c = re.captures(&text[at..])?;
+        let c = p.re.captures(&text[at..])?;
         end = at + c.get(0).unwrap().end();
         Some((at, c))
     })
 }
 
+/// `\s`: ASCII whitespace, vertical tab included.
+fn is_space(c: u8) -> bool {
+    matches!(c, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
+}
+
+fn skip_space(bytes: &[u8], i: usize) -> usize {
+    i + bytes[i..].iter().take_while(|c| is_space(**c)).count()
+}
+
+/// Whether the text at a line start begins with one of `words` past any
+/// whitespace, blank lines too, as `^\s*` reads it.
+fn opens_with(line: &[u8], words: &[&str]) -> bool {
+    let line = &line[skip_space(line, 0)..];
+    words.iter().any(|w| line.starts_with(w.as_bytes()))
+}
+
+/// Whether a line can open a C function as its pattern reads one: a template,
+/// or a name and then only names, spaces and `:<>*&,~` up to the `(` or the
+/// line's end (a head may go on over lines).
+fn c_function_lead(line: &[u8]) -> bool {
+    let name = line.first().is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_');
+    let head = |c: &u8| c.is_ascii_alphanumeric() || b"_:<>*&,~".contains(c) || (is_space(*c) && *c != b'\n');
+    line.starts_with(b"template") || (name && matches!(line.iter().find(|c| !head(c)), None | Some(b'(' | b'\n')))
+}
+
 /// (pattern, kind, name group, kind group)
-fn definitions(lang: &str) -> Vec<(&'static Regex, &'static str, usize, usize)> {
+fn definitions(lang: &str) -> Vec<(&'static LinePattern, &'static str, usize, usize)> {
     match lang {
         "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" => vec![
-            (line_rx!(r"(?m)^(?:template\s*<[^>\n]*>\s*)?(?:(?:static|inline|extern|virtual|constexpr|__global__|__device__|__host__|__forceinline__|kernel|const|unsigned|signed|struct)\s+)*[A-Za-z_][\w:<>\*&, ]*?[\s\*&]+\**([A-Za-z_][\w:~]*)\s*\("), "function", 1, 0),
-            (line_rx!(r"(?m)^\s*(?:typedef\s+)?(class|struct|union|enum|namespace)\s+([A-Za-z_]\w*)[^;\n]*\{?\s*$"), "", 2, 1),
+            (line_rx!(r"(?m)^(?:template\s*<[^>\n]*>\s*)?(?:(?:static|inline|extern|virtual|constexpr|__global__|__device__|__host__|__forceinline__|kernel|const|unsigned|signed|struct)\s+)*[A-Za-z_][\w:<>\*&, ]*?[\s\*&]+\**([A-Za-z_][\w:~]*)\s*\(", c_function_lead), "function", 1, 0),
+            (line_rx!(r"(?m)^\s*(?:typedef\s+)?(class|struct|union|enum|namespace)\s+([A-Za-z_]\w*)[^;\n]*\{?\s*$", |l| opens_with(l, &["typedef", "class", "struct", "union", "enum", "namespace"])), "", 2, 1),
         ],
         "Go" => vec![
             (line_rx!(r"(?m)^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[\(\[]"), "function", 1, 0),
@@ -261,15 +296,6 @@ fn body_end(text: &str, from: usize) -> Option<(usize, usize)> {
         i += 1;
     }
     Some((open, bytes.len()))
-}
-
-/// `\s`: ASCII whitespace, vertical tab included.
-fn is_space(c: u8) -> bool {
-    matches!(c, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
-}
-
-fn skip_space(bytes: &[u8], i: usize) -> usize {
-    i + bytes[i..].iter().take_while(|c| is_space(**c)).count()
 }
 
 /// Names called in `code`, in order: what `\b([A-Za-z_]\w*)\s*(?:<<<[^>]*>>>)?\s*\(`
@@ -578,7 +604,7 @@ pub fn imports(lang: &str, text: &str) -> Vec<String> {
             }
         }
         "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" => {
-            for (_, c) in line_matches(line_rx!(r#"(?m)^\s*#\s*(?:include|import)\s*"([^"]+)""#), text) {
+            for (_, c) in line_matches(line_rx!(r#"(?m)^\s*#\s*(?:include|import)\s*"([^"]+)""#, |l| opens_with(l, &["#"])), text) {
                 push(&c[1]);
             }
         }
@@ -603,6 +629,13 @@ mod tests {
         // A launch's own arguments are not calls; `m<<<n>(o)` is no launch.
         let found: Vec<&str> = called("a(b) + 2c(d) x.f (y); k<<<g(1), 32>>>(z); m<<<n>(o)").collect();
         assert_eq!(found, ["a", "f", "k"]);
+    }
+    #[test]
+    fn c_definitions_over_lines() {
+        // What a line opens with rules most lines out before a pattern runs; not these.
+        let o = outline("C", "static int\nadd(int a) {\n  return a;\n}\n\n  typedef\n struct point {\n  int x;\n} point;\n");
+        let found: Vec<(&str, &str)> = o.symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert_eq!(found, [("add", "function"), ("point", "struct")]);
     }
     #[test]
     fn cuda_kernels_are_marked() {
