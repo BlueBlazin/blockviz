@@ -2,10 +2,12 @@ import type { Analyzer } from './analyzer';
 import type { SceneModel } from '../canvas/model';
 
 /** Syntax runs per file, computed by the core on first view and kept for the
- * most recently viewed files. */
+ * most recently viewed files. Views read them with `peek`, and `subscribe`
+ * to hear when more arrive. */
 export class Highlights {
   private pending = new Map<number, Promise<Uint32Array | null>>();
   private done = new Map<number, Uint32Array | null>();
+  private listeners = new Set<() => void>();
 
   constructor(private analyzer: Analyzer, private model: SceneModel, private keep = 24) {}
 
@@ -13,6 +15,11 @@ export class Highlights {
   peek(file: number): Uint32Array | null | undefined {
     return this.done.get(file);
   }
+
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
 
   runs(file: number): Promise<Uint32Array | null> {
     const known = this.pending.get(file);
@@ -30,6 +37,7 @@ export class Highlights {
         this.pending.delete(oldest);
         this.done.delete(oldest);
       }
+      for (const l of this.listeners) l();
     });
     return p;
   }

@@ -1,9 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Span } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
 import { codeLines, dedent, indentWidth, lineText, type CodeLine } from './code';
-import { NO_LINES, useLineEvents, within, type LineRange } from './CodeView';
+import { NO_LINES, useLineEvents, useRuns, within, type LineRange } from './CodeView';
 import { diffLines, fold, type Gap, type LineOp } from './linediff';
 import { useSource, type Source } from './store';
 
@@ -13,24 +13,18 @@ export interface Version { model: SceneModel; highlights: Highlights; span: Span
 /** Longer diffs fold unchanged stretches away. */
 const FOLD_OVER = 40;
 
-/** Syntax runs of a version's file, once the core has classified it. */
-function useRuns(v: Version | null): Uint32Array | null | undefined {
-  const [runs, setRuns] = useState<Uint32Array | null | undefined>(() => v?.highlights.peek(v.span.file));
-  useEffect(() => {
-    if (!v) return;
-    let live = true;
-    setRuns(v.highlights.peek(v.span.file));
-    void v.highlights.runs(v.span.file).then(r => { if (live) setRuns(r); });
-    return () => { live = false; };
-  }, [v?.highlights, v?.span.file]);
-  return runs;
-}
+/** A version's lines, in the colours of `runs` (null: plain). */
+const linesOf = (v: Version | null, runs: Uint32Array | null): CodeLine[] => {
+  const bytes = v?.model.fileBytes(v.span.file);
+  return v && bytes ? codeLines(bytes, runs, v.span, 4000, true).lines : [];
+};
 
-function useLines(v: Version | null, runs: Uint32Array | null | undefined): CodeLine[] {
-  return useMemo(() => {
-    const bytes = v?.model.fileBytes(v.span.file);
-    return v && bytes ? codeLines(bytes, runs ?? null, v.span, 4000, true).lines : [];
-  }, [v?.model, v?.span.file, v?.span.start, v?.span.end, runs]);
+/** A version's lines as shown, in its syntax colours, and their text, which is what is compared. */
+function useLines(v: Version | null): { lines: CodeLine[]; text: string[] } {
+  const runs = useRuns(v?.highlights, v?.span.file);
+  const lines = useMemo(() => linesOf(v, runs ?? null), [v?.model, v?.span.file, v?.span.start, v?.span.end, runs]);
+  const text = useMemo(() => linesOf(v, null).map(lineText), [v?.model, v?.span.file, v?.span.start, v?.span.end]);
+  return { lines, text };
 }
 
 /**
@@ -50,20 +44,22 @@ export function DiffView({ base, head, marked, hovered = NO_LINES, onLine, onLin
   onLine?: (line: number) => void;
   onLineHover?: (line: number | null) => void;
 }) {
-  const before = useLines(base, useRuns(base));
-  const after = useLines(head, useRuns(head));
+  const before = useLines(base);
+  const after = useLines(head);
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLPreElement>(null);
   const events = useLineEvents(onLine, onLineHover);
-  const { ops, rows, oldLines, newLines } = useMemo(() => {
+  // Diffed by text alone: neither colours arriving nor the marked lines moving compute it again.
+  const ops = useMemo(() => diffLines(before.text, after.text), [before.text, after.text]);
+  const { oldLines, newLines } = useMemo(() => {
     // Both versions lose the same indentation, so moved code shows its new depth.
-    const cut = dedent([...before, ...after]);
-    const oldLines = cut.slice(0, before.length);
-    const newLines = cut.slice(before.length);
-    const ops = diffLines(before.map(lineText), after.map(lineText));
-    const keep = (o: LineOp) => o.b >= 0 && !!marked && newLines[o.b].no >= marked[0] && newLines[o.b].no <= marked[1];
-    return { ops, rows: ops.length > FOLD_OVER ? fold(ops, 3, keep) : ops, oldLines, newLines };
-  }, [before, after, marked?.[0], marked?.[1]]);
+    const cut = dedent([...before.lines, ...after.lines]);
+    return { oldLines: cut.slice(0, before.lines.length), newLines: cut.slice(before.lines.length) };
+  }, [before.lines, after.lines]);
+  const rows = useMemo(() => {
+    const keep = (o: LineOp) => o.b >= 0 && within(marked, newLines[o.b].no);
+    return ops.length > FOLD_OVER ? fold(ops, 3, keep) : ops;
+  }, [ops, newLines, marked?.[0], marked?.[1]]);
 
   useLayoutEffect(() => {
     const el = root.current?.querySelector<HTMLElement>('.ln.marked') ?? root.current?.querySelector<HTMLElement>('.ln.add, .ln.del');

@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
 import type { Span } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
@@ -10,8 +10,11 @@ export type LineRange = readonly [number, number];
 
 export const within = (r: LineRange | null | undefined, no: number) => !!r && no >= r[0] && no <= r[1];
 
+/** Subscribes to nothing, which never changes. */
+const never = () => () => {};
+
 /** No lines, ever: nothing is hovered. */
-export const NO_LINES: Source<LineRange | null> = { get: () => null, subscribe: () => () => {} };
+export const NO_LINES: Source<LineRange | null> = { get: () => null, subscribe: never };
 
 /**
  * Source of a span with line numbers and syntax colors. Shows plain text
@@ -30,15 +33,8 @@ export function CodeView({ model, highlights, span, marked, hovered = NO_LINES, 
   onLine?: (line: number) => void;
   onLineHover?: (line: number | null) => void;
 }) {
-  const [runs, setRuns] = useState<Uint32Array | null | undefined>(() => highlights.peek(span.file));
+  const runs = useRuns(highlights, span.file);
   const root = useRef<HTMLPreElement>(null);
-  useEffect(() => {
-    let live = true;
-    setRuns(highlights.peek(span.file));
-    void highlights.runs(span.file).then(r => { if (live) setRuns(r); });
-    return () => { live = false; };
-  }, [highlights, span.file]);
-
   const bytes = model.fileBytes(span.file);
   // By value: the same lines may come as a new span object on each render.
   const { lines, more } = useMemo(() => (bytes ? codeLines(bytes, runs ?? null, span) : { lines: [], more: 0 }), [bytes, runs, span.start, span.end, span.line]);
@@ -64,6 +60,16 @@ export function CodeView({ model, highlights, span, marked, hovered = NO_LINES, 
       {more > 0 && <div className="code-more">… {more.toLocaleString()} more lines</div>}
     </pre>
   );
+}
+
+/**
+ * A file's syntax runs, asked for when it is first shown: undefined until
+ * the core has classified it, then read with the file, so code is never
+ * coloured by another file's runs.
+ */
+export function useRuns(highlights: Highlights | undefined, file: number | undefined): Uint32Array | null | undefined {
+  useEffect(() => { if (file !== undefined) void highlights?.runs(file); }, [highlights, file]);
+  return useSyncExternalStore(highlights?.subscribe ?? never, () => (file === undefined ? undefined : highlights?.peek(file)));
 }
 
 /**
