@@ -341,17 +341,10 @@ export class Engine {
     this.flight = null;
     this.unhover();
     const p = this.point(e);
-    const lineMode = e.deltaMode === 1;
-    const dy = lineMode ? e.deltaY * 16 : e.deltaY;
-    const dx = lineMode ? e.deltaX * 16 : e.deltaX;
-    // Pinch (ctrl+wheel) and classic mouse wheels zoom; two-finger trackpad scroll pans.
-    const mouseWheel = lineMode || (dx === 0 && Math.abs(dy) >= 50 && Number.isInteger(dy));
-    if (e.ctrlKey || e.metaKey || mouseWheel) {
-      const k = e.ctrlKey ? 0.011 : 0.0022;
-      this.camera.zoom(Math.exp(-clamp(dy, -160, 160) * k), p.x, p.y);
-    } else {
-      this.camera.pan(-dx, -dy);
-    }
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    // Scrolling zooms; a pinch arrives as ctrl+wheel in finer steps. Dragging pans.
+    const k = e.ctrlKey ? 0.011 : 0.0022;
+    this.camera.zoom(Math.exp(-clamp(dy, -160, 160) * k), p.x, p.y);
     this.changed();
   };
 

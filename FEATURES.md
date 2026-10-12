@@ -17,7 +17,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Unlimited nested zoom**: repository → folders and files → classes and functions → the steps inside them → the code a step calls, drawn inside the call.
 - **Zoom and pan**:
   - scroll or pinch to zoom; `+` and `−` keys
-  - drag, two-finger scroll or the arrow keys to pan
+  - drag or the arrow keys to pan
   - buttons for zoom, fit and whole project
 - **Open a block** (double-click or Enter): zooms until the diagram inside is readable, starting from its top. A block with nothing inside is centred among its neighbours.
 - **Go to a definition** by double-clicking a block that has nothing inside but is defined elsewhere.
