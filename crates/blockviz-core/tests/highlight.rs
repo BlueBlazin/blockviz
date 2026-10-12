@@ -59,6 +59,17 @@ fn fixtures_highlight_cleanly() {
     assert!(n > 10);
 }
 
+#[test]
+fn unclosed_markdown_openers_take_linear_time() {
+    // Each `[`, `<` or `[a](` that never closes once scanned to the end of its
+    // line: these 300 KB lines took from 25 seconds to over 3 minutes.
+    for line in ["[".repeat(300_000), "a<b ".repeat(75_000), "[a](b ".repeat(50_000)] {
+        let start = Instant::now();
+        check("README.md", &line);
+        assert!(start.elapsed().as_secs() < 10, "{:?} for {} KB", start.elapsed(), line.len() / 1000);
+    }
+}
+
 /// `BLOCKVIZ_CORPUS=/path/to/repos cargo test --release --test highlight -- --ignored`
 #[test]
 #[ignore]

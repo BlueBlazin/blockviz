@@ -478,9 +478,25 @@ pub(super) fn markdown(text: &str, runs: &mut Runs) {
     }
 }
 
+/// The first `pat` in `b[from..le]`. An answer found from an earlier point
+/// holds until the reader passes it, so it is kept in `seen`: a line of
+/// openers that never close is then scanned once per closer, not per opener.
+fn closer<'a>(seen: &mut Vec<(&'a [u8], usize, Option<usize>)>, b: &[u8], from: usize, le: usize, pat: &'a [u8]) -> Option<usize> {
+    if let Some(&(_, at, k)) = seen.iter().find(|s| s.0 == pat) {
+        if at <= from && k.is_none_or(|k| k >= from) {
+            return k;
+        }
+    }
+    let k = find(b, from, le, pat);
+    seen.retain(|s| s.0 != pat);
+    seen.push((pat, from, k));
+    k
+}
+
 /// Inline Markdown: code spans, strong emphasis, links, HTML.
 fn inline(text: &str, start: usize, le: usize, runs: &mut Runs, comment: &mut bool) {
     let b = text.as_bytes();
+    let mut seen = vec![];
     let mut i = start;
     while i < le {
         let c = b[i];
@@ -491,7 +507,7 @@ fn inline(text: &str, start: usize, le: usize, runs: &mut Runs, comment: &mut bo
         if c == b'`' {
             let n = b[i..le].iter().take_while(|&&x| x == b'`').count();
             let tick = &b[i..i + n];
-            if let Some(k) = find(b, i + n, le, tick) {
+            if let Some(k) = closer(&mut seen, b, i + n, le, tick) {
                 runs.mark(i, k + n, Hl::Code);
                 i = k + n;
             } else {
@@ -500,8 +516,8 @@ fn inline(text: &str, start: usize, le: usize, runs: &mut Runs, comment: &mut bo
             continue;
         }
         if (c == b'*' || c == b'_') && b.get(i + 1) == Some(&c) {
-            let pair = [c, c];
-            if let Some(k) = find(b, i + 2, le, &pair) {
+            let pair: &[u8] = if c == b'*' { b"**" } else { b"__" };
+            if let Some(k) = closer(&mut seen, b, i + 2, le, pair) {
                 runs.mark(i, k + 2, Hl::Strong);
                 i = k + 2;
                 continue;
@@ -509,8 +525,8 @@ fn inline(text: &str, start: usize, le: usize, runs: &mut Runs, comment: &mut bo
         }
         if c == b'[' || (c == b'!' && b.get(i + 1) == Some(&b'[')) {
             let open = if c == b'!' { i + 1 } else { i };
-            if let Some(k) = find(b, open, le, b"](") {
-                if let Some(e) = find(b, k + 2, le, b")") {
+            if let Some(k) = closer(&mut seen, b, open, le, b"](") {
+                if let Some(e) = closer(&mut seen, b, k + 2, le, b")") {
                     runs.mark(i, e + 1, Hl::Link);
                     i = e + 1;
                     continue;
@@ -532,7 +548,7 @@ fn inline(text: &str, start: usize, le: usize, runs: &mut Runs, comment: &mut bo
                 }
                 continue;
             }
-            if let Some(k) = find(b, i, le, b">") {
+            if let Some(k) = closer(&mut seen, b, i, le, b">") {
                 let inner = &text[i + 1..k];
                 if inner.starts_with("http") {
                     runs.mark(i, k + 1, Hl::Link);
