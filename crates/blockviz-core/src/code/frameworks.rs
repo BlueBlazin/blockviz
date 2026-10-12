@@ -293,23 +293,39 @@ pub struct Registered<'e> {
 /// `web::scope("/api")`. `nested` collects what is nested under a prefix
 /// (`.nest("/api", api::router())`), so routes built elsewhere get it too.
 pub fn chain_routes<'e>(e: &'e Expr, prefix: &str, out: &mut Vec<Registered<'e>>, nested: &mut Vec<(String, &'e Expr)>) {
-    let Expr::Call(c) = e else { return };
-    let Expr::Attribute(a) = &*c.func else { return };
+    links(e, prefix, out, nested);
+}
+
+/// The actix-web scope and resource a link of a chain is under: the nearest
+/// `web::scope("/api")` and `web::resource("/x")` before it.
+#[derive(Clone, Copy, Default)]
+struct Under<'e> {
+    scope: Option<&'e str>,
+    resource: Option<&'e str>,
+}
+
+/// `chain_routes` up to a link, returning what the link is under: each link
+/// learns it from the one before rather than looking back down the chain.
+fn links<'e>(e: &'e Expr, prefix: &str, out: &mut Vec<Registered<'e>>, nested: &mut Vec<(String, &'e Expr)>) -> Under<'e> {
+    let Expr::Call(c) = e else { return Under::default() };
+    // This link's own path, if it is the call named.
+    let own = |name: &str| (last_segment(&c.func) == name).then(|| c.arguments.args.first().and_then(string_literal));
+    let Expr::Attribute(a) = &*c.func else { return Under { scope: own("scope").flatten(), resource: own("resource").flatten() } };
     let args = &c.arguments.args[..];
-    chain_routes(&a.value, prefix, out, nested);
-    let here = match scope_path(&a.value) {
+    let under = links(&a.value, prefix, out, nested);
+    let here = match under.scope {
         Some(p) => join_path(prefix, p),
         None => prefix.to_string(),
     };
     match (a.attr.as_str(), args) {
         ("route" | "at", [path, router]) if string_literal(path).is_some() => method_router(router, &join_path(&here, string_literal(path).unwrap()), out),
         ("route", [router]) => {
-            if let Some(p) = resource_path(&a.value) {
+            if let Some(p) = under.resource {
                 method_router(router, &join_path(&here, p), out);
             }
         }
         ("to", [handler]) => {
-            if let Some(p) = resource_path(&a.value) {
+            if let Some(p) = under.resource {
                 out.push(Registered { verb: "ANY".into(), path: join_path(&here, p), handler });
             }
         }
@@ -325,6 +341,7 @@ pub fn chain_routes<'e>(e: &'e Expr, prefix: &str, out: &mut Vec<Registered<'e>>
         ("service" | "configure", [inner]) => chain_routes(inner, &here, out, nested),
         _ => {}
     }
+    Under { scope: own("scope").unwrap_or(under.scope), resource: own("resource").unwrap_or(under.resource) }
 }
 
 fn verb_name(name: &str) -> Option<String> {
@@ -375,30 +392,6 @@ fn method_router<'e>(e: &'e Expr, path: &str, out: &mut Vec<Registered<'e>>) {
             }
         }
         _ => {}
-    }
-}
-
-/// The path of an actix-web resource a chain starts from: `web::resource("/x")`.
-fn resource_path(e: &Expr) -> Option<&str> {
-    match e {
-        Expr::Call(c) if last_segment(&c.func) == "resource" => c.arguments.args.first().and_then(string_literal),
-        Expr::Call(c) => match &*c.func {
-            Expr::Attribute(a) => resource_path(&a.value),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The prefix of an actix-web scope a chain starts from: `web::scope("/api")`.
-fn scope_path(e: &Expr) -> Option<&str> {
-    match e {
-        Expr::Call(c) if last_segment(&c.func) == "scope" => c.arguments.args.first().and_then(string_literal),
-        Expr::Call(c) => match &*c.func {
-            Expr::Attribute(a) => scope_path(&a.value),
-            _ => None,
-        },
-        _ => None,
     }
 }
 

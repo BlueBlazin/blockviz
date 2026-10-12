@@ -12,6 +12,8 @@
 //!   shortened at a word boundary.
 //! * The caption says how: the formula, the receiver, or the kind of step.
 
+use crate::hash::Set;
+
 /// Longest source text shown whole as a title or caption.
 pub const TITLE_MAX: usize = 28;
 pub const CAPTION_MAX: usize = 32;
@@ -213,12 +215,8 @@ fn kind(step: &Step) -> String {
 
 /// Call names as a title: `view · transpose`.
 pub fn calls(names: &[String]) -> String {
-    let mut uniq: Vec<&str> = vec![];
-    for n in names {
-        if !uniq.contains(&n.as_str()) {
-            uniq.push(n);
-        }
-    }
+    let mut seen = Set::default();
+    let uniq: Vec<&str> = names.iter().map(String::as_str).filter(|n| seen.insert(*n)).collect();
     match uniq.len() {
         0 => String::new(),
         1..=3 => uniq.join(" · "),

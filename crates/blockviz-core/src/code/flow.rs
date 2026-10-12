@@ -3162,44 +3162,45 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// database, unless the receiver is an import from a library that is not
     /// one (Flask's cookie `session`).
     fn is_database(&self, a: &ast::ExprAttribute) -> bool {
+        // Whatever the receiver, the method must be one that queries or
+        // changes data: asked first, it spares the rest for most calls.
+        if !vocabulary::is_database_verb(a.attr.as_str()) {
+            return false;
+        }
         // An object defined in a module that uses a database library (a model:
         // `User.create(…)`) is the database's, whatever its name.
         if let Some(t) = root_name(&a.value).and_then(|r| self.origin(r)) {
-            if self.cx.ix.externals[t].iter().any(|e| vocabulary::library_domains(e).database) && vocabulary::is_database_verb(a.attr.as_str()) {
+            if self.cx.ix.externals[t].iter().any(|e| vocabulary::library_domains(e).database) {
                 return true;
             }
         }
         // An object whose type is a database library's: `this.prisma.user.findUnique(…)`
         // where `prisma` is a service extending `PrismaClient`.
-        if vocabulary::is_database_verb(a.attr.as_str()) {
-            if let Some(p) = self.library_of(&a.value) {
-                let root = self.library_root(&p);
-                if vocabulary::library_domains(&root).database {
-                    return true;
-                }
+        if let Some(p) = self.library_of(&a.value) {
+            let root = self.library_root(&p);
+            if vocabulary::library_domains(&root).database {
+                return true;
             }
         }
         // `sqlx::query!(…).fetch_one(&pool)`: a query a database library built, run.
-        if vocabulary::is_database_verb(a.attr.as_str()) {
-            let mut cur: &Expr = &a.value;
-            let root = loop {
-                match cur {
-                    Expr::Call(c) => cur = &c.func,
-                    Expr::Await(x) => cur = &x.value,
-                    Expr::Attribute(x) => match self.ty(cur) {
-                        Ty::Ext(p) => break Some(p),
-                        _ => cur = &x.value,
-                    },
-                    Expr::Name(_) => break match self.ty(cur) {
-                        Ty::Ext(p) => Some(p),
-                        _ => None,
-                    },
-                    _ => break None,
-                }
-            };
-            if root.is_some_and(|p| matches!(self.m.lang, Lang::Rust | Lang::Go) && vocabulary::library_domains(&self.library_root(&p)).database) {
-                return true;
+        let mut cur: &Expr = &a.value;
+        let root = loop {
+            match cur {
+                Expr::Call(c) => cur = &c.func,
+                Expr::Await(x) => cur = &x.value,
+                Expr::Attribute(x) => match self.ty(cur) {
+                    Ty::Ext(p) => break Some(p),
+                    _ => cur = &x.value,
+                },
+                Expr::Name(_) => break match self.ty(cur) {
+                    Ty::Ext(p) => Some(p),
+                    _ => None,
+                },
+                _ => break None,
             }
+        };
+        if root.is_some_and(|p| matches!(self.m.lang, Lang::Rust | Lang::Go) && vocabulary::library_domains(&self.library_root(&p)).database) {
+            return true;
         }
         if !self.cx.domains[self.mi].database || !vocabulary::database_call(&squash(self.src().of(&*a.value)), a.attr.as_str()) {
             return false;
