@@ -32,6 +32,8 @@ export interface Paint {
 }
 
 const ROW_H = 17;
+/** Largest on-screen size of a table's rows, as for names. */
+const ROW_MAX = 15;
 const HEADING_H = 22;
 /** Interior scale at which a box starts / finishes opening. */
 const OPEN_FROM = 0.028;
@@ -224,45 +226,65 @@ export class Renderer {
   private face(n: SceneNode, b: Box, t: Xf, alpha: number, deep: boolean, overlay: boolean): [number, number] {
     if (alpha < 0.02) return [0, 0];
     const ctx = this.ctx;
-    const code = n.kind === 'op' || n.kind === 'table';
+    // An operation's title is code; a table's is a name ("External packages").
+    const code = n.kind === 'op';
     // Names of boxes big enough to hold them stay readable at any zoom.
     const natural = (code ? 12 : 13) * t.s;
     const named = NAMED_KINDS.has(n.kind);
     const prominent = b.w >= (named ? 44 : 70) && b.h >= 18 && t.s >= (named ? 0.08 : 0.14);
     const fontAt = (px: number) => (code ? `${px}px ${theme.mono}` : `${n.kind === 'call' || n.kind === 'symbol' ? 500 : 600} ${px}px ${theme.sans}`);
     // Readable minimum, but never larger than what fits the box.
-    const fits = (b.w - 14 * Math.min(t.s, 1)) / Math.max(this.measure(fontAt(10), n.title) / 10, 1);
-    const size = prominent ? clamp(natural, Math.min(11.5, b.h * 0.55, Math.max(fits, natural)), 18) : natural;
+    const room = b.w - 14 * Math.min(t.s, 1);
+    const sizeFor = (text: string, share: number) => {
+      const fits = room / Math.max(this.measure(fontAt(10), text) / 10, 1);
+      return prominent ? clamp(natural, Math.min(11.5, b.h * share, Math.max(fits, natural)), 18) : natural;
+    };
+    let lines = [n.title];
+    let size = sizeFor(n.title, 0.55);
+    // A name of several words too long for a narrow box goes on two lines
+    // rather than shrinking out of sight.
+    if (prominent && size < 10 && n.title.includes(' ')) {
+      const split = splitTitle(n.title);
+      const longer = this.measure(fontAt(10), split[0]) >= this.measure(fontAt(10), split[1]) ? split[0] : split[1];
+      const two = sizeFor(longer, 0.3);
+      if (two > size + 0.5) {
+        lines = split;
+        size = two;
+      }
+    }
     if (size < 4.2) return [0, 0];
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
     const textAlpha = alpha * smoothstep(4.2, 7, size);
     // The caption under a name is always smaller than the name.
     const ms = Math.min(size * 0.82, Math.max(10.5 * t.s, 10));
-    const twoLines = !!meta && b.h >= size + ms + 10;
+    const lh = size * 1.15;
+    const extra = (lines.length - 1) * lh;
+    const twoLines = !!meta && b.h >= size + extra + ms + 10;
     const cx = b.x + b.w / 2;
     const cy = b.y + b.h / 2;
-    const maxW = b.w - 14 * Math.min(t.s, 1);
-    ctx.font = code ? `${size}px ${theme.mono}` : `${n.kind === 'call' || n.kind === 'symbol' ? 500 : 600} ${size}px ${theme.sans}`;
-    const title = this.fit(n.title, maxW);
+    const maxW = room;
+    ctx.font = fontAt(size);
+    const titles = lines.map(l => this.fit(l, maxW));
+    const title = titles.join(' ').trim();
     if (overlay && title) {
       // A soft backing keeps the name legible over the interior preview.
-      const w = this.measure(ctx.font, title) + size * 1.1;
-      const h = (twoLines ? size + ms + 6 : size) + size * 0.7;
+      const w = Math.max(...titles.map(l => this.measure(ctx.font, l))) + size * 1.1;
+      const h = (twoLines ? size + extra + ms + 6 : size + extra) + size * 0.7;
       ctx.globalAlpha = alpha * 0.92;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.roundRect(cx - w / 2, cy - h / 2, w, h, h / 2.6);
+      ctx.roundRect(cx - w / 2, cy - h / 2, w, h, Math.min(h, size * 1.7) / 2.6);
       ctx.fill();
     }
     ctx.globalAlpha = textAlpha;
     ctx.textAlign = 'center';
     ctx.fillStyle = theme.ink;
-    const titleY = twoLines ? cy - ms * 0.15 : cy + size * 0.35;
-    ctx.fillText(title, cx, titleY);
+    const titleY = (twoLines ? cy - ms * 0.15 : cy + size * 0.35) - extra / 2;
+    titles.forEach((l, i) => ctx.fillText(l, cx, titleY + i * lh));
     if (twoLines) {
       ctx.font = `${ms}px ${theme.sans}`;
       ctx.fillStyle = theme.muted;
-      ctx.fillText(this.fit(meta, maxW), cx, titleY + ms + 3);
+      ctx.fillText(this.fit(meta, maxW), cx, titleY + extra + ms + 3);
     }
     if (deep && !overlay && b.w > 46 && size > 6) {
       // Something lives inside: a small corner mark invites zooming.
@@ -406,24 +428,26 @@ export class Renderer {
 
   private rows(owner: SceneNode, t: Xf, p: Paint, alpha: number) {
     const ctx = this.ctx;
-    const size = 11.5 * t.s;
+    // Rows read at most at the size names do, however far the table is
+    // zoomed or however few rows give it a large scale beside its neighbours.
+    const size = Math.min(11.5 * t.s, ROW_MAX);
     if (size < 3) return;
-    let y = t.y + 6 * t.s;
-    if (size > 40) return;
-    const x = t.x + 10 * t.s;
+    const f = size / 11.5;
+    let y = t.y + 6 * f;
+    const x = t.x + 10 * f;
     const textAlpha = alpha * smoothstep(3.5, 6.5, size);
     for (const r of owner.rows ?? []) {
-      const h = (r.heading ? HEADING_H : ROW_H) * t.s;
+      const h = (r.heading ? HEADING_H : ROW_H) * f;
       if (y > p.height) break;
       if (y + h >= 0) {
         if (size < 4.5) {
           // Too small to read: a texture of lines that hints at the content.
           ctx.globalAlpha = alpha * 0.35;
           ctx.fillStyle = r.heading ? '#b39b52' : theme.faint;
-          ctx.fillRect(x, y + h * 0.45, Math.min((r.key.length + (r.value?.length ?? 0) + 3) * size * 0.6, (owner.cw ?? 100) * t.s - 20 * t.s), Math.max(size * 0.35, 0.6));
+          ctx.fillRect(x, y + h * 0.45, Math.min((r.key.length + (r.value?.length ?? 0) + 3) * size * 0.6, (owner.cw ?? 100) * t.s - 20 * f), Math.max(size * 0.35, 0.6));
         } else if (r.heading) {
           ctx.globalAlpha = textAlpha;
-          ctx.font = `700 ${10.5 * t.s}px ${theme.sans}`;
+          ctx.font = `700 ${10.5 * f}px ${theme.sans}`;
           ctx.fillStyle = '#8a6d1f';
           ctx.fillText(r.key.toUpperCase(), x, y + h * 0.72);
         } else {
@@ -434,7 +458,7 @@ export class Renderer {
           if (r.value) {
             const kw = this.measure(ctx.font, r.key);
             ctx.fillStyle = theme.muted;
-            ctx.fillText(this.fit(` = ${r.value}`, (owner.cw ?? 300) * t.s - kw - 20 * t.s), x + kw, y + h * 0.72);
+            ctx.fillText(this.fit(` = ${r.value}`, (owner.cw ?? 300) * t.s - kw - 20 * f), x + kw, y + h * 0.72);
           }
         }
       }
@@ -600,4 +624,13 @@ function parse(hex: string): number[] {
     parsed.set(hex, v);
   }
   return v;
+}
+
+/** A title split into two lines at the space nearest its middle. */
+export function splitTitle(title: string): [string, string] {
+  let best = -1;
+  for (let i = title.indexOf(' '); i >= 0; i = title.indexOf(' ', i + 1)) {
+    if (best < 0 || Math.abs(i - title.length / 2) < Math.abs(best - title.length / 2)) best = i;
+  }
+  return best < 0 ? [title, ''] : [title.slice(0, best), title.slice(best + 1)];
 }
