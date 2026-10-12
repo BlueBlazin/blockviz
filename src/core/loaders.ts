@@ -1,3 +1,4 @@
+import { browserCache, type RepoCache, type SavedFile, type SavedRepo } from './cache';
 import type { InputFile, Project } from './types';
 
 // Keep in step with `IGNORED_DIRS` in crates/blockviz-core/src/project.rs.
@@ -79,51 +80,105 @@ export function parseGitHub(input: string): { owner: string; repo: string; branc
   return m ? { owner: m[1], repo: m[2], branch: m[3], path: m[4] } : null;
 }
 
-export async function githubProject(input: string, progress: Progress): Promise<Project> {
+/** How long a saved repository opens without asking GitHub whether it changed. */
+const FRESH_FOR = 24 * 60 * 60 * 1000;
+let shared: RepoCache | undefined;
+
+export interface GitHubOptions {
+  /** Where downloaded repositories are kept. */
+  cache?: RepoCache;
+  /** Ask GitHub for the latest commit even if a saved copy is recent
+   * (opening a repository on purpose, not reloading or following a link). */
+  latest?: boolean;
+  now?: () => number;
+}
+
+/**
+ * A GitHub repository's files. A reload, a link or Back opens the copy saved
+ * in this browser without downloading anything while it is recent; otherwise
+ * GitHub lists the files and only those that changed are downloaded. When
+ * GitHub cannot be reached (or its rate limit is spent), the saved copy opens.
+ */
+export async function githubProject(input: string, progress: Progress, { cache = (shared ??= browserCache()), latest = false, now = Date.now }: GitHubOptions = {}): Promise<Project> {
   const ref = parseGitHub(input);
   if (!ref) throw new Error('Enter a GitHub repository like github.com/karpathy/nanoGPT.');
+  const key = repoKey(ref);
+  const saved = await cache.get(key).catch(() => undefined);
+  if (saved && !latest && now() - saved.saved < FRESH_FOR) return fromSaved(saved);
+  try {
+    const repo = await download(ref, key, saved, progress, now);
+    await cache.put(repo).catch(() => undefined);
+    return fromSaved(repo);
+  } catch (e) {
+    if (saved && !(e instanceof Missing)) return fromSaved(saved);
+    throw e;
+  }
+}
+
+/** GitHub says there is no such repository or branch: a saved copy is no answer. */
+class Missing extends Error {}
+
+/** Names a repository (and branch and folder) however its URL was written. */
+function repoKey(ref: NonNullable<ReturnType<typeof parseGitHub>>): string {
+  return `github.com/${ref.owner}/${ref.repo}`.toLowerCase() + (ref.branch ? `/tree/${ref.branch}` : '') + (ref.path ? `/${ref.path.replace(/\/$/, '')}` : '');
+}
+
+function fromSaved(r: SavedRepo): Project {
+  return { name: r.name, files: r.files.map(({ path, text, bytes }) => (text === undefined ? { path, bytes } : { path, text, bytes })), source: r.source, description: r.description };
+}
+
+async function download(ref: NonNullable<ReturnType<typeof parseGitHub>>, key: string, saved: SavedRepo | undefined, progress: Progress, now: () => number): Promise<SavedRepo> {
   const api = `https://api.github.com/repos/${ref.owner}/${ref.repo}`;
   progress('Contacting GitHub…');
   const meta = await fetch(api);
-  if (meta.status === 404) throw new Error(`GitHub has no public repository ${ref.owner}/${ref.repo}.`);
+  if (meta.status === 404) throw new Missing(`GitHub has no public repository ${ref.owner}/${ref.repo}.`);
   if (meta.status === 403) throw new Error('GitHub rate limit reached. Try again later, or open a local folder.');
   if (!meta.ok) throw new Error(`GitHub returned ${meta.status}.`);
   const info = await meta.json() as { default_branch: string; name: string; description?: string | null };
   const branch = ref.branch ?? info.default_branch;
   const treeRes = await fetch(`${api}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+  if (treeRes.status === 404) throw new Missing(`Could not list ${ref.owner}/${ref.repo}@${branch} (404).`);
   if (!treeRes.ok) throw new Error(`Could not list ${ref.owner}/${ref.repo}@${branch} (${treeRes.status}).`);
-  const tree = await treeRes.json() as { tree: { path: string; type: string; size?: number }[]; truncated: boolean };
+  const tree = await treeRes.json() as { tree: { path: string; type: string; size?: number; sha?: string }[]; truncated: boolean };
   const prefix = ref.path ? `${ref.path.replace(/\/$/, '')}/` : '';
   const blobs = tree.tree
     .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && !ignoredPath(t.path))
     .slice(0, MAX_FILES);
-  const files: InputFile[] = [];
+  // Files whose content GitHub names by the same hash as before are not downloaded again.
+  const before = new Map((saved?.files ?? []).filter(f => f.sha && f.text !== undefined).map(f => [`${f.path}\n${f.sha}`, f.text!]));
+  const files: SavedFile[] = [];
   let total = 0;
-  const queue = blobs.map(b => ({ path: b.path.slice(prefix.length), full: b.path, size: b.size ?? 0 }));
-  let done = 0;
+  const queue = blobs.map(b => ({ path: b.path.slice(prefix.length), full: b.path, size: b.size ?? 0, sha: b.sha }));
   const textual = queue.filter(f => wantsText(f.path, f.size));
+  const missing = textual.filter(f => !before.has(`${f.path}\n${f.sha}`)).length;
+  let done = 0;
   const worker = async () => {
     for (;;) {
       const f = textual.shift();
       if (!f) return;
       if (total + f.size > MAX_TOTAL) {
-        files.push({ path: f.path, bytes: f.size });
+        files.push({ path: f.path, bytes: f.size, sha: f.sha });
         continue;
       }
       total += f.size;
+      const kept = before.get(`${f.path}\n${f.sha}`);
+      if (kept !== undefined) {
+        files.push({ path: f.path, text: kept, bytes: f.size, sha: f.sha });
+        continue;
+      }
       const url = `https://raw.githubusercontent.com/${ref.owner}/${ref.repo}/${encodeURIComponent(branch)}/${f.full.split('/').map(encodeURIComponent).join('/')}`;
       const res = await fetch(url);
-      files.push(res.ok ? { path: f.path, text: await res.text(), bytes: f.size } : { path: f.path, bytes: f.size });
+      files.push(res.ok ? { path: f.path, text: await res.text(), bytes: f.size, sha: f.sha } : { path: f.path, bytes: f.size });
       done++;
-      if (done % 10 === 0) progress(`Downloading ${done}/${queue.length} files…`, done / queue.length);
+      if (done % 10 === 0) progress(`Downloading ${done}/${missing} files…`, done / missing);
     }
   };
-  progress(`Downloading ${queue.length} files…`, 0);
+  if (missing) progress(`Downloading ${missing} files…`, 0);
   await Promise.all(Array.from({ length: 12 }, worker));
-  for (const f of queue) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size });
+  for (const f of queue) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size, sha: f.sha });
   files.sort((a, b) => a.path.localeCompare(b.path));
   const name = ref.path ? ref.path.split('/').pop()! : info.name;
-  return { name, files, source: `github.com/${ref.owner}/${ref.repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined };
+  return { key, name, files, source: `github.com/${ref.owner}/${ref.repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined, saved: now() };
 }
 
 export function pastedProject(filename: string, text: string): Project {

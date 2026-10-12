@@ -5,6 +5,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 ## Opening code
 
 - **GitHub repository** by URL: `owner/repo`, a branch or subfolder (`…/tree/main/src`), or a link with `#github=owner/repo`. The last URL is remembered.
+- **Saved downloads**: the last few repositories opened from GitHub are kept in the browser. A reload, a link or Back opens them without downloading anything; after a day, or when a repository is opened from the Open dialog, GitHub is asked for the latest commit and only changed files are downloaded. If GitHub can't be reached or its rate limit is spent, the saved copy opens.
 - **Bundled example**: karpathy/nanoGPT.
 - **Local folder**, from the picker or by dropping it anywhere on the page.
 - **Pasted code**: a single file, with its language guessed from the code (Python, JavaScript, TypeScript, JSX/TSX, Rust, Go).

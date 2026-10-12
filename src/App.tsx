@@ -108,7 +108,8 @@ export default function App() {
     if (r.kind === 'github') {
       storage.set('blockviz.github', r.url);
       pushProject(nav.current, `#github=${encodeURIComponent(r.url.replace(/^https?:\/\//, ''))}`);
-      void load(p => githubProject(r.url, p));
+      // Opened on purpose: check GitHub for the latest commit (a reload or a link opens the saved copy).
+      void load(p => githubProject(r.url, p, { latest: true }));
     }
     if (r.kind === 'folder') void load(p => folderProject(r.files, p));
     if (r.kind === 'paste') void load(async () => pastedProject(r.filename, r.text));
