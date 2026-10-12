@@ -40,6 +40,10 @@ pub struct Lower<'s> {
     pub local: HashSet<String>,
     /// The types of the `impl` blocks being lowered, innermost last (`Self`).
     pub self_ty: RefCell<Vec<String>>,
+    /// Type parameters in scope with the trait each is bounded by
+    /// (`M: Matcher`), innermost last: a value of one is a value of the
+    /// trait, as `impl Matcher` is.
+    pub bounds: RefCell<Vec<HashMap<String, syn::Path>>>,
     /// Modules and crates named by paths in code (`crate::db::connect()`,
     /// `std::fs::read(p)`): (local name, path as written, project file).
     pub implicit: RefCell<Vec<(String, String, Option<String>)>>,
@@ -97,6 +101,41 @@ const QUIET_ATTRS: &[&str] = &["doc", "unsafe", "export_name", "link_section", "
 /// Last-segment names of a path (`std::fmt::Display` → `Display`).
 fn last_ident(p: &syn::Path) -> String {
     p.segments.last().map(|s| s.ident.to_string()).unwrap_or_default()
+}
+
+/// Bounds that say what every value can do, not what this one is (data
+/// that can be cloned, printed, serialized): a type parameter bounded only
+/// by these stays unknown.
+const PLAIN_BOUNDS: &[&str] = &["Send", "Sync", "Sized", "Unpin", "Copy", "Clone", "Debug", "Default", "PartialEq", "Eq", "PartialOrd", "Ord", "Hash", "Display", "Fn", "FnMut", "FnOnce", "Any", "Into", "From", "TryInto", "TryFrom", "AsRef", "AsMut", "Borrow", "BorrowMut", "ToOwned", "ToString", "IntoIterator", "Iterator", "Future", "Deref", "DerefMut", "Serialize", "Deserialize", "DeserializeOwned"];
+
+/// The trait each type parameter is bounded by, where it is declared or in
+/// a `where` clause.
+fn bounds_of(g: &syn::Generics) -> HashMap<String, syn::Path> {
+    let mut out: HashMap<String, syn::Path> = HashMap::new();
+    let mut add = |name: String, bounds: &Punctuated<syn::TypeParamBound, syn::Token![+]>| {
+        let found = bounds.iter().find_map(|b| match b {
+            syn::TypeParamBound::Trait(t) if !PLAIN_BOUNDS.contains(&last_ident(&t.path).as_str()) => Some(t.path.clone()),
+            _ => None,
+        });
+        if let Some(p) = found {
+            out.entry(name).or_insert(p);
+        }
+    };
+    for p in &g.params {
+        if let syn::GenericParam::Type(t) = p {
+            add(t.ident.to_string(), &t.bounds);
+        }
+    }
+    for pred in g.where_clause.iter().flat_map(|w| &w.predicates) {
+        if let syn::WherePredicate::Type(t) = pred {
+            if let syn::Type::Path(p) = &t.bounded_ty {
+                if let Some(id) = p.path.get_ident() {
+                    add(id.to_string(), &t.bounds);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The identifier a type is named by: `&mut Vec<T>` → `Vec`, `dyn Error` → `Error`.
@@ -370,8 +409,8 @@ impl<'s> Lower<'s> {
                     syn::Fields::Unnamed(u) => u.paren_token.span.close(),
                     syn::Fields::Unit => s.ident.span(),
                 });
-                let mut body = self.fields(&s.fields);
                 let ident = s.ident.to_string();
+                let mut body = self.bounded(self.field_bounds(&s.generics, impls.get(&ident)), || self.fields(&s.fields));
                 let (methods, bases) = self.impl_bodies(impls.get(&ident));
                 body.extend(methods);
                 vec![Stmt::ClassDef(ClassDef { name: ident, bases, keywords: vec![], body, decorators: self.decorators(&s.attrs), kind: ClassKind::Class, doc: self.doc(&s.attrs), range: TextRange::new(start, self.r(end).end()) })]
@@ -480,6 +519,27 @@ impl<'s> Lower<'s> {
         }
     }
 
+    /// A struct's type parameters with their bounds, from the struct or the
+    /// `impl` blocks for it: `struct Searcher<M> { matcher: M }` with
+    /// `impl<T: Matcher> Searcher<T>` holds a Matcher.
+    fn field_bounds(&self, g: &syn::Generics, impls: Option<&Vec<&syn::ItemImpl>>) -> HashMap<String, syn::Path> {
+        let mut out = bounds_of(g);
+        let params: Vec<String> = g.params.iter().filter_map(|p| if let syn::GenericParam::Type(t) = p { Some(t.ident.to_string()) } else { None }).collect();
+        for x in impls.into_iter().flatten() {
+            let theirs = bounds_of(&x.generics);
+            let syn::Type::Path(p) = &*x.self_ty else { continue };
+            let Some(syn::PathArguments::AngleBracketed(a)) = p.path.segments.last().map(|s| &s.arguments) else { continue };
+            let args = a.args.iter().filter_map(|g| if let syn::GenericArgument::Type(t) = g { Some(t) } else { None });
+            for (ours, arg) in params.iter().zip(args) {
+                let syn::Type::Path(ap) = arg else { continue };
+                if let Some(bound) = ap.path.get_ident().and_then(|id| theirs.get(&id.to_string())) {
+                    out.entry(ours.clone()).or_insert_with(|| bound.clone());
+                }
+            }
+        }
+        out
+    }
+
     /// The methods and constants of `impl` blocks for one type, and the traits
     /// they implement.
     fn impl_bodies(&self, impls: Option<&Vec<&syn::ItemImpl>>) -> (Vec<Stmt>, Vec<Expr>) {
@@ -503,6 +563,10 @@ impl<'s> Lower<'s> {
     }
 
     fn impl_items(&self, x: &syn::ItemImpl) -> Vec<Stmt> {
+        self.bounded(bounds_of(&x.generics), || self.impl_items_inner(x))
+    }
+
+    fn impl_items_inner(&self, x: &syn::ItemImpl) -> Vec<Stmt> {
         let ty = type_name(&x.self_ty).unwrap_or_default();
         self.self_ty.borrow_mut().push(ty);
         // A trait's methods say which trait they implement (`fmt` of `Display`).
@@ -558,6 +622,10 @@ impl<'s> Lower<'s> {
     }
 
     fn trait_def(&self, t: &syn::ItemTrait) -> ClassDef {
+        self.bounded(bounds_of(&t.generics), || self.trait_def_inner(t))
+    }
+
+    fn trait_def_inner(&self, t: &syn::ItemTrait) -> ClassDef {
         self.self_ty.borrow_mut().push(t.ident.to_string());
         let mut body = vec![];
         for item in &t.items {
@@ -745,7 +813,19 @@ impl<'s> Lower<'s> {
 
     // ----- functions ------------------------------------------------------------------
 
+    /// Lowers `f` with type parameters bounded as `bounds` in scope.
+    fn bounded<T>(&self, bounds: HashMap<String, syn::Path>, f: impl FnOnce() -> T) -> T {
+        self.bounds.borrow_mut().push(bounds);
+        let out = f();
+        self.bounds.borrow_mut().pop();
+        out
+    }
+
     fn function(&self, attrs: &[syn::Attribute], sig: &syn::Signature, block: Option<&syn::Block>, kind: DefKind, range: TextRange) -> FunctionDef {
+        self.bounded(bounds_of(&sig.generics), || self.function_inner(attrs, sig, block, kind, range))
+    }
+
+    fn function_inner(&self, attrs: &[syn::Attribute], sig: &syn::Signature, block: Option<&syn::Block>, kind: DefKind, range: TextRange) -> FunctionDef {
         let params = self.params(&sig.inputs);
         let unit = match &sig.output {
             syn::ReturnType::Default => true,
@@ -1314,6 +1394,13 @@ impl<'s> Lower<'s> {
             syn::Type::Slice(s) => self.sequence("Vec", &s.elem, self.of(t)),
             syn::Type::Array(a) => self.sequence("Vec", &a.elem, self.of(t)),
             syn::Type::Path(p) if p.qself.is_none() => {
+                // `m: M` where `M: Matcher`: a Matcher.
+                if let Some(id) = p.path.get_ident() {
+                    let bound = self.bounds.borrow().iter().rev().find_map(|b| b.get(&id.to_string()).cloned());
+                    if let Some(bound) = bound {
+                        return self.path_expr(None, &bound);
+                    }
+                }
                 let last = p.path.segments.last();
                 let ident = last.map(|s| s.ident.to_string()).unwrap_or_default();
                 if let Some(inner) = last.and_then(first_type_arg) {

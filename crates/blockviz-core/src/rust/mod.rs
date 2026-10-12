@@ -182,7 +182,7 @@ pub fn parse(b: &mut Builder, inputs: Vec<RsInput>, resolver: &Resolver, diagnos
         }
         let (body, doc) = match &file {
             Some(f) => {
-                let lowerer = lower::Lower { text: &input.text, path: &input.path, resolver, local: lower::top_names(&f.items), self_ty: Default::default(), implicit: Default::default() };
+                let lowerer = lower::Lower { text: &input.text, path: &input.path, resolver, local: lower::top_names(&f.items), self_ty: Default::default(), bounds: Default::default(), implicit: Default::default() };
                 (lowerer.file(f), lower::doc_text(&f.attrs, true))
             }
             None => (vec![], None),

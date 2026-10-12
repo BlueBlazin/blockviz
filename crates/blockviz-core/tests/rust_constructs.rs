@@ -583,3 +583,24 @@ fn calls_through_trait_objects_reach_their_impls() {
     let notify = call(&s, register, "notify");
     assert_eq!((notify.subtitle.as_str(), notify.reference), ("Email or Sms", Some(find(&s, "Notifier").id)));
 }
+
+#[test]
+fn generic_parameters_are_the_trait_they_are_bounded_by() {
+    let s = analyze(&[
+        ("Cargo.toml", "[package]\nname = \"grep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        (
+            "src/main.rs",
+            "use serde::de::DeserializeOwned;\n\npub trait Matcher {\n    fn find(&self, line: &str) -> Option<usize>;\n}\n\npub struct Regex(String);\n\nimpl Matcher for Regex {\n    fn find(&self, line: &str) -> Option<usize> {\n        line.find(self.0.as_str())\n    }\n}\n\n/// Searches with any matcher.\npub struct Searcher<M> {\n    matcher: M,\n}\n\nimpl<T: Matcher> Searcher<T> {\n    fn search(&self, line: &str) -> bool {\n        self.matcher.find(line).is_some()\n    }\n}\n\nfn count<M>(m: &M, lines: &[&str]) -> usize\nwhere\n    M: Matcher + Clone,\n{\n    lines.iter().filter(|l| m.find(l).is_some()).count()\n}\n\n/// A form of any data.\npub struct Form<T: DeserializeOwned>(pub T);\n\nfn main() {\n    let r = Regex(\"a\".into());\n    let s = Searcher { matcher: Regex(\"b\".into()) };\n    println!(\"{} {}\", count(&r, &[\"abc\"]), s.search(\"b\"));\n}\n",
+        ),
+    ]);
+    let regex_find = within(&s, find(&s, "Regex"), "find");
+    // `where M: Matcher` and `impl<T: Matcher> Searcher<T>`: both reach the one Matcher.
+    for f in ["count", "search"] {
+        let call = descendants(&s, find(&s, f)).into_iter().find(|n| n.kind == Kind::Call && n.title == "find").unwrap_or_else(|| panic!("no find call in {f}"));
+        assert_eq!(call.reference, Some(regex_find.id), "{f}");
+    }
+    // The searcher holds a Matcher; a form holds data, not a part.
+    let parts = |c: &str| descendants(&s, find(&s, c)).into_iter().filter(|n| n.kind == Kind::Symbol).map(|n| (n.title.clone(), n.subtitle.clone())).collect::<Vec<_>>();
+    assert_eq!(parts("Searcher"), [("matcher".to_string(), "Matcher".to_string())]);
+    assert!(parts("Form").is_empty(), "{:?}", parts("Form"));
+}
