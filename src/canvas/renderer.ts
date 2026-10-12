@@ -49,6 +49,9 @@ const OPEN_TO = 0.075;
 /** The smallest name, in pixels, a reader can make out. */
 const LEGIBLE = 7;
 
+/** The shortest side, in pixels, of a block drawn as more than a spot of its colour. */
+const SPECK = 2;
+
 /** How far past the screen a line is kept: far enough that the corners of what is cut off stay out of sight. */
 const CUT = 24;
 
@@ -133,6 +136,10 @@ export class Renderer {
   }
 
   private node(n: SceneNode, b: Box, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {
+    if (n.shape !== 'port' && Math.min(b.w, b.h) < SPECK) {
+      this.speck(n, b, t, alpha, p);
+      return;
+    }
     switch (n.shape) {
       case 'port':
         this.port(n, b, t, alpha, p.diff?.status(n.id) ?? null);
@@ -180,7 +187,7 @@ export class Renderer {
       alpha *= UNTOUCHED;
       this.faded++;
     }
-    const fill = status ? mix(sw.fill, changeColor[status].tint, 0.7) : sw.fill;
+    const fill = fillOf(n, status);
     // Opened, a changed block keeps its colour on the header band; the diagram inside stays plain.
     const tint = status ? mix(sw.tint, changeColor[status].tint, 0.12) : sw.tint;
 
@@ -204,20 +211,7 @@ export class Renderer {
     ctx.lineWidth = selected ? 2.2 : status ? Math.max(lw + 0.5, 1.5) + (hovered ? 0.5 : 0) : hovered ? lw + 0.6 : lw;
     ctx.strokeStyle = selected ? theme.accent : status ? changeColor[status].ink : n.category === 'op' ? '#7d838c' : theme.outline;
     ctx.stroke();
-    if (selected) {
-      ctx.beginPath();
-      ctx.roundRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8, radius + 4);
-      ctx.strokeStyle = theme.accentSoft;
-      ctx.lineWidth = 6;
-      ctx.stroke();
-    } else if (p.related?.has(n.id)) {
-      // A use of the block in focus: outlined so the reader sees where it is used.
-      ctx.strokeStyle = theme.accent;
-      ctx.lineWidth = 1.6;
-      ctx.setLineDash([5, 3]);
-      this.outline({ x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 }, radius + 3, p);
-      ctx.setLineDash([]);
-    }
+    this.ring(n, b, radius, p);
     const me = this.hit(n, b, parentHit);
 
     // While the header is too small to read, the name stays centred on a
@@ -241,6 +235,36 @@ export class Renderer {
     this.effectsMark(n, b, t, alpha);
     if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status, p);
     if (fade) this.faded--;
+    ctx.globalAlpha = 1;
+  }
+
+  /** Rings a block in focus: the one selected, or a use of the one in focus. */
+  private ring(n: SceneNode, b: Box, radius: number, p: Paint) {
+    const ctx = this.ctx;
+    if (p.selected === n.id) {
+      ctx.beginPath();
+      ctx.roundRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8, radius + 4);
+      ctx.strokeStyle = theme.accentSoft;
+      ctx.lineWidth = 6;
+      ctx.stroke();
+    } else if (p.related?.has(n.id)) {
+      // A use of the block in focus: outlined so the reader sees where it is used.
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([5, 3]);
+      this.outline({ x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 }, radius + 3, p);
+      ctx.setLineDash([]);
+    }
+  }
+
+  /** A block too small to make out: a spot of its colour, with no outline, name,
+   * marks or interior; ringed while it is in focus, so it can still be found. */
+  private speck(n: SceneNode, b: Box, t: Xf, alpha: number, p: Paint) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = p.diff && !this.faded && !p.diff.touched(n.id) ? alpha * UNTOUCHED : alpha;
+    ctx.fillStyle = fillOf(n, p.diff?.status(n.id) ?? null);
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    this.ring(n, b, clamp(6 * t.s, 1.2, 10), p);
     ctx.globalAlpha = 1;
   }
 
@@ -426,7 +450,6 @@ export class Renderer {
   private region(n: SceneNode, b: Box, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {
     const ctx = this.ctx;
     const lane = n.kind === 'lane';
-    const sw = swatch(lane ? 'lane' : n.kind === 'table' ? 'config' : 'region');
     const radius = clamp(9 * t.s, 1.5, 14);
     const diff = p.diff;
     const status = diff?.status(n.id) ?? null;
@@ -436,19 +459,24 @@ export class Renderer {
       alpha *= UNTOUCHED;
       this.faded++;
     }
-    const fill = n.kind === 'table' ? swatch('config').tint : sw.fill;
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.roundRect(b.x, b.y, b.w, b.h, radius);
-    ctx.fillStyle = status ? mix(fill, changeColor[status].tint, 0.5) : fill;
+    ctx.fillStyle = fillOf(n, status);
     ctx.fill();
     ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
     ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? changeColor[status].ink : lane ? theme.laneOutline : theme.regionOutline;
-    if (lane) {
+    if (!lane) ctx.stroke();
+    else if (4 * t.s < 1) {
+      // Dashes finer than a pixel blend into a fainter line: drawn as one.
+      ctx.globalAlpha = (alpha * 4) / 7;
+      ctx.stroke();
+      ctx.globalAlpha = alpha;
+    } else {
       ctx.setLineDash([4 * t.s, 3 * t.s]);
       this.outline(b, radius, p);
       ctx.setLineDash([]);
-    } else ctx.stroke();
+    }
     const me = this.hit(n, b, parentHit);
     const size = 11.5 * t.s;
     if (n.title) this.seen(me, n, size, alpha * smoothstep(4.2, 7, size));
@@ -808,6 +836,17 @@ export class Renderer {
  * quarter of an octave apart, 10 px among them, so a name passes through a
  * few of them as the view zooms rather than a new one each frame. */
 export const fontSize = (px: number) => 10 * 2 ** (Math.round(4 * Math.log2(px / 10)) / 4);
+
+/** A block's colour, tinted by how a change touched it. */
+function fillOf(n: SceneNode, status: Status | null): string {
+  if (n.shape === 'glyph') return '#ffffff';
+  if (n.shape === 'region') {
+    const fill = n.kind === 'table' ? swatch('config').tint : swatch(n.kind === 'lane' ? 'lane' : 'region').fill;
+    return status ? mix(fill, changeColor[status].tint, 0.5) : fill;
+  }
+  const fill = swatch(n.category).fill;
+  return status ? mix(fill, changeColor[status].tint, 0.7) : fill;
+}
 
 function mix(a: string, b: string, t: number): string {
   const pa = parse(a);
