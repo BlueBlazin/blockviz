@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubProject, pastedProject } from './core/loaders';
@@ -303,6 +303,22 @@ export default function App() {
         <button className="icon" aria-label="Zoom in" title="Zoom in (+)" onClick={() => engine.current?.zoomBy(1.5)}><Plus size={15} /></button>
         <button className="icon" aria-label="Fit current view" title="Fit (F)" onClick={() => engine.current?.fit()}><Maximize size={15} /></button>
         <button className="icon" aria-label="Whole project" title="Whole project (H)" onClick={() => engine.current?.home()}><Home size={15} /></button>
+        <span className="zoombar-sep" />
+        <button
+          className={`trunk-switch ${trunks ? 'on' : ''}`}
+          role="switch"
+          aria-checked={trunks}
+          aria-label="One line per block"
+          title="One line per block: all the values a block sends share a line that branches to each reader"
+          onClick={() => {
+            const on = !trunks;
+            setTrunks(on);
+            trunksRef.current = on;
+            storage.set('blockviz.trunks', on ? '1' : '');
+            // Lay the same project out again; the address brings the view back.
+            if (loaded) void load(async () => loaded.project);
+          }}
+        ><Split size={15} /><span className="switch" aria-hidden="true"><i /></span></button>
       </div>
 
       <div className="footer">
@@ -318,21 +334,6 @@ export default function App() {
           <div className="legend-grid">
             {legend.map(([cat, label]) => <span key={cat}><i style={{ background: swatch(cat).fill }} />{label}</span>)}
           </div>
-          <label className="legend-option">
-            <input
-              type="checkbox"
-              checked={trunks}
-              onChange={e => {
-                const on = e.target.checked;
-                setTrunks(on);
-                trunksRef.current = on;
-                storage.set('blockviz.trunks', on ? '1' : '');
-                // Lay the same project out again; the address brings the view back.
-                if (loaded) void load(async () => loaded.project);
-              }}
-            />
-            <span>One line per block <small>all the values a block sends share a line that branches to each reader</small></span>
-          </label>
           <div className="legend-lines">
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#2c3036" strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#2c3036" /></svg>value flows into</span>
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke="#a3aab4" strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill="#a3aab4" /></svg>decides whether it runs</span>

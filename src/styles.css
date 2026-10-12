@@ -70,7 +70,16 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .search-button:hover { border-color: var(--line-strong); color: var(--muted); }
 
 /* Bottom bars */
-.zoombar { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 2px; background: rgba(255,255,255,0.94); border: 1px solid var(--line); border-radius: 10px; padding: 3px; box-shadow: var(--shadow); }
+.zoombar { position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 2px; background: rgba(255,255,255,0.94); border: 1px solid var(--line); border-radius: 10px; padding: 3px; box-shadow: var(--shadow); }
+.zoombar-sep { width: 1px; height: 18px; background: var(--line); margin: 0 3px; }
+.trunk-switch { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 7px; border-radius: 7px; color: var(--muted); }
+.trunk-switch:hover { background: var(--hover); color: var(--ink); }
+.trunk-switch .switch { position: relative; width: 26px; height: 15px; border-radius: 8px; background: var(--line-strong); transition: background 0.15s; }
+.trunk-switch .switch i { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform 0.15s; }
+.trunk-switch.on { color: var(--accent); }
+.trunk-switch.on .switch { background: var(--accent); }
+.trunk-switch.on .switch i { transform: translateX(11px); }
+@media (prefers-reduced-motion: reduce) { .trunk-switch .switch, .trunk-switch .switch i { transition: none; } }
 .footer { position: absolute; left: 12px; bottom: 12px; display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 11.5px; }
 .legend-toggle { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,0.94); color: var(--muted); }
 .legend-toggle:hover, .legend-toggle.on { color: var(--ink); border-color: var(--line-strong); }
@@ -83,9 +92,6 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .legend-grid i { width: 18px; height: 12px; border: 1.1px solid #2c3036; border-radius: 3px; flex: none; }
 .legend-lines { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .legend p { margin: 10px 0 0; color: var(--faint); font-size: 11.5px; line-height: 1.45; }
-.legend-option { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--ink); font-size: 12px; cursor: pointer; }
-.legend-option input { margin: 2px 0 0; }
-.legend-option small { display: block; color: var(--faint); font-size: 11px; line-height: 1.4; }
 
 /* Inspector */
 .inspector {
