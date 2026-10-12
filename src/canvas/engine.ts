@@ -320,14 +320,15 @@ export class Engine {
   }
 
   /** The innermost block under a point that the reader can make out; a block
-   * too small to see is passed over for the one around it. */
-  private hitAt(x: number, y: number): number {
+   * too small to see is passed over for the one around it, unless `any`
+   * (double-clicking a speck zooms into it). */
+  private hitAt(x: number, y: number, any = false): number {
     const hits = this.renderer.hits;
     let fallback = -1;
     for (let i = hits.length - 1; i >= 0; i--) {
       const b = hits[i].box;
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-        if (hits[i].clear) return i;
+        if (hits[i].clear || any) return i;
         if (fallback < 0) fallback = i;
       }
     }
@@ -455,7 +456,7 @@ export class Engine {
 
   private dblclick = (e: MouseEvent) => {
     const p = this.point(e);
-    const i = this.hitAt(p.x, p.y);
+    const i = this.hitAt(p.x, p.y, true);
     if (i >= 0) {
       const n = this.model.node(this.renderer.hits[i].id);
       // A block with nothing inside but a definition elsewhere goes there.

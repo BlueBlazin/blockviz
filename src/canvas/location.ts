@@ -3,7 +3,8 @@ import type { SceneModel } from './model';
 /**
  * Places in a scene as text that survives re-analysis: an instance path as
  * the titles along it (`model.py/CausalSelfAttention/forward`), with `~k`
- * for the k-th of several siblings sharing a title.
+ * for the k-th of several siblings sharing a title. A block without a title
+ * (an if/else) is always `~k`, so no step of the path is empty.
  */
 export function encodePath(model: SceneModel, path: number[]): string {
   const out: string[] = [];
@@ -16,7 +17,7 @@ export function encodePath(model: SceneModel, path: number[]): string {
       if (model.node(c).title === title) k++;
       if (c === path[i]) break;
     }
-    out.push(encodeURIComponent(title).replace(/~/g, '%7E') + (k > 1 ? `~${k}` : ''));
+    out.push(encodeURIComponent(title).replace(/~/g, '%7E') + (k > 1 || !title ? `~${k}` : ''));
   }
   return out.join('/');
 }
