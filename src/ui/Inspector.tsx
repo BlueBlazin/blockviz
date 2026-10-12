@@ -8,6 +8,7 @@ import { KIND_LABEL, ResizeHandle, type PanelSize } from './panel';
 import type { SceneDiff } from '../canvas/diff';
 import { ChangeSteps, describeChange } from './ChangesPanel';
 import { DiffView } from './DiffView';
+import { derive, type Source } from './store';
 
 export { clampPanel, DEFAULT_PANEL, type PanelSize } from './panel';
 
@@ -109,7 +110,7 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
   /** When reading a change: its block's status, the change steps, and code shown as it changed. */
   compare?: InspectorChange;
   /** The block under the pointer in the diagram: its lines are tinted. */
-  hover: number | null;
+  hover: Source<number | null>;
   size: PanelSize;
   onResize: (size: PanelSize) => void;
   onClose: () => void;
@@ -131,9 +132,17 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
   useEffect(() => () => onPeek(null), [node.id]);
   const hasSource = !!view && !!model.fileBytes(view.span.file);
   const marked: LineRange | null = view && span && view.root !== node ? [span.line, span.endLine] : null;
-  const h = hover !== null ? model.node(hover) : null;
-  const hovered: LineRange | null = view && h?.span && h.id !== view.root.id && h.span.file === view.span.file
-    && h.span.start >= view.span.start && h.span.end <= view.span.end ? [h.span.line, h.span.endLine] : null;
+  // Read by the code's lines themselves: the panel does not re-render as the pointer moves.
+  const hovered = useMemo(() => derive(hover, (id): LineRange | null => {
+    const h = id !== null ? model.node(id) : null;
+    return view && h?.span && h.id !== view.root.id && h.span.file === view.span.file
+      && h.span.start >= view.span.start && h.span.end <= view.span.end ? [h.span.line, h.span.endLine] : null;
+  }), [hover, model, view]);
+  const pickLine = (line: number) => onPick(model.blockAt(view!.root, line).id);
+  const peekLine = (line: number | null) => {
+    const b = line === null ? null : model.blockAt(view!.root, line);
+    onPeek(b && b !== view!.root ? b.id : null);
+  };
   const where = view && view.root !== node && view.root.kind !== 'file' ? view.root.title : null;
   // In a change, code is shown as it changed: the whole definition around the block, folded, its lines kept.
   const diff = compare?.diff;
@@ -184,11 +193,8 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
                   base={baseSpan && diff!.base.fileBytes(baseSpan.file) ? { model: diff!.base, highlights: compare!.baseHighlights, span: baseSpan } : null}
                   marked={marked}
                   hovered={hovered}
-                  onLine={line => onPick(model.blockAt(view!.root, line).id)}
-                  onLineHover={line => {
-                    const b = line === null ? null : model.blockAt(view!.root, line);
-                    onPeek(b && b !== view!.root ? b.id : null);
-                  }}
+                  onLine={pickLine}
+                  onLineHover={peekLine}
                 />
               : hasSource
               ? <CodeView
@@ -197,11 +203,8 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
                   span={view!.span}
                   marked={marked}
                   hovered={hovered}
-                  onLine={line => onPick(model.blockAt(view!.root, line).id)}
-                  onLineHover={line => {
-                    const b = line === null ? null : model.blockAt(view!.root, line);
-                    onPeek(b && b !== view!.root ? b.id : null);
-                  }}
+                  onLine={pickLine}
+                  onLineHover={peekLine}
                 />
               : <pre className="code plain">{dedent(node.code!)}</pre>}
           </div>

@@ -3,8 +3,9 @@ import type { Span } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
 import { codeLines, dedent, indentWidth, lineText, type CodeLine } from './code';
-import type { LineRange } from './CodeView';
+import { NO_LINES, useLineEvents, within, type LineRange } from './CodeView';
 import { diffLines, fold, type Gap, type LineOp } from './linediff';
+import { useSource, type Source } from './store';
 
 /** One version of a block's code: where it is, and how to colour it. */
 export interface Version { model: SceneModel; highlights: Highlights; span: Span }
@@ -40,11 +41,12 @@ function useLines(v: Version | null, runs: Uint32Array | null | undefined): Code
  * `marked` lines (the selected step's, scrolled into view). Clicking or
  * pointing at a line of the head reports its line number.
  */
-export function DiffView({ base, head, marked, hovered, onLine, onLineHover }: {
+export function DiffView({ base, head, marked, hovered = NO_LINES, onLine, onLineHover }: {
   base: Version | null;
   head: Version | null;
   marked?: LineRange | null;
-  hovered?: LineRange | null;
+  /** Read by each line, so that only the lines it tints or untints re-render. */
+  hovered?: Source<LineRange | null>;
   onLine?: (line: number) => void;
   onLineHover?: (line: number | null) => void;
 }) {
@@ -52,6 +54,7 @@ export function DiffView({ base, head, marked, hovered, onLine, onLineHover }: {
   const after = useLines(head, useRuns(head));
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLPreElement>(null);
+  const events = useLineEvents(onLine, onLineHover);
   const { ops, rows, oldLines, newLines } = useMemo(() => {
     // Both versions lose the same indentation, so moved code shows its new depth.
     const cut = dedent([...before, ...after]);
@@ -83,14 +86,8 @@ export function DiffView({ base, head, marked, hovered, onLine, onLineHover }: {
   }
   for (const r of out) if (r.kind !== 'gap') shown.push(r);
   const lastNo = Math.max(1, ...shown.map(o => (o.kind === 'del' ? oldLines[o.a].no : newLines[o.b].no)));
-  const within = (r: LineRange | null | undefined, no: number) => !!r && no >= r[0] && no <= r[1];
   return (
-    <pre
-      ref={root}
-      className={`code diff${onLine ? ' interactive' : ''}`}
-      style={{ '--digits': String(lastNo).length } as CSSProperties}
-      onMouseLeave={() => onLineHover?.(null)}
-    >
+    <pre ref={root} className={`code diff${onLine ? ' interactive' : ''}`} style={{ '--digits': String(lastNo).length } as CSSProperties} {...events}>
       <code>
         {out.map(r => {
           if (r.kind === 'gap') {
@@ -104,18 +101,7 @@ export function DiffView({ base, head, marked, hovered, onLine, onLineHover }: {
             );
           }
           const line = r.kind === 'del' ? oldLines[r.a] : newLines[r.b];
-          const no = r.kind === 'del' ? null : line.no;
-          return (
-            <Line
-              key={`${r.kind}${r.a}:${r.b}`}
-              line={line}
-              kind={r.kind}
-              marked={no !== null && within(marked, no)}
-              hovered={no !== null && within(hovered, no)}
-              onLine={no === null ? undefined : onLine}
-              onLineHover={onLineHover}
-            />
-          );
+          return <Line key={`${r.kind}${r.a}:${r.b}`} line={line} kind={r.kind} marked={r.kind !== 'del' && within(marked, line.no)} hovered={hovered} />;
         })}
       </code>
     </pre>
@@ -124,21 +110,13 @@ export function DiffView({ base, head, marked, hovered, onLine, onLineHover }: {
 
 const SIGN = { same: ' ', add: '+', del: '−' };
 
-const Line = memo(function Line({ line, kind, marked, hovered, onLine, onLineHover }: {
-  line: CodeLine;
-  kind: LineOp['kind'];
-  marked: boolean;
-  hovered: boolean;
-  onLine?: (line: number) => void;
-  onLineHover?: (line: number | null) => void;
-}) {
+const Line = memo(function Line({ line, kind, marked, hovered }: { line: CodeLine; kind: LineOp['kind']; marked: boolean; hovered: Source<LineRange | null> }) {
+  // A removed line is not in the code on screen: it has no number to report, and is never the hovered block's.
+  const head = kind !== 'del';
+  const tinted = useSource(hovered, r => head && within(r, line.no));
   const hang = `${indentWidth(line) + 2}ch`;
   return (
-    <div
-      className={`ln ${kind}${marked ? ' marked' : ''}${hovered ? ' hovered' : ''}`}
-      onClick={onLine && (() => { if (!window.getSelection()?.toString()) onLine(line.no); })}
-      onMouseEnter={onLineHover && (() => onLineHover(kind === 'del' ? null : line.no))}
-    >
+    <div className={`ln ${kind}${marked ? ' marked' : ''}${tinted ? ' hovered' : ''}`} data-line={head ? line.no : undefined}>
       <span className="no" aria-hidden="true">{line.no}</span>
       <span className="sign" aria-label={kind === 'same' ? undefined : kind === 'add' ? 'added' : 'removed'}>{SIGN[kind]}</span>
       <span className="src" style={{ paddingLeft: hang, textIndent: `-${hang}` }}>{line.segs.map((s, i) => <span key={i} className={s.cls ? (s.dim ? `t${s.cls} faded` : `t${s.cls}`) : s.dim ? 'faded' : undefined}>{s.text}</span>)}</span>

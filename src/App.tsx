@@ -18,6 +18,7 @@ import { Search } from './ui/Search';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
 import { NARROW, TOUCH, useMedia } from './ui/media';
+import { Store } from './ui/store';
 
 /** A change being read: both versions of the code and how the head (on screen) differs from the base. */
 interface Compared { comparison: Comparison; base: SceneModel; baseHighlights: Highlights; diff: SceneDiff }
@@ -64,7 +65,8 @@ export default function App() {
   const [changesOpen, setChangesOpen] = useState(true);
   /** Reading a change: a block it removed (a base block), shown in the panel. */
   const [removedSel, setRemovedSel] = useState<number | null>(null);
-  const [hoverId, setHoverId] = useState<number | null>(null);
+  /** The block under the pointer: a store, not state, so that only the code lines it tints re-render. */
+  const [hover] = useState(() => new Store<number | null>(null));
   /** The details panel's size as the reader chose it (remembered), and as it fits this window. */
   const [panel, setPanel] = useState<PanelSize>(() => ({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
   const [resized, setResized] = useState(0);
@@ -180,7 +182,7 @@ export default function App() {
       onJump: () => nav.current?.jump(),
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); setRemovedSel(null); },
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); setRemovedSel(null); },
-      onHover: id => setHoverId(id),
+      onHover: id => hover.set(id),
     }, insets);
     e.setDiff(loaded.compare?.diff ?? null);
     engine.current = e;
@@ -204,7 +206,7 @@ export default function App() {
       window.removeEventListener('popstate', pop);
       n.dispose();
       if (nav.current === n) nav.current = null;
-      e.dispose(); setHoverId(null); if (engine.current === e) engine.current = null;
+      e.dispose(); hover.set(null); if (engine.current === e) engine.current = null;
     };
   }, [loaded, loadFromUrl]);
 
@@ -470,7 +472,7 @@ export default function App() {
           model={loaded.model}
           highlights={loaded.highlights}
           node={node}
-          hover={hoverId}
+          hover={hover}
           size={fitted}
           onResize={setPanel}
           onClose={() => { setSelected(null); setSelectedPath(null); engine.current?.peek(null); }}
