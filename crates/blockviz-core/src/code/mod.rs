@@ -208,6 +208,14 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
             cx.b.get_mut(c).used_by.push(call);
         }
     }
+    // Code that is just the source at a node's span is read there by the page.
+    let texts: crate::hash::Map<u32, &str> = modules.iter().map(|m| (m.file, m.src.text.as_str())).collect();
+    for n in &mut cx.b.nodes {
+        let Some(span) = &n.span else { continue };
+        if texts.get(&span.file).and_then(|t| t.get(span.start as usize..span.end as usize)) == Some(n.code.as_str()) {
+            n.code.clear();
+        }
+    }
     let mut result = CodeResult { files: failed, ..CodeResult::default() };
     for (mi, m) in modules.iter().enumerate() {
         result.files.push(CodeFile {

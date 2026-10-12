@@ -48,12 +48,15 @@ struct FileEntry {
     class: Class,
     language: &'static str,
     node: Id,
+    /// Its text, unless a front end took it to analyze.
     text: Option<String>,
     /// Written by a tool (migrations, protobuf stubs, generated clients):
     /// shown as a file, never opened, and left out of relations.
     generated: bool,
     /// Not drawn at all (an empty package marker).
     hidden: bool,
+    /// A Go `package main` with `func main`.
+    program: bool,
 }
 
 pub fn build(name: &str, files: Vec<InFile>) -> Scene {
@@ -131,33 +134,41 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         if text.is_none() && matches!(class, Class::Python | Class::Notebook | Class::Code | Class::Config) && f.bytes as usize > MAX_TEXT {
             diagnostics.push(format!("Skipped {} ({} KB is over the per-file limit).", f.path, f.bytes / 1024));
         }
+        let lines = text.as_ref().map(|t| t.lines().count() as u32).unwrap_or(0);
+        let analyzed = text.is_some() && class != Class::Asset;
+        let generated = text.as_deref().is_some_and(|t| is_generated(&f.path, t));
+        let hidden = f.path.rsplit('/').next() == Some("__init__.py") && text.as_deref().is_some_and(is_empty_python);
+        let program = f.path.ends_with(".go") && text.as_deref().is_some_and(go_program);
+        // Code is handed to its front end, which keeps the text from here on.
         let mut source = None;
+        let mut kept = None;
         let minified = f.path.contains(".min.") || f.path.ends_with(".bundle.js");
-        match (class, &text) {
-            (Class::Python, Some(t)) => py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: t.clone(), notebook: false }),
-            (Class::Code, Some(t)) if crate::js::lang_of(&f.path).is_some() && !minified => js_inputs.push(crate::js::JsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
-            (Class::Code, Some(t)) if f.path.ends_with(".rs") => rs_inputs.push(crate::rust::RsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
-            (Class::Code, Some(t)) if f.path.ends_with(".go") && !crate::go::resolve::ignored(&f.path) => go_inputs.push(crate::go::GoInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
-            (Class::Notebook, Some(t)) => match crate::notebook::to_python(t) {
-                Some(py) => {
-                    source = Some(py.clone());
-                    py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: py, notebook: true });
+        match (class, text) {
+            (Class::Python, Some(t)) => py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: t, notebook: false }),
+            (Class::Code, Some(t)) if crate::js::lang_of(&f.path).is_some() && !minified => js_inputs.push(crate::js::JsInput { file: i as u32, path: f.path.clone(), text: t }),
+            (Class::Code, Some(t)) if f.path.ends_with(".rs") => rs_inputs.push(crate::rust::RsInput { file: i as u32, path: f.path.clone(), text: t }),
+            (Class::Code, Some(t)) if f.path.ends_with(".go") && !crate::go::resolve::ignored(&f.path) => go_inputs.push(crate::go::GoInput { file: i as u32, path: f.path.clone(), text: t }),
+            (Class::Notebook, Some(t)) => {
+                match crate::notebook::to_python(&t) {
+                    Some(py) => {
+                        source = Some(py.clone());
+                        py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: py, notebook: true });
+                    }
+                    None => diagnostics.push(format!("Could not read notebook {}.", f.path)),
                 }
-                None => diagnostics.push(format!("Could not read notebook {}.", f.path)),
-            },
-            _ => {}
+                kept = Some(t);
+            }
+            (_, t) => kept = t,
         }
         metas.push(FileMeta {
             path: f.path.clone(),
             language: language.to_string(),
             bytes: f.bytes,
-            lines: text.as_ref().map(|t| t.lines().count() as u32).unwrap_or(0),
-            analyzed: text.is_some() && class != Class::Asset,
+            lines,
+            analyzed,
             source,
         });
-        let generated = text.as_deref().is_some_and(|t| is_generated(&f.path, t));
-        let hidden = f.path.rsplit('/').next() == Some("__init__.py") && text.as_deref().is_some_and(is_empty_python);
-        entries.push(FileEntry { path: f.path, class, language, node: 0, text, generated, hidden });
+        entries.push(FileEntry { path: f.path, class, language, node: 0, text: kept, generated, hidden, program });
     }
 
     let mut b = Builder::default();
@@ -311,8 +322,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         let krate = (pf.lang == code::syntax::Lang::Rust).then(|| rs_resolver.module(path)).flatten().map(|(c, _)| c.clone());
         let rust_root = krate.as_ref().filter(|c| c.root == path).map(|c| c.kind);
         use crate::rust::resolve::CrateKind;
-        // A Go `package main` with `func main` is a program.
-        let go_main = pf.lang == code::syntax::Lang::Go && entries[pf.file as usize].text.as_deref().is_some_and(go_program);
+        let go_main = entries[pf.file as usize].program;
         let runs = runs || matches!(rust_root, Some(CrateKind::Bin | CrateKind::Example)) || go_main && !test;
         let file_role = file_role.or_else(|| {
             Some(match rust_root? {
@@ -670,15 +680,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     let python_files = py.files.len() as u32;
     let lines: u32 = metas.iter().map(|m| m.lines).sum();
     let max_depth = b.nodes.iter().map(|n| n.id).filter(|&id| b.get(id).parent.is_some()).map(|id| b.depth(id)).max().unwrap_or(0);
-    let (mut nodes, scene_root) = b.finish(scene_root);
-    // Code that is just the source at a node's span is read there by the page.
-    for n in &mut nodes {
-        let Some(span) = &n.span else { continue };
-        let text = metas[span.file as usize].source.as_deref().or(entries[span.file as usize].text.as_deref());
-        if text.and_then(|t| t.get(span.start as usize..span.end as usize)) == Some(n.code.as_str()) {
-            n.code.clear();
-        }
-    }
+    let (nodes, scene_root) = b.finish(scene_root);
     diagnostics.push("Static analysis: arrows show likely dataflow and dependencies inferred from source, not a runtime trace. Dynamic dispatch and code passed through strings may be missed.".into());
     let stats = Stats { files: metas.len() as u32, python_files, lines, nodes: nodes.len() as u32, max_depth };
     Scene { version: 2, title, description, root: scene_root, nodes, files: metas, diagnostics, stats }
