@@ -37,17 +37,33 @@ pub fn mono_width(s: &str, size: f64) -> f64 {
 
 /// Collapses whitespace so multi-line source reads as one line.
 pub fn squash(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut space = false;
-    for c in s.chars() {
-        if c.is_whitespace() {
-            space = !out.is_empty();
-        } else {
-            if space {
-                out.push(' ');
-                space = false;
+    squash_head(s, usize::MAX)
+}
+
+/// The first `n` characters of `squash(s)`, read no further: enough to tell
+/// whether the text fits in fewer, however long it is.
+pub fn squash_head(s: &str, n: usize) -> String {
+    let mut out = String::with_capacity(s.len().min(n));
+    let mut left = n;
+    for word in s.split_whitespace() {
+        if !out.is_empty() {
+            if left == 0 {
+                break;
             }
-            out.push(c);
+            out.push(' ');
+            left -= 1;
+        }
+        // A word no longer in bytes than what is left fits in characters.
+        let cut = if word.len() > left { word.char_indices().nth(left).map(|(i, _)| i) } else { None };
+        match cut {
+            Some(i) => {
+                out.push_str(&word[..i]);
+                break;
+            }
+            None => {
+                out.push_str(word);
+                left -= word.chars().count();
+            }
         }
     }
     out
@@ -175,6 +191,12 @@ pub fn summary(doc: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn squashes_whitespace() {
+        assert_eq!(squash("  f(a,\n\t  b)  "), "f(a, b)");
+        assert_eq!(squash_head("  f(a,\n\t  b)  ", 5), "f(a, ");
+        assert_eq!(squash_head("f(a, b)", 99), "f(a, b)");
+    }
     #[test]
     fn clips_at_words() {
         assert_eq!(clip("returns a reactive and mutable ref object", 30), "returns a reactive and…");

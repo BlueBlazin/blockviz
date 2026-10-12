@@ -6,7 +6,7 @@
 use super::source::Source;
 use super::syntax::{self as ast, CompKind, Expr, Ranged, TemplateKind, TemplatePart};
 use crate::naming::{self, Collection, Dest, Step};
-use crate::text::squash;
+use crate::text::{squash, squash_head};
 
 pub struct Namer<'a> {
     pub src: &'a Source,
@@ -239,14 +239,16 @@ impl<'a> Namer<'a> {
     /// Source code shortened to about `max` characters by eliding whole
     /// sub-expressions: `settings.SENTRY_DSN and …`, `select(…).where(…)`.
     pub fn code(&self, e: &Expr, max: usize) -> String {
-        let text = self.text(e);
-        if text.chars().count() <= max {
-            return text;
+        // Read only as far as could fit: shortening a chain of calls visits
+        // every link, and each link's text is all of the chain before it.
+        let head = squash_head(self.src.of(e), max + 1);
+        if head.chars().count() <= max {
+            return head;
         }
         let len = |s: &str| s.chars().count();
         match e {
             // A name is one token: never cut.
-            Expr::Name(_) => text,
+            Expr::Name(_) => self.text(e),
             Expr::If(x) => {
                 let third = max.saturating_sub(10) / 3;
                 if self.src.lang.is_js() {
@@ -380,9 +382,9 @@ impl<'a> Namer<'a> {
                 }
             }
             // A string without spaces is a key or a name: one token.
-            Expr::StringLiteral(_) | Expr::BytesLiteral(_) if !string_value(e).unwrap_or_default().contains(char::is_whitespace) => text,
+            Expr::StringLiteral(_) | Expr::BytesLiteral(_) if !string_value(e).unwrap_or_default().contains(char::is_whitespace) => self.text(e),
             Expr::StringLiteral(_) | Expr::BytesLiteral(_) => {
-                let quote = if text.starts_with('\'') { '\'' } else { '"' };
+                let quote = if head.starts_with('\'') { '\'' } else { '"' };
                 format!("{quote}{}{quote}", naming::shorten(&string_value(e).unwrap_or_default(), max.saturating_sub(2)))
             }
             Expr::Template(t) if t.kind == TemplateKind::Format => match self.template(e) {
@@ -407,7 +409,7 @@ impl<'a> Namer<'a> {
                 _ => "…".into(),
             },
             // Kept as text (TypeScript types): elide by its brackets.
-            Expr::Other(_) => elide_groups(&text, max).unwrap_or_else(|| "…".into()),
+            Expr::Other(_) => elide_groups(self.src.of(e), max).unwrap_or_else(|| "…".into()),
             _ => "…".into(),
         }
     }

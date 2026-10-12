@@ -29,7 +29,7 @@ use super::walk;
 use crate::hash::{Map, Set};
 use crate::ir::*;
 use crate::naming::{self, Dest, Step};
-use crate::text::{clip, heading, is_directive, squash, summary};
+use crate::text::{clip, heading, is_directive, squash, squash_head, summary};
 use crate::vocabulary::{self, Domains};
 use super::syntax::{self as ast, Ctx as Load, Expr, Lang, Ranged, Stmt, TemplateKind, TextRange};
 use std::collections::{BTreeSet, HashMap};
@@ -283,7 +283,8 @@ pub struct Fb<'c, 'p> {
 }
 
 fn compact(s: &str, max: usize) -> String {
-    clip(&squash(s), max)
+    // Clipping needs only to see that there is more.
+    clip(&squash_head(s, max + 1), max)
 }
 
 impl<'c, 'p> Fb<'c, 'p> {
