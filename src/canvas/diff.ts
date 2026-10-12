@@ -139,12 +139,8 @@ export class SceneDiff {
 
   /** Pairs head blocks with base blocks of the same kind and title: identical code first, then in order. */
   private pairAmong(heads: number[], bases: number[]) {
-    const free = bases.filter(b => !this.back.has(b));
     const groups = new Map<string, number[]>();
-    for (const b of free) {
-      const k = keyOf(this.base.node(b));
-      groups.set(k, [...(groups.get(k) ?? []), b]);
-    }
+    for (const b of bases) if (!this.back.has(b)) push(groups, keyOf(this.base.node(b)), b);
     const left: number[] = [];
     for (const h of heads) {
       if (this.match.has(h)) continue;
@@ -298,7 +294,7 @@ export class SceneDiff {
         let p = n.parent;
         while (p !== undefined && !this.back.has(p)) p = this.base.node(p).parent;
         const at = p === undefined ? this.head.root : this.back.get(p)!;
-        this.removedAt.set(at, [...(this.removedAt.get(at) ?? []), { status: 'removed', id: b, at }]);
+        push(this.removedAt, at, { status: 'removed', id: b, at });
         return;
       }
       for (const c of n.children ?? []) visit(c);
@@ -387,6 +383,13 @@ export class SceneDiff {
 /** Siblings that may be the same block across versions. */
 const keyOf = (n: SceneNode) => `${n.kind}\0${n.title}`;
 
+/** Adds `value` to the list `map` holds at `key`. */
+function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+}
+
 /** The path of the file a block is in (the nearest block with code), or undefined above files. */
 function scopeFile(model: SceneModel, n: SceneNode): string | undefined {
   for (let c: SceneNode | undefined = n; c; c = c.parent === undefined ? undefined : model.node(c.parent)) {
@@ -410,7 +413,7 @@ function tops(model: SceneModel, skip: (n: SceneNode) => boolean): Map<string, n
     let inner = seen;
     if (n.span && !seen.has(n.span.file)) {
       const path = model.fileOf(n);
-      if (path !== undefined) out.set(path, [...(out.get(path) ?? []), id]);
+      if (path !== undefined) push(out, path, id);
       inner = new Set([...seen, n.span.file]);
     }
     if (!skip(n)) for (const c of n.children ?? []) visit(c, inner);
@@ -441,7 +444,7 @@ function allFiles(model: SceneModel, n: SceneNode, which: (path: string) => bool
 /** Whether `to` is reached from `from` along a diagram's dependencies. */
 function reaches(owner: SceneNode, from: number, to: number): boolean {
   const next = new Map<number, number[]>();
-  for (const e of owner.edges ?? []) if (e.kind === 'uses') next.set(e.from, [...(next.get(e.from) ?? []), e.to]);
+  for (const e of owner.edges ?? []) if (e.kind === 'uses') push(next, e.from, e.to);
   const seen = new Set([from]);
   const stack = [from];
   while (stack.length) {
