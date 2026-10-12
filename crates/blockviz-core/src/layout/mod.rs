@@ -9,11 +9,10 @@
 
 pub mod layered;
 
+use crate::hash::Map;
 use crate::ir::*;
 use crate::text::{mono_width, sans_width};
 use layered::{LEdge, LNode, Pin};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 pub const LEAF_TITLE: f64 = 13.;
 pub const LEAF_META: f64 = 11.;
@@ -150,12 +149,15 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
             }
         })
         .collect();
-    let index: std::collections::HashMap<Id, usize> = children.iter().enumerate().map(|(i, &c)| (c, i)).collect();
+    let index: Map<Id, usize> = children.iter().enumerate().map(|(i, &c)| (c, i)).collect();
     // The edges are taken, laid out and put back; only those between children are drawn.
     let edges = std::mem::take(&mut b.get_mut(id).edges);
     let mut edges = bundle(b, edges);
     edges.retain(|e| index.contains_key(&e.from) && index.contains_key(&e.to));
     let mut ledges = vec![];
+    // Values a block sends share a line when they are one value, or always
+    // with shared trunks: each distinct value is a group.
+    let mut values: Map<(&str, EdgeKind, Option<u64>), u64> = Map::default();
     for e in &edges {
         let (from, to) = (index[&e.from], index[&e.to]);
         let to_x = e.to_port.and_then(|p| port_offset(b, e.to, p));
@@ -163,18 +165,12 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
         let src = b.get(e.from);
         // Every arrow says what it carries, unless the port it leaves already shows the name.
         let show_label = !e.label.is_empty() && !(src.is_port() && !src.hints.hidden && src.title == e.label);
-        let mut h = DefaultHasher::new();
-        // Values a block sends share a line when they are one value, or always
-        // with shared trunks.
-        if cx.opts.shared_trunks {
-            (e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
-        } else {
-            (e.label.as_str(), e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
-        }
+        let value = (if cx.opts.shared_trunks { "" } else { e.label.as_str() }, e.kind, from_x.map(f64::to_bits));
+        let next = values.len() as u64;
         ledges.push(LEdge {
             from,
             to,
-            group: h.finish(),
+            group: *values.entry(value).or_insert(next),
             from_x,
             to_x,
             weight: match e.kind {
@@ -187,7 +183,7 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
         });
     }
     for &c in &children {
-        for &a in &b.get(c).hints.after.clone() {
+        for &a in &b.get(c).hints.after {
             if let (Some(&from), Some(&to)) = (index.get(&a), index.get(&c)) {
                 ledges.push(LEdge { from, to, group: 0, from_x: None, to_x: None, weight: 0.5, draw: false, label: false, label_w: 0. });
             }
@@ -236,7 +232,7 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
 fn bundle(b: &Builder, edges: Vec<Edge>) -> Vec<Edge> {
     let mut out: Vec<Edge> = vec![];
     // Edges by their ends, so a region with thousands of them bundles in linear time.
-    let mut at: std::collections::HashMap<(Id, Id, Option<Id>, Option<Id>), usize> = std::collections::HashMap::new();
+    let mut at: Map<(Id, Id, Option<Id>, Option<Id>), usize> = Map::default();
     for mut e in edges {
         if e.to_port.is_some() && !b.get(e.to).hints.inline {
             e.to_port = None;
@@ -266,9 +262,10 @@ fn bundle(b: &Builder, edges: Vec<Edge>) -> Vec<Edge> {
         }
     }
     for e in &mut out {
-        let parts: Vec<&str> = e.label.split(", ").collect();
-        if parts.len() > 3 {
-            e.label = format!("{}, +{}", parts[..2].join(", "), parts.len() - 2);
+        let parts = e.label.split(", ").count();
+        if parts > 3 {
+            let mut p = e.label.split(", ");
+            e.label = format!("{}, {}, +{}", p.next().unwrap(), p.next().unwrap(), parts - 2);
         }
     }
     out
