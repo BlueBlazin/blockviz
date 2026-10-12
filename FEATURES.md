@@ -22,7 +22,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - buttons for zoom, fit and whole project
 - **Open a block** (double-click, double-tap or Enter): zooms until the diagram inside is readable, starting from its top. A block with nothing inside is centred among its neighbours.
 - **Go to a definition** by double-clicking or double-tapping a block that has nothing inside but is defined elsewhere.
-- **Back out** with a breadcrumb or by scrolling out. Esc only closes dialogs; it never moves the view. `F` shows all of the block the breadcrumbs end at, its title included; `H`, `0` or the home button shows the whole project. Framing keeps blocks clear of the top bar and the details panel.
+- **Back out** with a breadcrumb or by scrolling out. Esc closes a dialog, or else the details panel; it never moves the view. `F` shows all of the block the breadcrumbs end at, its title included; `H`, `0` or the home button shows the whole project. Framing keeps blocks clear of the top bar and the details panel.
 - **Breadcrumbs** show the containers you're in; click one to go back out to it. Long paths fold their middle into a "…" menu, as far as the width needs.
 - **"Defined in" line**: inside code reached through a call (`… › Block › forward › attn`), it names where that code is defined (`CausalSelfAttention.forward · model.py:52`) and takes you there.
 - **Back and forward**: every jump is a history step. Use the ← → buttons, Alt+←/→, Cmd+[ / Cmd+], or the browser's and mouse's back buttons. Back returns to the exact view and selection.
