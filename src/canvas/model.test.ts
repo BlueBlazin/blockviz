@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project, Scene, SceneNode, Span } from '../core/types';
-import { findEntries, SceneModel, type SearchEntry } from './model';
+import { findEntries, SceneModel } from './model';
 
 // A file holding a class whose method calls a helper defined after it.
 const src = [
@@ -86,30 +86,29 @@ describe('source views', () => {
 });
 
 describe('search', () => {
-  // Part of nanoGPT's model.py, as the search index holds it.
-  const rank = { file: 0, class: 1, function: 2, call: 6, dir: 3 } as Record<string, number>;
-  let next = 0;
-  const entry = (title: string, kind: string, chain: string[], detail = ''): SearchEntry => ({
-    id: next++, title, detail, path: chain.join(' › '), chain: chain.map(c => c.toLowerCase()),
-    haystack: `${title} ${detail} ${chain.join(' ')}`.toLowerCase(), rank: rank[kind],
-  });
-  const all = [
-    entry('model.py', 'file', []),
-    entry('LayerNorm', 'class', ['model.py']),
-    entry('forward', 'function', ['model.py', 'LayerNorm']),
-    entry('Block', 'class', ['model.py']),
-    entry('forward', 'function', ['model.py', 'Block']),
-    entry('ln_1', 'call', ['model.py', 'Block', 'forward'], 'LayerNorm'),
-    entry('attn', 'call', ['model.py', 'Block', 'forward'], 'CausalSelfAttention'),
-    entry('GPT', 'class', ['model.py']),
-    entry('forward', 'function', ['model.py', 'GPT']),
-    entry('block', 'call', ['model.py', 'GPT', 'forward', 'for block in self.transformer.h'], 'Block'),
-    entry('generate', 'function', ['model.py', 'GPT']),
-    entry('forward', 'call', ['model.py', 'GPT', 'generate'], 'self'),
-    entry('Docs & assets', 'dir', []),
-    entry('copy_', 'call', ['model.py', 'GPT', 'from_pretrained']),
-  ];
-  const find = (q: string) => findEntries(all, q).map(e => [...e.chain, e.title.toLowerCase()].join('.'));
+  // Part of nanoGPT's model.py.
+  const nodes: SceneNode[] = [];
+  const add = (kind: SceneNode['kind'], title: string, parent?: number, subtitle?: string) => {
+    const id = nodes.length;
+    nodes.push({ id, kind, shape: 'box', category: 'function', title, subtitle, parent, x: 0, y: 0, w: 10, h: 10 });
+    if (parent !== undefined) (nodes[parent].children ??= []).push(id);
+    return id;
+  };
+  const model = add('file', 'model.py', add('repo', 'nanoGPT'));
+  add('function', 'forward', add('class', 'LayerNorm', model));
+  const blockForward = add('function', 'forward', add('class', 'Block', model));
+  add('call', 'ln_1', blockForward, 'LayerNorm');
+  add('call', 'attn', blockForward, 'CausalSelfAttention');
+  const gpt = add('class', 'GPT', model);
+  add('call', 'block', add('loop', 'for block in self.transformer.h', add('function', 'forward', gpt)), 'Block');
+  add('call', 'forward', add('function', 'generate', gpt), 'self');
+  add('dir', 'Docs & assets', 0);
+  add('call', 'copy_', add('function', 'from_pretrained', gpt));
+  const m = new SceneModel(
+    { version: 1, title: 'nanoGPT', root: 0, nodes, files: [], diagnostics: [], stats: { files: 1, pythonFiles: 1, lines: 0, nodes: nodes.length, maxDepth: 5 } },
+    { name: 'nanoGPT', source: 'test', files: [] },
+  );
+  const find = (q: string) => findEntries(m.search(), q).map(e => [m.trail(e.id), e.title].filter(Boolean).join(' › ').toLowerCase().replaceAll(' › ', '.'));
 
   it('finds a method by its qualified name', () => {
     expect(find('Block.forward')[0]).toBe('model.py.block.forward');
@@ -128,5 +127,7 @@ describe('search', () => {
     // The last word names the block; the others what it is in.
     expect(find('forward block')[0]).toBe('model.py.gpt.forward.for block in self.transformer.h.block');
     expect(find('Block.backward')).toEqual([]);
+    // A mention may run from a block's caption into its path.
+    expect(find('CausalSelfAttention model.py')).toEqual(['model.py.block.forward.attn']);
   });
 });

@@ -1,8 +1,18 @@
 import type { Project, Scene, SceneNode, Span } from '../core/types';
 import { childXf, parentXf, type Xf } from './geometry';
 
-/** A block as search sees it: `chain` holds the titles of what it is in, lowercased, outermost first. */
-export interface SearchEntry { id: number; title: string; detail: string; path: string; chain: string[]; haystack: string; rank: number }
+/**
+ * A block as search sees it: its title and subtitle (`detail`), also
+ * lowercased, and the block it is in, whose path it shares; `depth` counts
+ * the titles on that path.
+ */
+export interface SearchEntry { id: number; title: string; detail: string; lower: string; lowerDetail: string; parent: number; depth: number; rank: number }
+
+/** The blocks search finds, and the path of each block they are in: its titles from the top, lowercased, joined by spaces. */
+export interface SearchIndex { entries: SearchEntry[]; paths: Map<number, string> }
+
+/** How many results are listed. */
+const LISTED = 60;
 
 /**
  * Search results for `query`, best first: blocks named by it (exactly, by
@@ -11,24 +21,44 @@ export interface SearchEntry { id: number; title: string; detail: string; path: 
  * `Db::get` and `api.py get` find the definition; then blocks whose
  * caption or path mentions it. Definitions come before steps.
  */
-export function findEntries(all: SearchEntry[], query: string): SearchEntry[] {
+export function findEntries({ entries, paths }: SearchIndex, query: string): SearchEntry[] {
   const q = query.trim().toLowerCase();
-  if (!q) return all.filter(e => e.rank <= 2).slice(0, 40);
+  if (!q) return entries.filter(e => e.rank <= 2).slice(0, 40);
   const words = q.split(/[\s.:/\\›#,()]+/).filter(Boolean);
   const last = words[words.length - 1];
-  const scored: { e: SearchEntry; score: number }[] = [];
-  for (const e of all) {
-    const t = e.title.toLowerCase();
+  // Each path is read once per word, however many blocks are in it.
+  const inPath = (w: string) => {
+    const at = new Set<number>();
+    for (const [id, path] of paths) if (path.includes(w)) at.add(id);
+    return at;
+  };
+  const others = words.slice(0, -1).map(w => ({ w, at: inPath(w) }));
+  const mentioned = inPath(q);
+  // Mentioned in `title subtitle path`, read without making it: the title is tiers 0-2, and only a query
+  // with a space can run from one part into the next.
+  const spaced = q.includes(' ');
+  const mentions = (e: SearchEntry) => mentioned.has(e.parent)
+    || (spaced ? `${e.lower} ${e.lowerDetail} ${paths.get(e.parent)!.slice(0, q.length - 1)}`.includes(q) : e.lowerDetail.includes(q));
+  // The best so far, in order; of equal scores the first found stays first.
+  const best: { e: SearchEntry; score: number }[] = [];
+  for (const e of entries) {
+    const t = e.lower;
+    const at = t.indexOf(q);
     let tier = -1;
-    if (t === q) tier = 0;
-    else if (t.startsWith(q)) tier = 1;
-    else if (t.includes(q)) tier = 2;
-    else if (words.length > 1 && startsWord(t, last) && words.slice(0, -1).every(w => t.includes(w) || e.chain.some(c => c.includes(w)))) {
+    if (at === 0) tier = t.length === q.length ? 0 : 1;
+    else if (at > 0) tier = 2;
+    else if (others.length && others.every(o => t.includes(o.w) || o.at.has(e.parent)) && startsWord(t, last)) {
       tier = t === last ? 3 : t.startsWith(last) ? 4 : 5;
-    } else if (e.haystack.includes(q)) tier = 6;
-    if (tier >= 0) scored.push({ e, score: tier * 1000 + e.rank * 10 + Math.min(e.chain.length, 9) });
+    } else if (mentions(e)) tier = 6;
+    if (tier < 0) continue;
+    const score = tier * 1000 + e.rank * 10 + Math.min(e.depth, 9);
+    if (best.length === LISTED && score >= best[LISTED - 1].score) continue;
+    let i = best.length;
+    while (i > 0 && best[i - 1].score > score) i--;
+    best.splice(i, 0, { e, score });
+    if (best.length > LISTED) best.pop();
   }
-  return scored.sort((a, b) => a.score - b.score).slice(0, 60).map(s => s.e);
+  return best.map(b => b.e);
 }
 
 /** Whether `w` begins `t` or one of the words in it (`forw` in `forward`, `py` in `prepare.py`, not in `copy`). */
@@ -52,7 +82,7 @@ export class SceneModel {
   readonly root: number;
   private encoded = new Map<number, Uint8Array>();
   private texts: (string | undefined)[];
-  private index: SearchEntry[] | null = null;
+  private index: SearchIndex | null = null;
   private lineStarts = new Map<number, Uint32Array>();
   private userIndex: Map<number, number[]> | null = null;
 
@@ -271,23 +301,40 @@ export class SceneModel {
     return canonical;
   }
 
-  search(): SearchEntry[] {
+  /** What a block is in, as search lists it: `model.py › Block`. */
+  trail(id: number): string {
+    return this.canonicalPath(id).slice(1, -1).map(i => this.nodes[i].title).filter(Boolean).join(' › ');
+  }
+
+  search(): SearchIndex {
     if (this.index) return this.index;
     const rankOf = (n: SceneNode) => ({ file: 0, notebook: 0, class: 1, function: 2, section: 3, dir: 3, artifact: 4, table: 5, call: 6, symbol: 6, loop: 7, branch: 8, op: 9 } as Record<string, number>)[n.kind] ?? 8;
-    this.index = this.nodes
+    // Each block's path, made once from its parent's: the titles below the root, lowercased, and how many.
+    const trails = new Map<number, { path: string; depth: number }>([[this.root, { path: '', depth: 0 }]]);
+    const trail = (id: number): { path: string; depth: number } => {
+      let t = trails.get(id);
+      if (!t) {
+        const n = this.nodes[id];
+        const up = n.parent === undefined ? { path: '', depth: 0 } : trail(n.parent);
+        const title = n.title.toLowerCase();
+        t = title ? { path: up.path ? `${up.path} ${title}` : title, depth: up.depth + 1 } : up;
+        trails.set(id, t);
+      }
+      return t;
+    };
+    const entries = this.nodes
       .filter(n => n.parent !== undefined && !['input', 'output', 'glyph', 'lane'].includes(n.kind) && n.title)
-      .map(n => {
-        const chain = this.canonicalPath(n.id).slice(1, -1).map(id => this.nodes[id].title).filter(Boolean);
-        return {
-          id: n.id,
-          title: n.title,
-          detail: n.subtitle ?? '',
-          path: chain.join(' › '),
-          chain: chain.map(c => c.toLowerCase()),
-          haystack: `${n.title} ${n.subtitle ?? ''} ${chain.join(' ')}`.toLowerCase(),
-          rank: rankOf(n),
-        };
-      });
+      .map(n => ({
+        id: n.id,
+        title: n.title,
+        detail: n.subtitle ?? '',
+        lower: n.title.toLowerCase(),
+        lowerDetail: (n.subtitle ?? '').toLowerCase(),
+        parent: n.parent!,
+        depth: trail(n.parent!).depth,
+        rank: rankOf(n),
+      }));
+    this.index = { entries, paths: new Map([...trails].map(([id, t]) => [id, t.path])) };
     return this.index;
   }
 }

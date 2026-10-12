@@ -1,5 +1,5 @@
 import { Search as SearchIcon, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { findEntries, type SceneModel } from '../canvas/model';
 import { TOUCH, useMedia } from './media';
 
@@ -10,13 +10,15 @@ export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: 
   const touch = useMedia(TOUCH);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const results = useMemo(() => findEntries(model.search(), query), [query, model]);
+  // Typing never waits for the results: they catch up with the query as soon as they can.
+  const shownQuery = useDeferredValue(query);
+  const results = useMemo(() => findEntries(model.search(), shownQuery), [shownQuery, model]);
   useEffect(() => setActive(0), [query]);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [active]);
-  const pick = (i: number) => {
-    const r = results[i];
+  const pick = (i: number, from = results) => {
+    const r = from[i];
     if (r) onPick(r.id);
   };
   return (
@@ -33,7 +35,8 @@ export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: 
             onKeyDown={e => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, results.length - 1)); }
               if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
-              if (e.key === 'Enter') pick(active);
+              // Enter picks from the results for what was typed, even before the list has caught up with it.
+              if (e.key === 'Enter') pick(active, shownQuery === query ? results : findEntries(model.search(), query));
               if (e.key === 'Escape') onClose();
             }}
           />
@@ -44,7 +47,7 @@ export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: 
           {results.map((r, i) => (
             <button key={r.id} role="option" aria-selected={i === active} onMouseEnter={() => setActive(i)} onClick={() => pick(i)}>
               <span className="pr-title">{r.title}{r.detail && <span className="pr-detail">{r.detail}</span>}</span>
-              <span className="pr-path">{r.path}</span>
+              <span className="pr-path">{model.trail(r.id)}</span>
             </button>
           ))}
         </div>
