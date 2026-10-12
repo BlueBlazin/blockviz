@@ -108,8 +108,9 @@ pub struct Scratch {
     pos: Vec<f64>,
     tree: Vec<usize>,
     keyed: Vec<(usize, f64)>,
-    x: Vec<f64>,
     offs: Vec<f64>,
+    springs: Vec<(f64, f64, f64)>,
+    x: Vec<f64>,
     blocks: Vec<(f64, f64, usize)>,
     // Ports and channels.
     end_label: Vec<Option<f64>>,
@@ -365,7 +366,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     let Scratch {
         adj, reversed, state, roots, dfs, succ, pred, indeg, topo, ready, layer,
         vw, vh, vlayer, vorder, vrank, segs, groups, grouped, by_group, links, chains, vsucc, vpred,
-        layers, best, pos, tree, keyed, x, offs, blocks,
+        layers, best, pos, tree, keyed, offs, springs, x, blocks,
         end_label, out_x, in_x, ports, port_of, port_x, perm, ins, free, steps,
         band_h, channel_h, channel_label, buses, bus_of, runs, band_y, ..
     } = scratch;
@@ -658,18 +659,9 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         };
         (vw[a] + vw[b]) / 2. + g
     };
-    let seg_w = |s: &Seg| -> f64 {
-        s.weight
-            * match (is_dummy(s.a), is_dummy(s.b)) {
-                (true, true) => 8.,
-                (false, false) => 1.,
-                _ => 2.,
-            }
-    };
-    // Offset of an attachment point from the node centre, when fixed.
-    let out_off = |s: &Seg| s.from_x.map(|fx| fx - vw[s.a] / 2.).unwrap_or(0.);
-    let in_off = |s: &Seg| s.to_x.map(|tx| tx - vw[s.b] / 2.).unwrap_or(0.);
-    refill(x, nv, 0.);
+    // Each vertex's offset from the first in its layer at minimum spacing,
+    // which is also where placement starts.
+    refill(offs, nv, 0.);
     for l in 0..nlayers {
         let l = &layers[l];
         let mut cursor = 0.;
@@ -677,27 +669,38 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
             if i > 0 {
                 cursor += gap(l[i - 1], v);
             }
-            x[v] = cursor;
+            offs[v] = cursor;
         }
     }
+    x.clone_from(offs);
+    // Each segment as a spring that straightens it: its stiffness, and where
+    // it attaches above and below, from the centres of its vertices.
+    springs.clear();
+    springs.extend(segs.iter().map(|s| {
+        let k = match (is_dummy(s.a), is_dummy(s.b)) {
+            (true, true) => 8.,
+            (false, false) => 1.,
+            _ => 2.,
+        };
+        let off = |at: Option<f64>, v: usize| at.map(|p| p - vw[v] / 2.).unwrap_or(0.);
+        (s.weight * k, off(s.from_x, s.a), off(s.to_x, s.b))
+    }));
     // Where a vertex would sit to straighten its segments: (target centre, weight).
     let desired = |v: usize, x: &[f64], mode: usize| -> (f64, f64) {
         let mut sum = 0.;
         let mut wsum = 0.;
         if mode != 1 {
             for &si in &vpred[v] {
-                let s = &segs[si];
-                let w = seg_w(s);
-                sum += w * (x[s.a] + out_off(s) - in_off(s));
-                wsum += w;
+                let (k, up, down) = springs[si];
+                sum += k * (x[segs[si].a] + up - down);
+                wsum += k;
             }
         }
         if mode != 0 {
             for &si in &vsucc[v] {
-                let s = &segs[si];
-                let w = seg_w(s);
-                sum += w * (x[s.b] + in_off(s) - out_off(s));
-                wsum += w;
+                let (k, up, down) = springs[si];
+                sum += k * (x[segs[si].b] + down - up);
+                wsum += k;
             }
         }
         if wsum == 0. {
@@ -716,15 +719,12 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         let mut moved = false;
         for k in 0..nlayers {
             let l = &layers[if mode == 1 { nlayers - 1 - k } else { k }];
-            // Each vertex's offset from the first at minimum spacing, and the
-            // pooled blocks (weight, weighted sum, count).
-            offs.clear();
+            // The pooled blocks (weight, weighted sum, count).
             blocks.clear();
-            for (i, &v) in l.iter().enumerate() {
-                offs.push(if i == 0 { 0. } else { offs[i - 1] + gap(l[i - 1], v) });
+            for &v in l.iter() {
                 let (d, w) = desired(v, x, mode);
                 let w = w.max(1e-3);
-                blocks.push((w, w * (d - offs[i]), 1));
+                blocks.push((w, w * (d - offs[v]), 1));
                 while blocks.len() >= 2 {
                     let (w2, s2, c2) = blocks[blocks.len() - 1];
                     let (w1, s1, c1) = blocks[blocks.len() - 2];
@@ -741,7 +741,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
             let mut i = 0;
             for &(w, s, c) in blocks.iter() {
                 for _ in 0..c {
-                    let nx = s / w + offs[i];
+                    let nx = s / w + offs[l[i]];
                     moved |= nx.to_bits() != x[l[i]].to_bits();
                     x[l[i]] = nx;
                     i += 1;
