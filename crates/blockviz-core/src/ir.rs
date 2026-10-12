@@ -10,7 +10,6 @@
 //! through `Input`/`Output` port nodes on that container's interior.
 
 use serde::Serialize;
-use std::collections::HashMap;
 
 pub type Id = u32;
 
@@ -368,8 +367,8 @@ impl Builder {
         d
     }
 
-    /// Compacts the arena to nodes reachable from `root`, renumbering ids.
-    pub fn finish(self, root: Id) -> (Vec<Node>, Id) {
+    /// Compacts the arena in place to nodes reachable from `root`, renumbering ids.
+    pub fn finish(mut self, root: Id) -> (Vec<Node>, Id) {
         let mut keep = vec![false; self.nodes.len()];
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
@@ -383,31 +382,34 @@ impl Builder {
                 stack.push(r);
             }
         }
-        let mut map: HashMap<Id, Id> = HashMap::new();
-        for (i, k) in keep.iter().enumerate() {
-            if *k {
-                let next = map.len() as Id;
-                map.insert(i as Id, next);
-            }
+        // A kept node's new id is the number of kept nodes before it.
+        let mut map = vec![0; keep.len()];
+        let mut next = 0;
+        for (i, &k) in keep.iter().enumerate() {
+            map[i] = next;
+            next += k as Id;
         }
-        let mut out = Vec::with_capacity(map.len());
-        for (i, mut n) in self.nodes.into_iter().enumerate() {
-            if !keep[i] {
-                continue;
+        let new = |id: Id| keep[id as usize].then(|| map[id as usize]);
+        let remap = |ids: &mut Vec<Id>| {
+            ids.retain(|&id| keep[id as usize]);
+            for id in ids {
+                *id = map[*id as usize];
             }
-            n.id = map[&n.id];
-            n.parent = n.parent.and_then(|p| map.get(&p).copied());
-            n.reference = n.reference.and_then(|r| map.get(&r).copied());
-            n.link = n.link.and_then(|r| map.get(&r).copied());
-            n.used_by = n.used_by.iter().filter_map(|u| map.get(u).copied()).collect();
-            n.children = n.children.iter().filter_map(|c| map.get(c).copied()).collect();
-            n.edges.retain(|e| map.contains_key(&e.from) && map.contains_key(&e.to));
+        };
+        self.nodes.retain(|n| keep[n.id as usize]);
+        for n in &mut self.nodes {
+            n.id = map[n.id as usize];
+            n.parent = n.parent.and_then(new);
+            n.reference = n.reference.and_then(new);
+            n.link = n.link.and_then(new);
+            remap(&mut n.used_by);
+            remap(&mut n.children);
+            n.edges.retain(|e| keep[e.from as usize] && keep[e.to as usize]);
             for e in &mut n.edges {
-                e.from = map[&e.from];
-                e.to = map[&e.to];
+                e.from = map[e.from as usize];
+                e.to = map[e.to as usize];
             }
-            out.push(n);
         }
-        (out, map[&root])
+        (self.nodes, map[root as usize])
     }
 }
