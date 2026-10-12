@@ -7,26 +7,28 @@ export type Request =
   | { id: number; kind: 'highlight'; path: string; text: string };
 
 export type Response =
-  | { id: number; kind: 'analyze'; result: AnalysisResult }
+  /** `reply`: an `AnalysisResult` without `elapsed`, as UTF-8 JSON. */
+  | { id: number; kind: 'analyze'; reply: Uint8Array; elapsed: number }
   | { id: number; kind: 'highlight'; runs: Uint32Array };
 
 const ready = init();
 const scope = self as unknown as DedicatedWorkerGlobalScope;
+const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
 scope.onmessage = async (event: MessageEvent<Request>) => {
   const req = event.data;
   await ready.catch(() => undefined);
   if (req.kind === 'analyze') {
-    let result: AnalysisResult;
+    const start = performance.now();
+    let reply: Uint8Array;
     try {
       await ready;
-      const start = performance.now();
-      const input = new TextEncoder().encode(JSON.stringify({ name: req.name, description: req.description ?? '', files: req.files, shared_trunks: !!req.sharedTrunks }));
-      result = { ...JSON.parse(new TextDecoder().decode(analyze_project(input))), elapsed: performance.now() - start };
+      reply = analyze_project(encode({ name: req.name, description: req.description ?? '', files: req.files, shared_trunks: !!req.sharedTrunks }));
     } catch (e) {
-      result = { ok: false, error: `Analysis failed: ${String(e)}` };
+      reply = encode({ ok: false, error: `Analysis failed: ${String(e)}` } satisfies AnalysisResult);
     }
-    scope.postMessage({ id: req.id, kind: 'analyze', result } satisfies Response);
+    // Moved, not copied: the page parses the scene once, from the bytes.
+    scope.postMessage({ id: req.id, kind: 'analyze', reply, elapsed: performance.now() - start } satisfies Response, [reply.buffer]);
   } else {
     let runs: Uint32Array;
     try {

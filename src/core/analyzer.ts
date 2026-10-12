@@ -27,7 +27,10 @@ export class Analyzer {
       // gigabytes: drop that worker and keep a fresh one for highlighting.
       this.cancel();
       this.spawn();
-      return (r as Extract<Response, { kind: 'analyze' }>).result;
+      const { reply, elapsed } = r as Extract<Response, { kind: 'analyze' }>;
+      // Parsed once, here: posting a parsed scene would parse it in the
+      // worker and then copy it across, which takes longer still.
+      return { ...JSON.parse(new TextDecoder().decode(reply)), elapsed } as AnalysisResult;
     });
     return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
   }
