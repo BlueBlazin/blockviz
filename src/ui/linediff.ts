@@ -30,13 +30,15 @@ function middle(a: string[], b: string[], offset: number): LineOp[] {
     ...a.map((_, i) => ({ kind: 'del' as const, a: offset + i, b: -1 })),
     ...b.map((_, i) => ({ kind: 'add' as const, a: -1, b: offset + i })),
   ];
-  if (!n || !m) return replaced();
+  // Texts too far apart are often plainly so (a file reindented): no need to diff them to find out.
+  if (!n || !m || fewestEdits(a, b) > MAX_EDITS) return replaced();
   const max = n + m;
   const v = new Int32Array(2 * max + 2);
   const trace: Int32Array[] = [];
   let found = -1;
   for (let d = 0; d <= Math.min(max, MAX_EDITS); d++) {
-    trace.push(v.slice());
+    // The reaches step d starts from; walking back reads them on diagonals -d..d only.
+    trace.push(v.slice(max - d, max + d + 1));
     for (let k = -d; k <= d; k += 2) {
       let x = k === -d || (k !== d && v[max + k - 1] < v[max + k + 1]) ? v[max + k + 1] : v[max + k - 1] + 1;
       let y = x - k;
@@ -60,9 +62,9 @@ function middle(a: string[], b: string[], offset: number): LineOp[] {
   for (let d = found; d > 0; d--) {
     const pv = trace[d];
     const k = x - y;
-    const down = k === -d || (k !== d && pv[max + k - 1] < pv[max + k + 1]);
+    const down = k === -d || (k !== d && pv[d + k - 1] < pv[d + k + 1]);
     const pk = down ? k + 1 : k - 1;
-    const px = pv[max + pk];
+    const px = pv[d + pk];
     const py = px - pk;
     while (x > px && y > py) ops.push({ kind: 'same', a: offset + --x, b: offset + --y });
     if (down) ops.push({ kind: 'add', a: -1, b: offset + --y });
@@ -71,6 +73,16 @@ function middle(a: string[], b: string[], offset: number): LineOp[] {
   while (x > 0 && y > 0) ops.push({ kind: 'same', a: offset + --x, b: offset + --y });
   ops.reverse();
   return groupEdits(ops);
+}
+
+/** Edits any diff from `a` to `b` takes at least: one for each copy of a line the other has fewer of. */
+function fewestEdits(a: string[], b: string[]): number {
+  const extra = new Map<string, number>();
+  for (const l of a) extra.set(l, (extra.get(l) ?? 0) + 1);
+  for (const l of b) extra.set(l, (extra.get(l) ?? 0) - 1);
+  let edits = 0;
+  for (const e of extra.values()) edits += Math.abs(e);
+  return edits;
 }
 
 /** Within each run of edits, deletions before additions. */
