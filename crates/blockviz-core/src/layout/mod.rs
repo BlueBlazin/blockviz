@@ -143,11 +143,13 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
         })
         .collect();
     let index: std::collections::HashMap<Id, usize> = children.iter().enumerate().map(|(i, &c)| (c, i)).collect();
-    let edges = bundle(b, &b.get(id).edges);
+    // The edges are taken, laid out and put back; only those between children are drawn.
+    let edges = std::mem::take(&mut b.get_mut(id).edges);
+    let mut edges = bundle(b, edges);
+    edges.retain(|e| index.contains_key(&e.from) && index.contains_key(&e.to));
     let mut ledges = vec![];
-    let mut edge_map = vec![];
-    for (ei, e) in edges.iter().enumerate() {
-        let (Some(&from), Some(&to)) = (index.get(&e.from), index.get(&e.to)) else { continue };
+    for e in &edges {
+        let (from, to) = (index[&e.from], index[&e.to]);
         let to_x = e.to_port.and_then(|p| port_offset(b, e.to, p));
         let from_x = e.from_port.and_then(|p| port_offset(b, e.from, p));
         let src = b.get(e.from);
@@ -175,7 +177,6 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
             label: show_label,
             label_w: if show_label { mono_width(&e.label, 11.) } else { 0. },
         });
-        edge_map.push(ei);
     }
     for &c in &children {
         for &a in &b.get(c).hints.after.clone() {
@@ -191,10 +192,9 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
         n.y = out.pos[i].1;
     }
     let (cw, ch) = (out.width.max(1.), out.height.max(1.));
-    let mut new_edges = Vec::with_capacity(edge_map.len());
-    for (li, &ei) in edge_map.iter().enumerate() {
-        let mut e = edges[ei].clone();
-        let mut pts = out.routes[li].clone();
+    let mut new_edges = Vec::with_capacity(edges.len());
+    // Routes and labels follow the drawn edges, then the layout-only ones.
+    for ((mut e, mut pts), label) in edges.into_iter().zip(out.routes).zip(out.labels) {
         if pts.len() < 2 {
             continue;
         }
@@ -213,7 +213,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
             }
         }
         e.points = pts.iter().flat_map(|&(x, y)| [round(x), round(y)]).collect();
-        e.label_at = out.labels[li].map(|(x, y)| [round(x), round(y)]);
+        e.label_at = label.map(|(x, y)| [round(x), round(y)]);
         new_edges.push(e);
     }
     let n = b.get_mut(id);
@@ -225,12 +225,11 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
 
 /// Values entering or leaving a collapsed box travel as one bundled edge;
 /// only inline regions keep one line per port.
-fn bundle(b: &Builder, edges: &[Edge]) -> Vec<Edge> {
+fn bundle(b: &Builder, edges: Vec<Edge>) -> Vec<Edge> {
     let mut out: Vec<Edge> = vec![];
     // Edges by their ends, so a region with thousands of them bundles in linear time.
     let mut at: std::collections::HashMap<(Id, Id, Option<Id>, Option<Id>), usize> = std::collections::HashMap::new();
-    for e in edges {
-        let mut e = e.clone();
+    for mut e in edges {
         if e.to_port.is_some() && !b.get(e.to).hints.inline {
             e.to_port = None;
         }

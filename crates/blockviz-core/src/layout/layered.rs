@@ -157,16 +157,19 @@ pub fn layout(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
 
 /// Counts pairs (i, j) with a_i < a_j and b_i > b_j, i.e. edge crossings
 /// between two layers, in O(E log E) with a Fenwick tree over b ranks.
-fn inversions(pairs: &mut [(f64, f64)]) -> usize {
+/// `bs` and `tree` are scratch space, reused across calls.
+fn inversions(pairs: &mut [(f64, f64)], bs: &mut Vec<f64>, tree: &mut Vec<usize>) -> usize {
     if pairs.len() < 2 {
         return 0;
     }
     pairs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mut bs: Vec<f64> = pairs.iter().map(|p| p.1).collect();
+    bs.clear();
+    bs.extend(pairs.iter().map(|p| p.1));
     bs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     bs.dedup();
     let rank = |b: f64| bs.partition_point(|&v| v < b) + 1;
-    let mut tree = vec![0usize; bs.len() + 1];
+    tree.clear();
+    tree.resize(bs.len() + 1, 0);
     let mut total = 0;
     let mut seen = 0;
     let mut i = 0;
@@ -420,51 +423,49 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
         }
     };
     refresh(&layers, &mut pos);
-    let crossings = |layers: &Vec<Vec<usize>>, pos: &Vec<f64>| -> usize {
+    // Scratch for the sweeps, allocated once per diagram.
+    let (mut pairs, mut bs, mut tree) = (vec![], vec![], vec![]);
+    let mut crossings = |layers: &Vec<Vec<usize>>, pos: &Vec<f64>| -> usize {
         let mut total = 0;
         for l in 0..layers.len().saturating_sub(1) {
-            let mut pairs: Vec<(f64, f64)> = vec![];
+            pairs.clear();
             for &v in &layers[l] {
                 for &si in &vsucc[v] {
                     pairs.push((pos[v], pos[segs[si].b]));
                 }
             }
-            total += inversions(&mut pairs);
+            total += inversions(&mut pairs, &mut bs, &mut tree);
         }
         total
     };
+    let mut keyed: Vec<(usize, f64)> = vec![];
     let mut best = layers.clone();
     let mut best_cross = crossings(&layers, &pos);
     for iter in 0..16 {
         let down = iter % 2 == 0;
-        let range: Vec<usize> = if down { (1..nlayers).collect() } else { (0..nlayers.saturating_sub(1)).rev().collect() };
-        for l in range {
-            let mut keyed: Vec<(usize, f64)> = layers[l]
-                .iter()
-                .map(|&v| {
-                    let nbrs: Vec<f64> = if down {
-                        vpred[v].iter().map(|&si| pos[segs[si].a]).collect()
-                    } else {
-                        vsucc[v].iter().map(|&si| pos[segs[si].b]).collect()
-                    };
-                    let bary = if nbrs.is_empty() { pos[v] } else { nbrs.iter().sum::<f64>() / nbrs.len() as f64 };
-                    (v, bary)
-                })
-                .collect();
+        for k in 1..nlayers {
+            let l = if down { k } else { nlayers - 1 - k };
+            keyed.clear();
+            keyed.extend(layers[l].iter().map(|&v| {
+                let nbrs = if down { &vpred[v] } else { &vsucc[v] };
+                let at = |si: usize| pos[if down { segs[si].a } else { segs[si].b }];
+                let bary = if nbrs.is_empty() { pos[v] } else { nbrs.iter().map(|&si| at(si)).sum::<f64>() / nbrs.len() as f64 };
+                (v, bary)
+            }));
             keyed.sort_by(|a, b| {
                 (vrank[a.0].unwrap_or(u32::MAX), a.1, vorder[a.0])
                     .partial_cmp(&(vrank[b.0].unwrap_or(u32::MAX), b.1, vorder[b.0]))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            layers[l] = keyed.into_iter().map(|(v, _)| v).collect();
-            for (i, &v) in layers[l].iter().enumerate() {
+            for (i, &(v, _)) in keyed.iter().enumerate() {
+                layers[l][i] = v;
                 pos[v] = i as f64;
             }
         }
         let c = crossings(&layers, &pos);
         if c < best_cross {
             best_cross = c;
-            best = layers.clone();
+            best.clone_from(&layers);
         }
         if best_cross == 0 {
             break;
@@ -505,75 +506,66 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             x[v] = cursor;
         }
     }
-    let place = |l: &Vec<usize>, desired: &Vec<(f64, f64)>| -> Vec<f64> {
-        // desired[i] = (target centre, weight)
-        let m = l.len();
-        let mut offs = vec![0f64; m];
-        for i in 1..m {
-            offs[i] = offs[i - 1] + gap(l[i - 1], l[i]);
-        }
-        let mut blocks: Vec<(f64, f64, usize)> = vec![]; // (weight, weighted sum, count)
-        for i in 0..m {
-            let (d, w) = desired[i];
-            let w = w.max(1e-3);
-            blocks.push((w, w * (d - offs[i]), 1));
-            while blocks.len() >= 2 {
-                let (w2, s2, c2) = blocks[blocks.len() - 1];
-                let (w1, s1, c1) = blocks[blocks.len() - 2];
-                if s1 / w1 > s2 / w2 {
-                    blocks.pop();
-                    let last = blocks.len() - 1;
-                    blocks[last] = (w1 + w2, s1 + s2, c1 + c2);
-                } else {
-                    break;
-                }
+    // Where a vertex would sit to straighten its segments: (target centre, weight).
+    let desired = |v: usize, x: &[f64], mode: usize| -> (f64, f64) {
+        let mut sum = 0.;
+        let mut wsum = 0.;
+        if mode != 1 {
+            for &si in &vpred[v] {
+                let s = &segs[si];
+                let w = seg_w(s);
+                sum += w * (x[s.a] + out_off(s) - in_off(s));
+                wsum += w;
             }
         }
-        let mut res = Vec::with_capacity(m);
-        let mut i = 0;
-        for (w, s, c) in blocks {
-            for _ in 0..c {
-                res.push(s / w + offs[i]);
-                i += 1;
+        if mode != 0 {
+            for &si in &vsucc[v] {
+                let s = &segs[si];
+                let w = seg_w(s);
+                sum += w * (x[s.b] + in_off(s) - out_off(s));
+                wsum += w;
             }
         }
-        res
+        if wsum == 0. {
+            (x[v], 0.05)
+        } else {
+            (sum / wsum, wsum)
+        }
     };
+    // Per layer, each vertex's offset from the first at minimum spacing and
+    // the pooled blocks (weight, weighted sum, count); reused by every sweep.
+    let mut offs: Vec<f64> = vec![];
+    let mut blocks: Vec<(f64, f64, usize)> = vec![];
     for iter in 0..12 {
         let mode = if iter == 11 { 2 } else { iter % 2 };
-        let order: Vec<usize> = if mode == 1 { (0..nlayers).rev().collect() } else { (0..nlayers).collect() };
-        for l in order {
-            let desired: Vec<(f64, f64)> = layers[l]
-                .iter()
-                .map(|&v| {
-                    let mut sum = 0.;
-                    let mut wsum = 0.;
-                    if mode != 1 {
-                        for &si in &vpred[v] {
-                            let s = &segs[si];
-                            let w = seg_w(s);
-                            sum += w * (x[s.a] + out_off(s) - in_off(s));
-                            wsum += w;
-                        }
-                    }
-                    if mode != 0 {
-                        for &si in &vsucc[v] {
-                            let s = &segs[si];
-                            let w = seg_w(s);
-                            sum += w * (x[s.b] + in_off(s) - out_off(s));
-                            wsum += w;
-                        }
-                    }
-                    if wsum == 0. {
-                        (x[v], 0.05)
+        for k in 0..nlayers {
+            let l = &layers[if mode == 1 { nlayers - 1 - k } else { k }];
+            offs.clear();
+            blocks.clear();
+            for (i, &v) in l.iter().enumerate() {
+                offs.push(if i == 0 { 0. } else { offs[i - 1] + gap(l[i - 1], v) });
+                let (d, w) = desired(v, &x, mode);
+                let w = w.max(1e-3);
+                blocks.push((w, w * (d - offs[i]), 1));
+                while blocks.len() >= 2 {
+                    let (w2, s2, c2) = blocks[blocks.len() - 1];
+                    let (w1, s1, c1) = blocks[blocks.len() - 2];
+                    if s1 / w1 > s2 / w2 {
+                        blocks.pop();
+                        let last = blocks.len() - 1;
+                        blocks[last] = (w1 + w2, s1 + s2, c1 + c2);
                     } else {
-                        (sum / wsum, wsum)
+                        break;
                     }
-                })
-                .collect();
-            let placed = place(&layers[l], &desired);
-            for (i, &v) in layers[l].iter().enumerate() {
-                x[v] = placed[i];
+                }
+            }
+            // Every vertex is read before any moves, so a sweep sees the layer as it was.
+            let mut i = 0;
+            for &(w, s, c) in &blocks {
+                for _ in 0..c {
+                    x[l[i]] = s / w + offs[i];
+                    i += 1;
+                }
             }
         }
     }
