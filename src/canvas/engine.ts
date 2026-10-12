@@ -43,7 +43,12 @@ export class Engine {
   private selected: number | null = null;
   private flight: { start: number; duration: number; step: (t: number) => void } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
-  private press: { x: number; y: number; moved: boolean } | null = null;
+  /** A press that may still be a tap or click; `touch` for a finger or pen. */
+  private press: { x: number; y: number; moved: boolean; touch: boolean } | null = null;
+  /** The last tap of a finger, to tell a double tap. */
+  private lastTap: { x: number; y: number; t: number } | null = null;
+  /** When a double tap last opened a block (a browser may follow it with a dblclick). */
+  private tapped = -Infinity;
   private lastEmit = 0;
   private disposed = false;
   /** Still showing the initial whole-project framing (nothing has moved the camera). */
@@ -64,6 +69,7 @@ export class Engine {
     canvas.addEventListener('pointercancel', this.cancel);
     canvas.addEventListener('pointerleave', this.leave);
     canvas.addEventListener('dblclick', this.dblclick);
+    canvas.addEventListener('gesturestart', this.gesture);
     this.resize();
     this.camera.fitRoot(this.width, this.height);
     // Paint synchronously so an opaque canvas never flashes black.
@@ -84,6 +90,7 @@ export class Engine {
     c.removeEventListener('pointercancel', this.cancel);
     c.removeEventListener('pointerleave', this.leave);
     c.removeEventListener('dblclick', this.dblclick);
+    c.removeEventListener('gesturestart', this.gesture);
   }
 
   // ----- commands --------------------------------------------------------------------
@@ -355,7 +362,7 @@ export class Engine {
     this.canvas.setPointerCapture(e.pointerId);
     const p = this.point(e);
     this.pointers.set(e.pointerId, p);
-    this.press = { ...p, moved: false };
+    this.press = { ...p, moved: false, touch: e.pointerType !== 'mouse' };
   };
 
   private move = (e: PointerEvent) => {
@@ -388,7 +395,8 @@ export class Engine {
       this.canvas.style.cursor = 'grabbing';
     }
     this.pointers.set(e.pointerId, p);
-    if (this.press && Math.hypot(p.x - this.press.x, p.y - this.press.y) > 4) this.press.moved = true;
+    // A finger wobbles more than a mouse while tapping.
+    if (this.press && Math.hypot(p.x - this.press.x, p.y - this.press.y) > (this.press.touch ? 10 : 4)) this.press.moved = true;
     this.changed();
   };
 
@@ -396,8 +404,12 @@ export class Engine {
     const p = this.point(e);
     if (this.press && !this.press.moved && this.pointers.size === 1) {
       const i = this.hitAt(p.x, p.y);
-      const edge = this.edgeAt(p.x, p.y, i);
-      if (edge && this.events.onSelectEdge) {
+      const edge = this.edgeAt(p.x, p.y, i, this.press.touch ? 12 : 5);
+      if (this.press.touch && this.doubleTap(p)) {
+        // A double tap opens, as a double click does.
+        this.tapped = performance.now();
+        this.open(p);
+      } else if (edge && this.events.onSelectEdge) {
         this.events.onSelectEdge(this.refOf(edge));
       } else {
         this.selected = i >= 0 ? this.renderer.hits[i].id : null;
@@ -409,6 +421,15 @@ export class Engine {
     this.press = null;
     this.canvas.style.cursor = this.hover === null ? 'grab' : 'pointer';
   };
+
+  /** Whether a tap at `p` is the second of a double tap. */
+  private doubleTap(p: { x: number; y: number }): boolean {
+    const now = performance.now();
+    const last = this.lastTap;
+    const double = !!last && now - last.t < 350 && Math.hypot(p.x - last.x, p.y - last.y) < 30;
+    this.lastTap = double ? null : { ...p, t: now };
+    return double;
+  }
 
   private cancel = (e: PointerEvent) => {
     this.pointers.delete(e.pointerId);
@@ -431,11 +452,11 @@ export class Engine {
     this.invalidate();
   }
 
-  /** The edge within a few pixels of a point, drawn in the interior of hit `container`
+  /** The edge within `radius` pixels of a point, drawn in the interior of hit `container`
    * (the block under the point, so a block drawn over an edge wins). */
-  private edgeAt(x: number, y: number, container: number): EdgeHit | null {
+  private edgeAt(x: number, y: number, container: number, radius = 5): EdgeHit | null {
     let best: EdgeHit | null = null;
-    let d = 5 * 5;
+    let d = radius * radius;
     for (const h of this.renderer.edgeHits) {
       if (h.container !== container) continue;
       const k = distanceToPolyline(x, y, h.pts);
@@ -449,7 +470,15 @@ export class Engine {
   }
 
   private dblclick = (e: MouseEvent) => {
-    const p = this.point(e);
+    if (performance.now() - this.tapped < 600) return;
+    this.open(this.point(e));
+  };
+
+  /** Safari: a pinch on the diagram zooms the diagram, not the page. */
+  private gesture = (e: Event) => e.preventDefault();
+
+  /** Opens the block at a point (a double click or tap): zooms into it, or goes to its definition. */
+  private open(p: { x: number; y: number }) {
     const i = this.hitAt(p.x, p.y, true);
     if (i >= 0) {
       const n = this.model.node(this.renderer.hits[i].id);
@@ -466,5 +495,5 @@ export class Engine {
       this.camera.zoom(2, p.x, p.y);
       this.changed();
     }
-  };
+  }
 }
