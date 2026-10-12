@@ -23,6 +23,7 @@ pub struct Source {
     /// Shortened code is written in the module's own syntax.
     pub lang: super::syntax::Lang,
     line_starts: Vec<usize>,
+    /// In line order: a line's are found by binary search.
     comments: Vec<Comment>,
     blank: Vec<bool>,
 }
@@ -47,6 +48,7 @@ impl Source {
             let own_line = s.text.get(line_start..start).is_some_and(|t| t.trim().is_empty());
             found.push(Comment { line, text: body.clone(), own_line, doc: false });
         }
+        found.sort_by_key(|c| c.line);
         s.comments = found;
         s
     }
@@ -89,12 +91,19 @@ impl Source {
         self.blank.get((line as usize).wrapping_sub(1)).copied().unwrap_or(true)
     }
 
+    /// The comments on lines `lines`.
+    fn on_lines(&self, lines: std::ops::Range<u32>) -> &[Comment] {
+        let start = self.comments.partition_point(|c| c.line < lines.start);
+        let end = self.comments.partition_point(|c| c.line < lines.end).max(start);
+        &self.comments[start..end]
+    }
+
     /// Own-line comments directly above `line` (no blank line in between), top to bottom.
     pub fn comments_above(&self, line: u32) -> Vec<&Comment> {
         let mut out = vec![];
         let mut l = line.saturating_sub(1);
         while l >= 1 {
-            match self.comments.iter().find(|c| c.line == l && c.own_line) {
+            match self.on_lines(l..l + 1).iter().find(|c| c.own_line) {
                 Some(c) => out.push(c),
                 None => break,
             }
@@ -112,12 +121,12 @@ impl Source {
     }
 
     pub fn trailing_comment(&self, line: u32) -> Option<&str> {
-        self.comments.iter().find(|c| c.line == line && !c.own_line).map(|c| c.text.trim())
+        self.on_lines(line..line + 1).iter().find(|c| !c.own_line).map(|c| c.text.trim())
     }
 
     /// Own-line comments strictly between two lines (used for headings inside settings runs).
     pub fn comments_between(&self, after: u32, before: u32) -> Vec<&Comment> {
-        self.comments.iter().filter(|c| c.own_line && c.line > after && c.line < before).collect()
+        self.on_lines(after + 1..before).iter().filter(|c| c.own_line).collect()
     }
 
     /// Is there a blank line between the end of one statement and the start of the next
