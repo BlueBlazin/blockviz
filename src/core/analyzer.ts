@@ -12,9 +12,13 @@ export class Analyzer {
   private pending = new Map<number, { resolve: (r: Response) => void; reject: (e: Error) => void }>();
   private nextId = 1;
 
-  /** `sharedTrunks`: lay out every block's values on one branching line. */
-  analyze(project: Project, { sharedTrunks = false } = {}, timeoutMs = 60_000): Promise<AnalysisResult> {
+  /** `sharedTrunks`: lay out every block's values on one branching line;
+   * aborting `signal` cancels the analysis. */
+  async analyze(project: Project, { sharedTrunks = false, signal }: { sharedTrunks?: boolean; signal?: AbortSignal } = {}, timeoutMs = 60_000): Promise<AnalysisResult> {
+    signal?.throwIfAborted();
     this.cancel();
+    const stop = () => this.cancel();
+    signal?.addEventListener('abort', stop);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
@@ -31,7 +35,10 @@ export class Analyzer {
       // worker and then copy it across, which takes longer still.
       return { ...JSON.parse(new TextDecoder().decode(reply)), elapsed } as AnalysisResult;
     });
-    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+    return Promise.race([work, timeout]).finally(() => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+    });
   }
 
   /** Syntax classes for a file: `[len, class, ...]` runs over its UTF-8 bytes. */

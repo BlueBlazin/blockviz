@@ -46,8 +46,11 @@ describe('GitHub repositories', () => {
     const calls: string[] = [];
     let status = 200;
     const sha = (text: string) => `sha-${text}`;
-    const fetch = vi.fn(async (url: string) => {
+    const fake = { calls, files, fail: (s: number) => { status = s; }, onFetch: () => {} };
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      init?.signal?.throwIfAborted();
       calls.push(url);
+      fake.onFetch();
       if (status !== 200) return new Response('', { status });
       if (url === 'https://api.github.com/repos/o/r') return Response.json({ default_branch: 'main', name: 'r', description: 'A repo' });
       if (url.startsWith('https://api.github.com/repos/o/r/git/trees/main')) {
@@ -57,7 +60,7 @@ describe('GitHub repositories', () => {
       return path in files ? new Response(files[path]) : new Response('', { status: 404 });
     });
     vi.stubGlobal('fetch', fetch);
-    return { calls, files, fail: (s: number) => { status = s; } };
+    return fake;
   }
   const texts = (p: { files: { path: string; text?: string }[] }) => Object.fromEntries(p.files.map(f => [f.path, f.text]));
   const day = 24 * 60 * 60 * 1000;
@@ -99,6 +102,17 @@ describe('GitHub repositories', () => {
     // A repository GitHub says is gone is not opened from the saved copy.
     gh.fail(404);
     await expect(githubProject('o/r', () => {}, { cache, now: () => 3 * day })).rejects.toThrow('no public repository');
+  });
+
+  it('stops downloading when the load is abandoned, and keeps nothing', async () => {
+    const gh = github(Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`m${i}.py`, `x = ${i}`])));
+    const cache = memoryCache();
+    const stop = new AbortController();
+    const raw = () => gh.calls.filter(u => u.includes('raw.githubusercontent'));
+    gh.onFetch = () => { if (raw().length === 5) stop.abort(); };
+    await expect(githubProject('o/r', () => {}, { cache, now: () => 0, signal: stop.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(raw()).toHaveLength(5);
+    expect(cache.repos.size).toBe(0);
   });
 });
 

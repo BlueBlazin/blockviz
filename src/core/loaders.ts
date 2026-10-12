@@ -116,6 +116,8 @@ export interface GitHubOptions {
    * (opening a repository on purpose, not reloading or following a link). */
   latest?: boolean;
   now?: () => number;
+  /** Stops downloading; what was downloaded is not saved. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -124,14 +126,14 @@ export interface GitHubOptions {
  * GitHub lists the files and only those that changed are downloaded. When
  * GitHub cannot be reached (or its rate limit is spent), the saved copy opens.
  */
-export async function githubProject(input: string, progress: Progress, { cache = (shared ??= browserCache()), latest = false, now = Date.now }: GitHubOptions = {}): Promise<Project> {
+export async function githubProject(input: string, progress: Progress, { cache = (shared ??= browserCache()), latest = false, now = Date.now, signal }: GitHubOptions = {}): Promise<Project> {
   const ref = parseGitHub(input);
   if (!ref) throw new Error('Enter a GitHub repository like github.com/karpathy/nanoGPT.');
   const key = repoKey(ref);
   const saved = await cache.get(key).catch(() => undefined);
   if (saved && !latest && now() - saved.saved < FRESH_FOR) return fromSaved(saved);
   try {
-    const repo = await download(ref, key, known(saved), progress, now);
+    const repo = await download(ref, key, known(saved), progress, now, signal);
     await cache.put(repo).catch(() => undefined);
     return fromSaved(repo);
   } catch (e) {
@@ -146,7 +148,7 @@ export async function githubProject(input: string, progress: Progress, { cache =
  * compared. Saved like a repository; files the two share, or that a saved
  * copy of the repository already has, are downloaded once.
  */
-export async function githubComparison(input: string, progress: Progress, { cache = (shared ??= browserCache()), latest = false, now = Date.now }: GitHubOptions = {}): Promise<Comparison> {
+export async function githubComparison(input: string, progress: Progress, { cache = (shared ??= browserCache()), latest = false, now = Date.now, signal }: GitHubOptions = {}): Promise<Comparison> {
   const ref = parseGitHub(input);
   if (!ref || !isComparison(ref)) throw new Error('Enter a pull request like github.com/karpathy/nanoGPT/pull/756.');
   const key = repoKey(ref);
@@ -155,7 +157,7 @@ export async function githubComparison(input: string, progress: Progress, { cach
   if (usable && !latest && now() - usable.saved < FRESH_FOR) return comparisonOf(usable);
   try {
     const plain = await cache.get(repoKey({ owner: ref.owner, repo: ref.repo })).catch(() => undefined);
-    const repo = await downloadComparison(ref, key, known(plain, usable), progress, now);
+    const repo = await downloadComparison(ref, key, known(plain, usable), progress, now, signal);
     await cache.put(repo).catch(() => undefined);
     return comparisonOf(repo);
   } catch (e) {
@@ -194,8 +196,8 @@ function known(...saved: (SavedRepo | undefined)[]): Map<string, string> {
 }
 
 /** A GitHub API answer; a missing thing is `Missing`, a spent rate limit says so. */
-async function gh<T>(url: string, what: string): Promise<T> {
-  const res = await fetch(url);
+async function gh<T>(url: string, what: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal });
   if (res.status === 404 || res.status === 422) throw new Missing(`GitHub has no ${what}.`);
   if (res.status === 403 || res.status === 429) throw new Error('GitHub rate limit reached. Try again later, or open a local folder.');
   if (!res.ok) throw new Error(`GitHub returned ${res.status} for ${what}.`);
@@ -208,8 +210,8 @@ const refPath = (ref: string) => ref.split('/').map(encodeURIComponent).join('/'
 interface Blob { path: string; full: string; size: number; sha?: string }
 
 /** The files of a commit, branch or tree, under `prefix`, that are the project's own. */
-async function listTree(api: string, rev: string, prefix: string, what: string): Promise<Blob[]> {
-  const tree = await gh<{ tree: { path: string; type: string; size?: number; sha?: string }[]; truncated: boolean }>(`${api}/git/trees/${refPath(rev)}?recursive=1`, what);
+async function listTree(api: string, rev: string, prefix: string, what: string, signal?: AbortSignal): Promise<Blob[]> {
+  const tree = await gh<{ tree: { path: string; type: string; size?: number; sha?: string }[]; truncated: boolean }>(`${api}/git/trees/${refPath(rev)}?recursive=1`, what, signal);
   return tree.tree
     .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && !ignoredPath(t.path))
     .slice(0, MAX_FILES)
@@ -224,7 +226,7 @@ const unknown = (blobs: Blob[], known: Map<string, string>) => blobs.filter(b =>
  * prefixes) that has each; texts already `known` by their hash are reused,
  * and what is downloaded becomes known. `tick` counts each download.
  */
-async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, string>, tick: () => void): Promise<SavedFile[]> {
+async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, string>, tick: () => void, signal?: AbortSignal): Promise<SavedFile[]> {
   const files: SavedFile[] = [];
   let total = 0;
   const textual = blobs.filter(f => wantsText(f.path, f.size));
@@ -244,7 +246,7 @@ async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, stri
       }
       let text: string | undefined;
       for (const raw of raws) {
-        const res = await fetch(`${raw}/${f.full.split('/').map(encodeURIComponent).join('/')}`);
+        const res = await fetch(`${raw}/${f.full.split('/').map(encodeURIComponent).join('/')}`, { signal });
         if (res.ok) {
           text = await res.text();
           break;
@@ -270,15 +272,15 @@ function counter(missing: number, progress: Progress): () => void {
   };
 }
 
-async function download(ref: GitHubRef, key: string, known: Map<string, string>, progress: Progress, now: () => number): Promise<SavedRepo> {
+async function download(ref: GitHubRef, key: string, known: Map<string, string>, progress: Progress, now: () => number, signal?: AbortSignal): Promise<SavedRepo> {
   const repo = `${ref.owner}/${ref.repo}`;
   const api = `https://api.github.com/repos/${repo}`;
   progress('Contacting GitHub…');
-  const info = await gh<{ default_branch: string; name: string; description?: string | null }>(api, `public repository ${repo}`);
+  const info = await gh<{ default_branch: string; name: string; description?: string | null }>(api, `public repository ${repo}`, signal);
   const branch = ref.branch ?? info.default_branch;
   const prefix = ref.path ? `${ref.path.replace(/\/$/, '')}/` : '';
-  const blobs = await listTree(api, branch, prefix, `branch ${branch} in ${repo}`);
-  const files = await fetchFiles([`https://raw.githubusercontent.com/${repo}/${refPath(branch)}`], blobs, known, counter(unknown(blobs, known).length, progress));
+  const blobs = await listTree(api, branch, prefix, `branch ${branch} in ${repo}`, signal);
+  const files = await fetchFiles([`https://raw.githubusercontent.com/${repo}/${refPath(branch)}`], blobs, known, counter(unknown(blobs, known).length, progress), signal);
   const name = ref.path ? ref.path.split('/').pop()! : info.name;
   return { key, name, files, source: `github.com/${repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined, saved: now() };
 }
@@ -300,7 +302,7 @@ interface CompareJson {
   files?: { filename: string; status: string; previous_filename?: string | null }[];
 }
 
-async function downloadComparison(ref: GitHubRef, key: string, known: Map<string, string>, progress: Progress, now: () => number): Promise<SavedRepo> {
+async function downloadComparison(ref: GitHubRef, key: string, known: Map<string, string>, progress: Progress, now: () => number, signal?: AbortSignal): Promise<SavedRepo> {
   const repo = `${ref.owner}/${ref.repo}`;
   const api = `https://api.github.com/repos/${repo}`;
   progress('Contacting GitHub…');
@@ -313,7 +315,7 @@ async function downloadComparison(ref: GitHubRef, key: string, known: Map<string
   const raws = (sha: string, fork?: string | null) => [`https://raw.githubusercontent.com/${repo}/${sha}`, ...(fork && fork !== repo ? [`https://raw.githubusercontent.com/${fork}/${sha}`] : [])];
   let fork: string | null | undefined;
   if (ref.pull !== undefined) {
-    const pr = await gh<PullJson>(`${api}/pulls/${ref.pull}`, `pull request #${ref.pull} in ${repo}`);
+    const pr = await gh<PullJson>(`${api}/pulls/${ref.pull}`, `pull request #${ref.pull} in ${repo}`, signal);
     baseRev = pr.base.sha;
     headRev = pr.head.sha;
     fork = pr.head.repo?.full_name;
@@ -323,7 +325,7 @@ async function downloadComparison(ref: GitHubRef, key: string, known: Map<string
   } else {
     let base = ref.compare!.base;
     if (!base) {
-      const meta = await gh<{ default_branch: string; description?: string | null }>(api, `public repository ${repo}`);
+      const meta = await gh<{ default_branch: string; description?: string | null }>(api, `public repository ${repo}`, signal);
       base = meta.default_branch;
       description = meta.description ?? undefined;
     }
@@ -332,22 +334,22 @@ async function downloadComparison(ref: GitHubRef, key: string, known: Map<string
     info = { kind: 'compare', repo, title: `${base}...${headRev}`, url: `https://github.com/${repo}/compare/${base}...${headRev}`, baseRef: base, headRef: headRev, baseSha: '', headSha: '', files: [] };
   }
   // Compared from where the head branched off, as GitHub's "Files changed" is.
-  const cmp = await gh<CompareJson>(`${api}/compare/${refPath(baseRev)}...${refPath(headRev)}`, `comparison ${baseRev}...${headRev} in ${repo}`);
+  const cmp = await gh<CompareJson>(`${api}/compare/${refPath(baseRev)}...${refPath(headRev)}`, `comparison ${baseRev}...${headRev} in ${repo}`, signal);
   info.baseSha = cmp.merge_base_commit.sha;
   if (!info.headSha) {
     info.headSha = cmp.total_commits === 0 ? info.baseSha
       : cmp.commits.length >= cmp.total_commits ? cmp.commits[cmp.commits.length - 1].sha
-      : (await gh<{ sha: string }>(`${api}/commits/${refPath(headRev)}`, `commit ${headRev} in ${repo}`)).sha;
+      : (await gh<{ sha: string }>(`${api}/commits/${refPath(headRev)}`, `commit ${headRev} in ${repo}`, signal)).sha;
   }
   const [baseBlobs, headBlobs] = await Promise.all([
-    listTree(api, info.baseSha, '', `commit ${info.baseSha.slice(0, 7)} in ${repo}`),
-    listTree(api, info.headSha, '', `commit ${info.headSha.slice(0, 7)} in ${repo}`),
+    listTree(api, info.baseSha, '', `commit ${info.baseSha.slice(0, 7)} in ${repo}`, signal),
+    listTree(api, info.headSha, '', `commit ${info.headSha.slice(0, 7)} in ${repo}`, signal),
   ]);
   const headShas = new Set(headBlobs.map(b => b.sha));
   const missing = unknown(headBlobs, known).length + unknown(baseBlobs, known).filter(b => !headShas.has(b.sha)).length;
   const tick = counter(missing, progress);
-  const head = await fetchFiles(raws(info.headSha, fork), headBlobs, known, tick);
-  const base = await fetchFiles(raws(info.baseSha), baseBlobs, known, tick);
+  const head = await fetchFiles(raws(info.headSha, fork), headBlobs, known, tick, signal);
+  const base = await fetchFiles(raws(info.baseSha), baseBlobs, known, tick, signal);
   info.files = fileChanges(baseBlobs, headBlobs, cmp.files ?? []);
   const source = ref.pull !== undefined ? `github.com/${repo}/pull/${ref.pull}` : `github.com/${repo}/compare/${info.title}`;
   return { key, name, description, source, files: head, base, compare: info, saved: now() };
