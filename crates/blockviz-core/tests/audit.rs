@@ -61,9 +61,8 @@ fn audit() {
         let blocks: Vec<_> = s.nodes.iter().filter(|n| matches!(n.kind, Kind::Op | Kind::Call)).collect();
         let code: Vec<_> = blocks.iter().filter(|n| codeish(&n.title)).collect();
         let guards: Vec<_> = s.nodes.iter().filter(|n| n.badges.iter().any(|b| b.starts_with("if ") || b.starts_with("unless "))).collect();
-        let ctx: usize = s.nodes.iter().flat_map(|n| &n.edges).filter(|e| e.kind == EdgeKind::Context).count();
         let data: usize = s.nodes.iter().flat_map(|n| &n.edges).filter(|e| e.kind == EdgeKind::Data).count();
-        println!("== {name}: {} blocks, {} code titles, {} guard tags, edges data {data} / context {ctx}", blocks.len(), code.len(), guards.len());
+        println!("== {name}: {} blocks, {} code titles, {} guard tags, data edges {data}", blocks.len(), code.len(), guards.len());
         let n = std::env::var("AUDIT_N").ok().and_then(|v| v.parse().ok()).unwrap_or(25);
         for b in code.iter().take(n) {
             println!("  code  {:<30} {:<22} | {}", b.title, b.subtitle.chars().take(22).collect::<String>(), line(&s, &files, b));

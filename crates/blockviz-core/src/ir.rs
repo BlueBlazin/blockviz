@@ -58,8 +58,6 @@ pub enum EdgeKind {
     Data,
     /// A value that decides whether or which way a step runs (a condition).
     Control,
-    /// Configuration or ambient state (settings, globals); drawn lightly.
-    Context,
     /// A definition used by another definition or file.
     Uses,
     /// Code executed from another file (`exec(open(...).read())`).

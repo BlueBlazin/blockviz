@@ -54,7 +54,6 @@ export class Renderer {
   edgeHits: EdgeHit[] = [];
   private widths = new Map<string, number>();
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
-  private quietEdges = new WeakMap<SceneNode, Set<Edge>>();
 
   constructor(private ctx: CanvasRenderingContext2D, private model: SceneModel) {}
 
@@ -88,12 +87,7 @@ export class Renderer {
       return focused ? e.from === focus || e.to === focus : null;
     };
     if (edgeAlpha > 0.02) {
-      const quiet = this.quiet(owner);
-      for (const e of owner.edges ?? []) {
-        // Settings that fan out everywhere are drawn only for the block in focus.
-        if (quiet.has(e) && !lit(e)) continue;
-        this.edge(e, t, p, edgeAlpha, lw, lit(e), owner.id, parentHit);
-      }
+      for (const e of owner.edges ?? []) this.edge(e, t, p, edgeAlpha, lw, lit(e), owner.id, parentHit);
     }
     for (const id of kids) {
       const n = this.model.node(id);
@@ -104,27 +98,11 @@ export class Renderer {
     }
     if (edgeAlpha > 0.02 && t.s * 11 >= 4.5) {
       const placed: Box[] = [];
-      const quiet = this.quiet(owner);
       // Labels of lit edges are placed first, so they are the ones shown.
       const all = owner.edges ?? [];
       const order = focused || traced || p.hoverEdge ? [...all].sort((a, b) => Number(!!lit(b)) - Number(!!lit(a))) : all;
-      for (const e of order) {
-        if (quiet.has(e) && !lit(e)) continue;
-        this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 11), lit(e), placed);
-      }
+      for (const e of order) this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 11), lit(e), placed);
     }
-  }
-
-  /** Context edges from sources that feed three or more blocks. */
-  private quiet(owner: SceneNode): Set<Edge> {
-    let q = this.quietEdges.get(owner);
-    if (!q) {
-      const fan = new Map<number, number>();
-      for (const e of owner.edges ?? []) if (e.kind === 'context') fan.set(e.from, (fan.get(e.from) ?? 0) + 1);
-      q = new Set((owner.edges ?? []).filter(e => e.kind === 'context' && (fan.get(e.from) ?? 0) >= 3));
-      this.quietEdges.set(owner, q);
-    }
-    return q;
   }
 
   private node(n: SceneNode, b: Box, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {
@@ -417,10 +395,9 @@ export class Renderer {
     const size = Math.min(11.5 * t.s, 15);
     if (size < 4.2) return;
     const ctx = this.ctx;
-    const context = n.category === 'context';
     ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
-    ctx.font = `${context ? 'italic ' : ''}${size}px ${theme.mono}`;
-    ctx.fillStyle = context ? theme.faint : theme.muted;
+    ctx.font = `${size}px ${theme.mono}`;
+    ctx.fillStyle = theme.muted;
     ctx.textAlign = 'center';
     ctx.fillText(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
     ctx.textAlign = 'left';
@@ -505,11 +482,10 @@ export class Renderer {
       this.edgeHits.push({ edge: e, owner, container, pts: screen });
     }
     // Settings and sizes are faint; conditions are dotted: neither is the data itself.
-    const context = e.kind === 'context';
     const control = e.kind === 'control';
-    let color = context || control ? theme.context : e.kind === 'artifact' ? theme.artifact : e.kind === 'exec' ? theme.faintEdge : theme.edge;
-    let a = alpha * (context ? 0.55 : control ? 0.8 : 0.95) * (dim ? 0.35 : 1);
-    let width = context || control ? lw * 0.85 : lw;
+    let color = control ? theme.context : e.kind === 'artifact' ? theme.artifact : e.kind === 'exec' ? theme.faintEdge : theme.edge;
+    let a = alpha * (control ? 0.8 : 0.95) * (dim ? 0.35 : 1);
+    let width = control ? lw * 0.85 : lw;
     if (lit) {
       color = theme.accent;
       a = Math.max(alpha, 0.9);
@@ -524,7 +500,7 @@ export class Renderer {
     const n = pts.length / 2;
     const X = (i: number) => t.x + pts[i * 2] * t.s;
     const Y = (i: number) => t.y + pts[i * 2 + 1] * t.s;
-    const head = e.open ? 0 : clamp(7 * Math.sqrt(t.s), 3, 8) * (context || control ? 0.8 : 1);
+    const head = e.open ? 0 : clamp(7 * Math.sqrt(t.s), 3, 8) * (control ? 0.8 : 1);
     // Shorten the last segment so the line ends at the arrow's base.
     const ex = X(n - 1);
     const ey = Y(n - 1);
@@ -573,8 +549,8 @@ export class Renderer {
     ctx.strokeStyle = theme.labelHalo;
     ctx.lineJoin = 'round';
     ctx.strokeText(e.label, x, y);
-    // Values read in ink; settings stay muted like their lines.
-    ctx.fillStyle = lit ? theme.accent : e.kind === 'data' ? theme.labelInk : theme.muted;
+    // Values read in ink; conditions stay muted like their dotted lines.
+    ctx.fillStyle = lit ? theme.accent : e.kind === 'control' ? theme.muted : theme.labelInk;
     ctx.fillText(e.label, x, y);
     ctx.globalAlpha = 1;
   }

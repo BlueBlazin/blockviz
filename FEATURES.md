@@ -54,14 +54,13 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - every edge carrying that name, through steps that re-bind it (`q = q.view(…)`) and into and out of branches and loops
   - the rest of the function fades
   - a panel lists where the value comes from and what reads it, each a link
-- Arrow labels name the values. Labels of values are dark; labels of settings are grey.
+- Every arrow is labelled with what it carries, including arrows into and inside branches and loops.
 
 ## Reading the diagram
 
 - **Read top to bottom**: inputs enter at the top, results leave at the bottom, and arrows are labelled with variable names.
 - **Arrow styles**:
-  - solid: data
-  - faint: settings, sizes and types
+  - solid: a value, labelled with its name (every value, none hidden)
   - dotted: a condition
   - dashed red: a file one program writes and another reads
   - dashed: code that runs other code

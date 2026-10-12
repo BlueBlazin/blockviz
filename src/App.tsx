@@ -317,7 +317,6 @@ export default function App() {
           </div>
           <div className="legend-lines">
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#2c3036" strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#2c3036" /></svg>value flows into</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke="#a3aab4" strokeWidth="1.1" /><path d="M27 2 L33 5 L27 8Z" fill="#a3aab4" /></svg>settings, sizes, types</span>
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke="#a3aab4" strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill="#a3aab4" /></svg>decides whether it runs</span>
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#9a5566" strokeWidth="1.4" strokeDasharray="6 3" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#9a5566" /></svg>file written → read</span>
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#2c3036" strokeWidth="1.4" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#2c3036" /></svg>code executed</span>

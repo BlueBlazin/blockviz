@@ -224,8 +224,8 @@ def f(path, limit):
         let id = |t: &str| f.children.iter().copied().find(|&c| s.nodes[c as usize].title == t).unwrap_or_else(|| panic!("no {t}"));
         f.edges.iter().find(|e| e.from == id(from) && e.to == id(to)).map(|e| e.kind)
     };
-    // A size is metadata, drawn lightly downstream; a converted value is still data.
-    assert_eq!(kind("n", "render"), Some(EdgeKind::Context));
+    // Every value is data, whatever its name suggests (a length, a conversion).
+    assert_eq!(kind("n", "render"), Some(EdgeKind::Data));
     assert_eq!(kind("total", "render"), Some(EdgeKind::Data));
     // The condition decides whether `store` runs; `items` is also its data.
     assert_eq!(kind("limit", "store"), Some(EdgeKind::Control));

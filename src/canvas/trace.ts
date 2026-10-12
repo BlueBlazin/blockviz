@@ -1,7 +1,7 @@
 import type { Edge, SceneNode } from '../core/types';
 
 /** Edges that carry values (not conditions, dependencies or executions). */
-const VALUE_KINDS = new Set(['data', 'context']);
+const VALUE_KINDS = new Set(['data']);
 
 /** A value followed through a definition: the edges carrying it, and the
  * diagrams (the definition and the branches and loops inside it) it is traced in. */

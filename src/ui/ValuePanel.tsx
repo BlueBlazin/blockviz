@@ -52,7 +52,7 @@ export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, 
     <aside className="inspector" aria-label="Value details" style={{ '--panel-w': `${size.w}px`, ...(size.h ? { '--panel-h': `${size.h}px` } : {}) } as CSSProperties}>
       <div className="insp-body">
         <header>
-          <span className="insp-kind">Value{start.kind === 'context' ? <> · <span>setting</span></> : null}</span>
+          <span className="insp-kind">Value</span>
           <button className="icon" aria-label="Close details" onClick={onClose}><X size={15} /></button>
         </header>
         <h2 className="mono">{start.label || 'unnamed value'}</h2>

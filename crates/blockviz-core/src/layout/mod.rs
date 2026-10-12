@@ -142,7 +142,8 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
         let to_x = e.to_port.and_then(|p| port_offset(b, e.to, p));
         let from_x = e.from_port.and_then(|p| port_offset(b, e.from, p));
         let src = b.get(e.from);
-        let show_label = matches!(e.kind, EdgeKind::Data | EdgeKind::Uses | EdgeKind::Exec) && !e.label.is_empty() && !(src.is_port() && src.title == e.label);
+        // Every arrow says what it carries, unless the port it leaves already shows the name.
+        let show_label = !e.label.is_empty() && !(src.is_port() && !src.hints.hidden && src.title == e.label);
         let mut h = DefaultHasher::new();
         (e.label.as_str(), e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
         ledges.push(LEdge {
@@ -152,7 +153,6 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
             from_x,
             to_x,
             weight: match e.kind {
-                EdgeKind::Context => 0.15,
                 EdgeKind::Control => 0.3,
                 _ => 1.,
             },

@@ -56,7 +56,7 @@ The goal is blocks a reader would name, not a syntax tree.
 * `if __name__ == "__main__"` is an entry-point marker plus a "Main" section, never a box containing `__name__`.
 * Small loops and branches are drawn inline, like the "N×" box of an architecture figure, with repeat counts inferred from the code (`× n_layer` from `ModuleList([... for _ in range(config.n_layer)])`). A lone guarded statement gets an `if …` tag instead of a box.
 * Every way out is visible. A guarded exit is a step tagged with its condition (`return None · if value is None`, `continue · if not line`); every returned value reaches the function's result; `if c: …; return x` followed by more code is an if/else. No branch arm is drawn empty: one that only sets or returns a value shows that step.
-* Arrows say what a value is to the step. Solid: the data it works on. Faint: settings, and properties of values (`len(x)`, `x.shape`, `x.device`, type checks), but not conversions like `int(x)`. Dotted: a condition that decides whether the step runs.
+* Every value is a solid arrow labelled with what it carries, whatever the value is: no arrow is hidden or drawn lighter because of its name. Dotted: a condition that decides whether the step runs.
 * Long scripts are split into sections at comment-headed paragraphs (`# model init`, `# training loop`); runs of constants become a settings table.
 * Light types name things the way a reader would: `self.transformer.wte(idx)` is an `Embedding`, `block` is a `Block`, `model.configure_optimizers` is `GPT.configure_optimizers`.
 * Dependency diagrams are transitively reduced so their layering shows; a file's full import list is in the inspector.

@@ -344,7 +344,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let port = self.ctx_port(ri, name);
             for s in srcs {
                 let from_port = self.out_ports.get(&(s, name.to_string())).copied();
-                self.connect(s, region, EdgeKind::Context, name, from_port, Some(port));
+                self.connect(s, region, EdgeKind::Data, name, from_port, Some(port));
             }
             self.regions[ri].env.insert(name.to_string(), Bind::Src(vec![port], style));
             return Some((vec![port], style));
@@ -352,13 +352,13 @@ impl<'c, 'p> Fb<'c, 'p> {
         let port = self.cx.b.add(Some(region), Kind::Input, Shape::Port, name);
         self.cx.b.get_mut(port).category = match style {
             Style::Data => "port",
-            Style::Ctx => "context",
+            Style::Ctx => "port",
             Style::Def => "uses",
         };
         for s in srcs {
             let from_port = self.out_ports.get(&(s, name.to_string())).copied();
             let label = if style == Style::Def { "" } else { name };
-            self.connect(s, region, kind_of(style, false), label, from_port, Some(port));
+            self.connect(s, region, kind_of(style), label, from_port, Some(port));
         }
         self.regions[ri].env.insert(name.to_string(), Bind::Src(vec![port], style));
         Some((vec![port], style))
@@ -371,7 +371,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             Some(p) => p,
             None => {
                 let p = self.cx.b.add(Some(region), Kind::Input, Shape::Port, "");
-                self.cx.b.get_mut(p).category = "context";
+                self.cx.b.get_mut(p).category = "port";
                 self.regions[ri].ctx_port = Some(p);
                 p
             }
@@ -409,7 +409,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn link(&mut self, v: &Val, to: Id) {
-        self.link_as(v, to, kind_of(v.style, v.scalar));
+        self.link_as(v, to, kind_of(v.style));
     }
 
     /// A value that decides whether or which way `to` runs.
@@ -2314,7 +2314,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 for v in &returns {
                     for &s in &v.srcs {
                         let fp = self.out_ports.get(&(s, v.label.clone())).copied();
-                        self.connect(s, port, kind_of(v.style, v.scalar), &v.label, fp, None);
+                        self.connect(s, port, kind_of(v.style), &v.label, fp, None);
                     }
                 }
                 self.out_ports.insert((node, label.clone()), port);
@@ -2345,7 +2345,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     for &s in srcs {
                         let fp = self.out_ports.get(&(s, name.clone())).copied();
                         let label = if *style == Style::Def { "" } else { name.as_str() };
-                        self.connect(s, port, kind_of(*style, false), label, fp, None);
+                        self.connect(s, port, kind_of(*style), label, fp, None);
                     }
                     let pr = &mut self.regions[parent];
                     if pr.merging && pr.merged.contains(name) {
@@ -4112,7 +4112,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 for v in sources {
                     for s in v.srcs {
                         if seen.insert(s) {
-                            self.connect(s, id, EdgeKind::Context, "globals", None, None);
+                            self.connect(s, id, EdgeKind::Data, "globals", None, None);
                         }
                     }
                 }
@@ -4387,7 +4387,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             for v in &returns {
                 for &s in &v.srcs {
                     let fp = self.out_ports.get(&(s, v.label.clone())).copied();
-                    self.connect(s, port, kind_of(v.style, v.scalar), &v.label, fp, None);
+                    self.connect(s, port, kind_of(v.style), &v.label, fp, None);
                 }
             }
             self.cx.b.get_mut(node).outputs = vec![label];
@@ -4753,11 +4753,11 @@ fn is_callable_ty(t: &Ty) -> bool {
     matches!(t, Ty::Inst(_) | Ty::ExtInst(_))
 }
 
-fn kind_of(style: Style, scalar: bool) -> EdgeKind {
+/// Every value is drawn the same way, whatever it is: what a value means
+/// cannot be told from its name in every language.
+fn kind_of(style: Style) -> EdgeKind {
     match style {
-        Style::Data if scalar => EdgeKind::Context,
-        Style::Data => EdgeKind::Data,
-        Style::Ctx => EdgeKind::Context,
+        Style::Data | Style::Ctx => EdgeKind::Data,
         Style::Def => EdgeKind::Uses,
     }
 }

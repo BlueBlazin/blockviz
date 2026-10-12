@@ -151,8 +151,8 @@ export function f(path, limit) {
     let f = find(&s, "f");
     let (load, total, store, render) = (kid(&s, f, "load"), kid(&s, f, "total"), kid(&s, f, "store"), kid(&s, f, "render"));
     let limit = f.children.iter().map(|&c| &s.nodes[c as usize]).find(|n| n.title == "limit").unwrap();
-    // A size is metadata, drawn lightly downstream; a converted value is still data.
-    assert_eq!(edge(f, load, render), Some(EdgeKind::Context));
+    // Every value is data, whatever its name suggests (a length, a conversion).
+    assert_eq!(edge(f, load, render), Some(EdgeKind::Data));
     assert_eq!(edge(f, total, render), Some(EdgeKind::Data));
     // The condition decides whether `store` runs; `items` is also its data.
     assert_eq!(edge(f, limit, store), Some(EdgeKind::Control));
