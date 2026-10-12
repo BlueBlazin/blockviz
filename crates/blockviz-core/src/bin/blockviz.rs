@@ -2,6 +2,7 @@
 //! without a browser: `cargo run --bin blockviz -- path/to/repo [--depth N] [--json] [--trunks]`.
 
 use blockviz_core::ir::{Node, Scene};
+use std::io::Write;
 use std::path::Path;
 
 fn walk(dir: &Path, root: &Path, out: &mut Vec<blockviz_core::project::InFile>) {
@@ -73,7 +74,11 @@ fn main() {
     let scene = blockviz_core::analyze_with(&name, files, opts);
     let elapsed = start.elapsed();
     if args.iter().any(|a| a == "--json") {
-        println!("{}", serde_json::to_string(&scene).unwrap());
+        // Written as it is serialized: as one string, transformers' scene is 274 MB.
+        let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+        serde_json::to_writer(&mut out, &scene).unwrap();
+        writeln!(out).unwrap();
+        out.flush().unwrap();
         return;
     }
     println!("{} — {} nodes, depth {}, {:?}", scene.title, scene.stats.nodes, scene.stats.max_depth, elapsed);
