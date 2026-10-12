@@ -82,13 +82,19 @@ export default function App() {
   const loading = useRef<AbortController | null>(null);
   const nav = useRef<Navigation | null>(null);
   const [steps, setSteps] = useState({ back: false, forward: false });
-  /** Layout style: each block's values on one branching line (off: a line per value). */
+  /** Layout style of the diagram on screen, and of the next one loaded: each
+   * block's values on one branching line (off: a line per value). */
   const [trunks, setTrunks] = useState(() => storage.get('blockviz.trunks') === '1');
   const trunksRef = useRef(trunks);
+  const chooseTrunks = (on: boolean) => {
+    setTrunks(on);
+    trunksRef.current = on;
+    storage.set('blockviz.trunks', on ? '1' : '');
+  };
   const [copied, setCopied] = useState(false);
   const touch = useMedia(TOUCH);
 
-  const load = useCallback(async (make: (progress: (m: string) => void, signal: AbortSignal) => Promise<Project | Comparison>) => {
+  const load = useCallback(async (make: (progress: (m: string) => void, signal: AbortSignal) => Promise<Project | Comparison>, sharedTrunks = trunksRef.current) => {
     loading.current?.abort();
     const { signal } = (loading.current = new AbortController());
     // The project on screen stops writing the address the new one is loaded into.
@@ -102,7 +108,7 @@ export default function App() {
       const project = comparison ? comparison.head : made as Project;
       if (!project.files.length) throw new Error('No files found.');
       setBusy(comparison ? `Analyzing the change's ${project.files.length} files…` : `Analyzing ${project.files.length} files…`);
-      const result = await analyzer.current.analyze(project, { sharedTrunks: trunksRef.current, signal });
+      const result = await analyzer.current.analyze(project, { sharedTrunks, signal });
       if (signal.aborted) return;
       if (!result.ok) throw new Error(result.error);
       const model = new SceneModel(result.scene, project);
@@ -111,7 +117,7 @@ export default function App() {
       if (comparison) {
         // The base is analyzed the same way, only to be compared with.
         setBusy('Comparing with the base…');
-        const before = await analyzer.current.analyze(comparison.base, { sharedTrunks: trunksRef.current, signal });
+        const before = await analyzer.current.analyze(comparison.base, { sharedTrunks, signal });
         if (signal.aborted) return;
         if (!before.ok) throw new Error(before.error);
         const base = new SceneModel(before.scene, comparison.base);
@@ -125,6 +131,8 @@ export default function App() {
       setChangesOpen(true);
       setView({ path: [] });
       setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed, compare });
+      // Only now: a re-layout cancelled or failed leaves the switch as the diagram on screen is.
+      chooseTrunks(sharedTrunks);
       setDialog(null);
       const info = comparison?.info;
       document.title = info ? `${info.kind === 'pr' ? `#${info.number} ` : ''}${info.title} · ${result.scene.title} · blockviz` : `${result.scene.title} · blockviz`;
@@ -427,12 +435,9 @@ export default function App() {
           aria-label="Tidy arrows"
           title="Tidy arrows: draw one branching line out of each block, not a separate line for every value"
           onClick={() => {
-            const on = !trunks;
-            setTrunks(on);
-            trunksRef.current = on;
-            storage.set('blockviz.trunks', on ? '1' : '');
             // Lay the same project out again; the address brings the view back.
-            if (loaded) void load(async () => loaded.compare?.comparison ?? loaded.project);
+            if (loaded) void load(async () => loaded.compare?.comparison ?? loaded.project, !trunks);
+            else chooseTrunks(!trunks);
           }}
         ><Split size={15} /><span className="switch" aria-hidden="true"><i /></span></button>
       </div>
