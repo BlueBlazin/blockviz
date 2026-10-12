@@ -225,7 +225,7 @@ pub fn parse(b: &mut Builder, inputs: Vec<JsInput>, resolver: &Resolver, diagnos
         };
         let from = input.path.clone();
         let resolve = |spec: &str| resolver.resolve(&from, spec);
-        let lowerer = lower::Lower { text, required: Default::default(), stem, docs, resolve: &resolve, overload_doc: Default::default() };
+        let lowerer = lower::Lower { text, required: Default::default(), stem, docs, resolve: &resolve, overload_doc: Default::default(), generics: Default::default() };
         let body = lowerer.program(&ret.program);
         let first_code_line = ret.program.body.first().map(|s| oxc_span::GetSpan::span(s).start as usize).map(|o| input.text[..o.min(input.text.len())].bytes().filter(|c| *c == b'\n').count() as u32 + 1).unwrap_or(u32::MAX);
         let directives: Vec<String> = ret.program.directives.iter().map(|d| d.directive.to_string()).collect();

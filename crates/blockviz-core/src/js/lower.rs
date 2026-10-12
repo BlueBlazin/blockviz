@@ -11,6 +11,7 @@
 use crate::code::syntax::*;
 use oxc_ast::ast as js;
 use oxc_span::{GetSpan, Span};
+use std::collections::HashMap;
 
 mod objects;
 
@@ -27,6 +28,9 @@ pub struct Lower<'s> {
     /// The documentation of a function's overload signatures, for its
     /// implementation: (name, doc).
     pub overload_doc: std::cell::RefCell<Option<(String, String)>>,
+    /// Type parameters in scope with the type each extends
+    /// (`<R extends Repo>`), innermost last.
+    pub generics: std::cell::RefCell<Vec<HashMap<String, Expr>>>,
 }
 
 /// A TypeScript parameter property (`constructor(private users: UsersService)`):
@@ -870,7 +874,29 @@ impl<'s> Lower<'s> {
         body.map(|b| self.stmts(&b.statements)).unwrap_or_default()
     }
 
+    /// Lowers `f` with the type parameters of `decl` in scope: a value of
+    /// `R extends Repo` is a Repo.
+    fn generic<T>(&self, decl: Option<&js::TSTypeParameterDeclaration>, f: impl FnOnce() -> T) -> T {
+        let mut scope = HashMap::new();
+        for p in decl.into_iter().flat_map(|d| &d.params) {
+            if let Some(c) = &p.constraint {
+                let e = self.type_expr(c);
+                if matches!(e, Expr::Name(_) | Expr::Attribute(_)) {
+                    scope.insert(p.name.name.to_string(), e);
+                }
+            }
+        }
+        self.generics.borrow_mut().push(scope);
+        let out = f();
+        self.generics.borrow_mut().pop();
+        out
+    }
+
     fn function(&self, f: &js::Function, name: &str, span: Span, kind: DefKind, receiver: bool, fields: &[Stmt]) -> FunctionDef {
+        self.generic(f.type_parameters.as_deref(), || self.function_inner(f, name, span, kind, receiver, fields))
+    }
+
+    fn function_inner(&self, f: &js::Function, name: &str, span: Span, kind: DefKind, receiver: bool, fields: &[Stmt]) -> FunctionDef {
         let (params, properties) = self.params(&f.params, receiver.then_some(f.params.span));
         let mut body: Vec<Stmt> = fields.to_vec();
         // Parameter properties are fields the constructor sets.
@@ -898,6 +924,10 @@ impl<'s> Lower<'s> {
     }
 
     fn arrow(&self, a: &js::ArrowFunctionExpression, name: &str, span: Span, kind: DefKind, receiver: bool) -> FunctionDef {
+        self.generic(a.type_parameters.as_deref(), || self.arrow_inner(a, name, span, kind, receiver))
+    }
+
+    fn arrow_inner(&self, a: &js::ArrowFunctionExpression, name: &str, span: Span, kind: DefKind, receiver: bool) -> FunctionDef {
         let (params, _) = self.params(&a.params, receiver.then_some(a.params.span));
         let body = match &a.body {
             js::ArrowFunctionBody::FunctionBody(b) => self.stmts(&b.statements),
@@ -932,6 +962,10 @@ impl<'s> Lower<'s> {
     }
 
     fn class(&self, c: &js::Class, name: Option<&str>, span: Span) -> ClassDef {
+        self.generic(c.type_parameters.as_deref(), || self.class_inner(c, name, span))
+    }
+
+    fn class_inner(&self, c: &js::Class, name: Option<&str>, span: Span) -> ClassDef {
         let name = c.id.as_ref().map(|i| i.name.to_string()).or_else(|| name.map(str::to_string)).unwrap_or_else(|| self.stem.clone());
         let mut body = vec![];
         // Instance fields with initial values are set as the constructor starts.
@@ -1107,7 +1141,16 @@ impl<'s> Lower<'s> {
     /// types the field); anything else is kept as text.
     fn type_expr(&self, t: &js::TSType) -> Expr {
         match t {
-            js::TSType::TSTypeReference(x) => self.type_name(&x.type_name),
+            // `repo: R` where `R extends Repo`: a Repo.
+            js::TSType::TSTypeReference(x) => {
+                if let js::TSTypeName::IdentifierReference(i) = &x.type_name {
+                    let bound = self.generics.borrow().iter().rev().find_map(|g| g.get(i.name.as_str()).cloned());
+                    if let Some(e) = bound {
+                        return e;
+                    }
+                }
+                self.type_name(&x.type_name)
+            }
             other => Expr::Other(atom(other.span())),
         }
     }

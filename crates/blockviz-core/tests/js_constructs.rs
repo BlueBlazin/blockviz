@@ -583,3 +583,16 @@ fn calls_through_interfaces_and_abstract_classes_reach_implementations() {
     }
     assert!(method("Notifier", "send").badges.contains(&"abstract".to_string()));
 }
+
+#[test]
+fn type_parameters_are_the_type_they_extend() {
+    let s = analyze(&[(
+        "src/cache.ts",
+        "/** Where users are kept. */\nexport interface Repo {\n  find(id: string): Promise<string>;\n}\n\nexport class PgRepo implements Repo {\n  async find(id: string) {\n    return await fetch(`/users/${id}`).then((r) => r.text());\n  }\n}\n\n/** Caches any repository. */\nexport class Cached<R extends Repo> {\n  constructor(private inner: R) {}\n  async find(id: string) {\n    return (await this.inner.find(id)).trim();\n  }\n}\n\nexport async function lookup<R extends Repo>(repo: R, id: string) {\n  return (await repo.find(id)).toUpperCase();\n}\n\nexport const users = new Cached(new PgRepo());\n",
+    )]);
+    let pg_find = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == "find" && s.nodes[n.parent.unwrap() as usize].title == "PgRepo").expect("PgRepo.find");
+    let calls = |f: &Node| descendants(&s, f).into_iter().filter(|n| n.kind == Kind::Call && n.title == "find").map(|n| n.reference).collect::<Vec<_>>();
+    let cached_find = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == "find" && s.nodes[n.parent.unwrap() as usize].title == "Cached").expect("Cached.find");
+    assert_eq!(calls(cached_find), [Some(pg_find.id)]);
+    assert_eq!(calls(find(&s, "lookup")), [Some(pg_find.id)]);
+}
