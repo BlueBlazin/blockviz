@@ -115,22 +115,24 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .row-heading { margin: 6px 0 2px; font-size: 10.5px; font-weight: 700; color: #8a6d1f; text-transform: uppercase; }
 .insp-source { margin-top: 14px; }
 
-/* Source view: line numbers stay put while long lines scroll sideways. */
+/* Source view: long lines wrap under their own indentation. */
 .code {
   margin: 0; padding: 8px 0; background: #f8f9fa; border: 1px solid var(--line); border-radius: 8px;
-  font: 11.5px/1.6 var(--mono); color: #1f2328; overflow-x: auto; white-space: pre; tab-size: 4;
+  font: 11.5px/1.6 var(--mono); color: #1f2328; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4;
 }
 .code.plain { padding: 10px 12px; }
-.code code { display: block; width: max-content; min-width: 100%; font: inherit; }
-.code .ln { padding-right: 12px; }
+.code code { display: block; font: inherit; }
+.code .ln { display: grid; grid-template-columns: auto 1fr; padding-right: 10px; border-left: 2px solid transparent; }
 .code .no {
-  position: sticky; left: 0; display: inline-block; box-sizing: content-box; width: calc(var(--digits, 2) * 1ch); padding: 0 12px 0 10px; margin-right: 2px;
-  text-align: right; color: #a3a9b2; background: #f8f9fa; user-select: none;
+  box-sizing: content-box; width: calc(var(--digits, 2) * 1ch); padding: 0 10px 0 8px;
+  text-align: right; color: #a3a9b2; user-select: none;
 }
+.code .src { min-width: 0; }
 .code .faded { opacity: 0.42; }
-.code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
-.code.wrap code { width: auto; }
-.code.wrap .ln { display: grid; grid-template-columns: auto 1fr; }
+.code.interactive .ln { cursor: pointer; }
+.code .ln.hovered, .code.interactive .ln:hover { background: #eef1f5; }
+.code .ln.marked { background: #e3ebfd; border-left-color: var(--accent); }
+.code .ln.marked .no { color: var(--accent); }
 .code-more { padding: 6px 12px 0; color: var(--faint); font-family: var(--ui); font-size: 11.5px; position: sticky; left: 0; }
 /* Syntax classes, numbered as in crates/blockviz-core/src/highlight (Hl). */
 .t1 { color: #cf222e; }                     /* keyword */

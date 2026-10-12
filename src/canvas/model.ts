@@ -3,6 +3,16 @@ import { childXf, parentXf, type Xf } from './geometry';
 
 export interface SearchEntry { id: number; title: string; detail: string; path: string; haystack: string; rank: number }
 
+/** Source shown for a block: `span` around it, read as part of `root`. */
+export interface SourceView { root: SceneNode; span: Span }
+
+/** Blocks whose own source is what a reader wants to see: definitions and files. */
+const WHOLE = new Set(['repo', 'dir', 'file', 'notebook', 'doc', 'asset', 'class', 'function', 'section']);
+/** A step is shown inside its definition when that is at most this long. */
+const CONTEXT_LINES = 80;
+/** …and otherwise with this many lines either side. */
+const WINDOW = 8;
+
 /** Read-only helpers over a laid-out scene. */
 export class SceneModel {
   readonly nodes: SceneNode[];
@@ -10,6 +20,7 @@ export class SceneModel {
   private encoded = new Map<number, Uint8Array>();
   private texts: (string | undefined)[];
   private index: SearchEntry[] | null = null;
+  private lineStarts = new Map<number, Uint32Array>();
 
   constructor(readonly scene: Scene, project: Project) {
     this.nodes = scene.nodes;
@@ -78,6 +89,101 @@ export class SceneModel {
 
   fileText(file: number): string | undefined {
     return this.texts[file];
+  }
+
+  /**
+   * The source to show for a block. Definitions and files show their own
+   * code; a step is shown in the definition around it (or with a few lines
+   * either side when that is long), so a single line is never read alone.
+   */
+  sourceView(n: SceneNode): SourceView | null {
+    const span = n.span;
+    if (!span) return null;
+    if (WHOLE.has(n.kind)) return { root: n, span };
+    let root = n;
+    for (let p = n.parent; p !== undefined; p = this.nodes[p].parent) {
+      const a = this.nodes[p];
+      if (!a.span || a.span.file !== span.file || a.span.start > span.start || a.span.end < span.end) continue;
+      if (!WHOLE.has(a.kind)) continue;
+      root = a;
+      if (a.span.endLine - a.span.line <= CONTEXT_LINES) return { root: a, span: a.span };
+      break;
+    }
+    return { root, span: this.window(span, WINDOW) };
+  }
+
+  /** A span's lines plus `k` lines either side. */
+  window(span: Span, k: number): Span {
+    const starts = this.starts(span.file);
+    if (!starts) return span;
+    const lines = starts.length;
+    const line = Math.max(1, span.line - k);
+    const endLine = Math.min(lines, span.endLine + k);
+    const bytes = this.fileBytes(span.file)!;
+    return { file: span.file, start: starts[line - 1], end: endLine < lines ? starts[endLine] : bytes.length, line, endLine };
+  }
+
+  /** Byte offset of each line's start. */
+  private starts(file: number): Uint32Array | null {
+    let s = this.lineStarts.get(file);
+    if (!s) {
+      const bytes = this.fileBytes(file);
+      if (!bytes) return null;
+      const out = [0];
+      for (let i = 0; i < bytes.length; i++) if (bytes[i] === 10 && i + 1 < bytes.length) out.push(i + 1);
+      s = Uint32Array.from(out);
+      this.lineStarts.set(file, s);
+    }
+    return s;
+  }
+
+  /**
+   * The block drawn for a line of `root`'s source: the smallest block inside
+   * it whose code covers the line, or `root` itself.
+   */
+  blockAt(root: SceneNode, line: number): SceneNode {
+    const file = root.span?.file;
+    let best = root;
+    let size = Infinity;
+    const visit = (n: SceneNode) => {
+      for (const c of n.children ?? []) {
+        const k = this.nodes[c];
+        const sp = k.span;
+        if (!sp || sp.file !== file || line < sp.line || line > sp.endLine) {
+          // Sections and arms may have no span of their own; their steps do.
+          if (!sp) visit(k);
+          continue;
+        }
+        if (k.kind !== 'input' && k.kind !== 'output') {
+          const lines = sp.endLine - sp.line;
+          const extent = lines * 1e7 + (sp.end - sp.start);
+          if (extent <= size) {
+            best = k;
+            size = extent;
+          }
+        }
+        visit(k);
+      }
+    };
+    visit(root);
+    return best;
+  }
+
+  /**
+   * An instance path to `target` that stays where the reader is: through the
+   * deepest element of `near` whose interior holds `target` (the call it was
+   * reached through), else the target's own definition site.
+   */
+  instancePath(target: number, near: number[] | null): number[] {
+    const canonical = this.canonicalPath(target);
+    if (!near) return canonical;
+    for (let i = near.length - 1; i >= 0; i--) {
+      const n = this.nodes[near[i]];
+      const owner = this.owner(n) ?? n;
+      const j = canonical.indexOf(owner.id);
+      if (j >= 0) return [...near.slice(0, i + 1), ...canonical.slice(j + 1)];
+    }
+    return canonical;
   }
 
   search(): SearchEntry[] {

@@ -3,7 +3,7 @@ import { useRef, type CSSProperties } from 'react';
 import type { SceneNode } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
-import { CodeView } from './CodeView';
+import { CodeView, type LineRange } from './CodeView';
 
 export const KIND_LABEL: Record<string, string> = {
   repo: 'Repository', dir: 'Folder', file: 'File', notebook: 'Notebook', doc: 'Document', asset: 'Asset',
@@ -21,8 +21,6 @@ function List({ label, values, mono = true }: { label: string; values?: string[]
     </div>
   );
 }
-
-const PROSE = /\.(md|markdown|mdx|rst|txt|adoc)$/i;
 
 export interface PanelSize { w: number; h: number }
 
@@ -87,22 +85,35 @@ function ResizeHandle({ size, onResize }: { size: PanelSize; onResize: (s: Panel
   );
 }
 
-export function Inspector({ model, highlights, node, size, onResize, onClose, onZoom, onGo }: {
+export function Inspector({ model, highlights, node, hover, size, onResize, onClose, onZoom, onGo, onPick, onPeek }: {
   model: SceneModel;
   highlights: Highlights;
   node: SceneNode;
+  /** The block under the pointer in the diagram: its lines are tinted. */
+  hover: number | null;
   size: PanelSize;
   onResize: (size: PanelSize) => void;
   onClose: () => void;
   onZoom: () => void;
   onGo: (id: number) => void;
+  /** A line of the source was clicked: select the block drawn for it. */
+  onPick: (id: number) => void;
+  /** The pointer is on a line: point out its block in the diagram. */
+  onPeek: (id: number | null) => void;
 }) {
   const owner = model.owner(node);
   const target = node.link ?? node.ref;
   const def = target !== undefined && target !== node.id ? model.node(target) : null;
   const span = node.span;
   const file = model.fileOf(node);
-  const hasSource = !!span && !!model.fileBytes(span.file);
+  // A step is read in the definition around it, its own lines marked.
+  const view = model.sourceView(node);
+  const hasSource = !!view && !!model.fileBytes(view.span.file);
+  const marked: LineRange | null = view && span && view.root !== node ? [span.line, span.endLine] : null;
+  const h = hover !== null ? model.node(hover) : null;
+  const hovered: LineRange | null = view && h?.span && h.id !== view.root.id && h.span.file === view.span.file
+    && h.span.start >= view.span.start && h.span.end <= view.span.end ? [h.span.line, h.span.endLine] : null;
+  const where = view && view.root !== node && view.root.kind !== 'file' ? view.root.title : null;
   const kind = KIND_LABEL[node.kind] ?? node.kind;
   const effects = node.effects?.filter(e => !e.startsWith('__'));
   return (
@@ -135,8 +146,21 @@ export function Inspector({ model, highlights, node, size, onResize, onClose, on
         )}
         {(hasSource || node.code) && (
           <div className="insp-source">
-            <label>{file ? <>{file}{span ? <span className="dim"> · {span.line === span.endLine ? `line ${span.line}` : `lines ${span.line}–${span.endLine}`}</span> : null}</> : 'Code'}</label>
-            {hasSource ? <CodeView model={model} highlights={highlights} span={span!} wrap={PROSE.test(file ?? '')} /> : <pre className="code plain">{dedent(node.code!)}</pre>}
+            <label>{file ? <>{file}{span ? <span className="dim">{where ? ` · in ${where}` : ''} · {span.line === span.endLine ? `line ${span.line}` : `lines ${span.line}–${span.endLine}`}</span> : null}</> : 'Code'}</label>
+            {hasSource
+              ? <CodeView
+                  model={model}
+                  highlights={highlights}
+                  span={view!.span}
+                  marked={marked}
+                  hovered={hovered}
+                  onLine={line => onPick(model.blockAt(view!.root, line).id)}
+                  onLineHover={line => {
+                    const b = line === null ? null : model.blockAt(view!.root, line);
+                    onPeek(b && b !== view!.root ? b.id : null);
+                  }}
+                />
+              : <pre className="code plain">{dedent(node.code!)}</pre>}
           </div>
         )}
       </div>

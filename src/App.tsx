@@ -42,6 +42,7 @@ export default function App() {
   const [showLegend, setShowLegend] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [hoverId, setHoverId] = useState<number | null>(null);
   const hoverTimer = useRef(0);
   const [panel, setPanel] = useState<PanelSize>(() => clampPanel({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -104,6 +105,7 @@ export default function App() {
       onHover: (id, x, y) => {
         clearTimeout(hoverTimer.current);
         setHover(null);
+        setHoverId(id);
         // The card appears once the pointer rests, not while it sweeps across blocks.
         if (id !== null) hoverTimer.current = window.setTimeout(() => setHover({ id, x, y }), 350);
       },
@@ -139,6 +141,15 @@ export default function App() {
     engine.current?.setInsets(overlayInsets(true, panel));
     engine.current?.flyToNode(id);
   }, [loaded, panel]);
+
+  /** Selects a block for a line of source, staying in the instance being read. */
+  const pick = useCallback((id: number) => {
+    if (!loaded) return;
+    const path = loaded.model.instancePath(id, selectedPath);
+    setSelected(id);
+    setSelectedPath(path);
+    engine.current?.reveal(path);
+  }, [loaded, selectedPath]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -257,11 +268,14 @@ export default function App() {
           model={loaded.model}
           highlights={loaded.highlights}
           node={node}
+          hover={hoverId}
           size={panel}
           onResize={setPanel}
-          onClose={() => { setSelected(null); setSelectedPath(null); }}
+          onClose={() => { setSelected(null); setSelectedPath(null); engine.current?.peek(null); }}
           onZoom={() => selectedPath && engine.current?.flyTo(selectedPath)}
           onGo={goTo}
+          onPick={pick}
+          onPeek={id => engine.current?.peek(id)}
         />
       )}
 

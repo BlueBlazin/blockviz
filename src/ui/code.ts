@@ -106,3 +106,16 @@ export function dedent(lines: CodeLine[]): CodeLine[] {
     return { no: l.no, segs };
   });
 }
+
+/** Width of a line's leading whitespace, in characters (a tab is four). */
+export function indentWidth(l: CodeLine): number {
+  let n = 0;
+  for (const s of l.segs) {
+    for (const ch of s.text) {
+      if (ch === ' ') n++;
+      else if (ch === '\t') n += 4;
+      else return n;
+    }
+  }
+  return 0;
+}

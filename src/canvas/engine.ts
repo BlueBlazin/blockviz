@@ -28,6 +28,8 @@ export class Engine {
   private dpr = 1;
   private frame = 0;
   private hover: number | null = null;
+  /** A block pointed out from outside the canvas (a line of its source). */
+  private peeked: number | null = null;
   private selected: number | null = null;
   private flight: { start: number; duration: number; step: (t: number) => void } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
@@ -79,6 +81,22 @@ export class Engine {
   select(id: number | null) {
     this.selected = id;
     this.invalidate();
+  }
+
+  /** Points out a block, as hovering it would. */
+  peek(id: number | null) {
+    if (id === this.peeked) return;
+    this.peeked = id;
+    this.invalidate();
+  }
+
+  /** Brings a block into view unless it is already on screen and legible. */
+  reveal(path: number[]) {
+    const id = path[path.length - 1];
+    const i = this.camera.insets;
+    const seen = this.renderer.hits.some(h => h.id === id && h.clear
+      && h.box.x >= i.left && h.box.y >= i.top && h.box.x + h.box.w <= this.width - i.right && h.box.y + h.box.h <= this.height - i.bottom);
+    if (!seen) this.flyTo(path);
   }
 
   /** Screen margins covered by overlays, kept clear when framing. */
@@ -237,7 +255,7 @@ export class Engine {
     this.renderer.draw({
       width: this.width,
       height: this.height,
-      hover: this.hover,
+      hover: this.hover ?? this.peeked,
       selected: this.selected,
       path: this.camera.path,
       xfs: this.camera.transforms(),
