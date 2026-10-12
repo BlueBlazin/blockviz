@@ -117,8 +117,9 @@ pub struct Scratch {
     out_x: Vec<f64>,
     in_x: Vec<f64>,
     ports: Vec<(f64, usize, usize)>,
-    port_of: Vec<usize>,
+    port_slot: Vec<usize>,
     port_x: Vec<f64>,
+    port_label: Vec<bool>,
     perm: Vec<usize>,
     ins: Vec<usize>,
     free: Vec<usize>,
@@ -127,7 +128,7 @@ pub struct Scratch {
     channel_h: Vec<f64>,
     channel_label: Vec<f64>,
     buses: Vec<(f64, f64, f64, usize)>,
-    bus_of: Vec<usize>,
+    bus_at: Vec<usize>,
     runs: Vec<(f64, f64)>,
     band_y: Vec<f64>,
 }
@@ -351,7 +352,8 @@ struct Seg {
     weight: f64,
     from_x: Option<f64>,
     to_x: Option<f64>,
-    port: u64,
+    /// The port it leaves by, one per (vertex, group).
+    port: usize,
 }
 
 /// Layered layout of one connected piece.
@@ -367,8 +369,8 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         adj, reversed, state, roots, dfs, succ, pred, indeg, topo, ready, layer,
         vw, vh, vlayer, vorder, vrank, segs, groups, grouped, by_group, links, chains, vsucc, vpred,
         layers, best, pos, tree, keyed, offs, springs, x, blocks,
-        end_label, out_x, in_x, ports, port_of, port_x, perm, ins, free, steps,
-        band_h, channel_h, channel_label, buses, bus_of, runs, band_y, ..
+        end_label, out_x, in_x, ports, port_slot, port_x, port_label, perm, ins, free, steps,
+        band_h, channel_h, channel_label, buses, bus_at, runs, band_y, ..
     } = scratch;
 
     // 1. Orient edges: break cycles with a DFS in source order; pins win.
@@ -490,11 +492,11 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     vrank.clear();
     vrank.extend(nodes.iter().map(|v| v.rank));
     segs.clear();
-    let mut seg_index: Map<(usize, usize, u64), usize> = Map::default();
+    let mut seg_index: Map<(usize, usize, u64), usize> = Map::with_capacity_and_hasher(edges.len(), Default::default());
     // Edges by (source, group, reversed), in order of first appearance.
     groups.clear();
     grouped.clear();
-    let mut group_at: Map<(usize, u64, bool), usize> = Map::default();
+    let mut group_at: Map<(usize, u64, bool), usize> = Map::with_capacity_and_hasher(edges.len(), Default::default());
     for (ei, e) in edges.iter().enumerate() {
         if !e.draw || e.from == e.to {
             continue;
@@ -508,12 +510,16 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         grouped.push((g, ei));
     }
     by_group.fill(groups.len(), grouped.iter().copied());
-    let mut add_seg = |segs: &mut Vec<Seg>, a: usize, b: usize, port: u64, weight: f64, from_x: Option<f64>, to_x: Option<f64>| -> usize {
+    // Ports by (vertex, group), numbered as segments first leave by them.
+    let mut port_at: Map<(usize, u64), usize> = Map::with_capacity_and_hasher(edges.len(), Default::default());
+    let mut add_seg = |segs: &mut Vec<Seg>, a: usize, b: usize, group: u64, weight: f64, from_x: Option<f64>, to_x: Option<f64>| -> usize {
         let key = (a, b, if to_x.is_some() { to_x.unwrap().to_bits() } else { u64::MAX });
         if let Some(&s) = seg_index.get(&key) {
             segs[s].weight = segs[s].weight.max(weight);
             return s;
         }
+        let next = port_at.len();
+        let port = *port_at.entry((a, group)).or_insert(next);
         segs.push(Seg { a, b, weight, from_x, to_x, port });
         seg_index.insert(key, segs.len() - 1);
         segs.len() - 1
@@ -782,9 +788,8 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         let s = &segs[si];
         s.to_x.map(|tx| left(s.b) + tx).unwrap_or(x[s.b])
     };
-    // Where each (vertex, group) is among its vertex's ports.
-    let mut port_at: Map<(usize, u64), usize> = Map::default();
-    refill(port_of, segs.len(), 0);
+    // Where each port is among its vertex's ports.
+    refill(port_slot, port_at.len(), usize::MAX);
     for v in 0..nv {
         if is_dummy(v) || nodes[v].converge {
             for &si in &vsucc[v] {
@@ -795,13 +800,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         // Per port: the sum of its targets, its segments and its first segment.
         ports.clear();
         for &si in &vsucc[v] {
-            let k = *port_at.entry((v, segs[si].port)).or_insert_with(|| {
+            let p = segs[si].port;
+            if port_slot[p] == usize::MAX {
+                port_slot[p] = ports.len();
                 ports.push((0., 0, si));
-                ports.len() - 1
-            });
+            }
+            let k = port_slot[p];
             ports[k].0 += target_x(si);
             ports[k].1 += 1;
-            port_of[si] = k;
         }
         // Ports left to right by where they lead.
         perm.clear();
@@ -824,7 +830,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
             port_x[k] = px;
         }
         for &si in &vsucc[v] {
-            out_x[si] = port_x[port_of[si]];
+            out_x[si] = port_x[port_slot[segs[si].port]];
         }
     }
     for v in 0..nv {
@@ -866,18 +872,20 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     band_h.clear();
     band_h.extend((0..nlayers).map(|l| layers[l].iter().map(|&v| vh[v]).fold(0., f64::max)));
     // Labels sit under the port an edge leaves, or above the reader it reaches.
-    let labeled_port: Set<(usize, u64)> = edges
-        .iter()
-        .enumerate()
-        .filter(|(ei, e)| !arrive && e.draw && e.label && !reversed[*ei])
-        .map(|(ei, e)| (oriented(ei).0, e.group))
-        .collect();
+    refill(port_label, port_at.len(), false);
+    for (ei, e) in edges.iter().enumerate() {
+        if !arrive && e.draw && e.label && !reversed[ei] {
+            if let Some(&p) = port_at.get(&(oriented(ei).0, e.group)) {
+                port_label[p] = true;
+            }
+        }
+    }
     refill(channel_h, nlayers, LAYER_GAP);
     refill(channel_label, nlayers, 0.);
-    // Buses by their key, each (min, max, start x, track); horizontal segments' buses.
-    let mut bus_at: Map<(usize, u64), usize> = Map::default();
+    // Buses, each (min, max, start x, track), and the bus that the
+    // horizontal runs leaving each port share.
     buses.clear();
-    refill(bus_of, segs.len(), usize::MAX);
+    refill(bus_at, port_at.len(), usize::MAX);
     for l in 0..nlayers - 1 {
         let first = buses.len();
         for &v in &layers[l] {
@@ -886,15 +894,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
                 if (x1 - x2).abs() < 0.5 {
                     continue;
                 }
-                let key = (v, if is_dummy(v) { 0 } else { segs[si].port });
-                let i = *bus_at.entry(key).or_insert_with(|| {
+                let p = segs[si].port;
+                if bus_at[p] == usize::MAX {
+                    bus_at[p] = buses.len();
                     buses.push((x1.min(x2), x1.max(x2), x1, 0));
-                    buses.len() - 1
-                });
-                let b = &mut buses[i];
+                }
+                let b = &mut buses[bus_at[p]];
                 b.0 = b.0.min(x1.min(x2));
                 b.1 = b.1.max(x1.max(x2));
-                bus_of[si] = i;
             }
         }
         // Rightward buses whose start is further right sit higher; leftward mirror.
@@ -913,7 +920,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         let used = tracks.iter().map(|t| t + 1).max().unwrap_or(0);
         // Room for labels: above the tracks for those leaving this layer, below
         // them for those arriving at the next.
-        let has_label = layers[l].iter().any(|&v| vsucc[v].iter().any(|&si| end_label[si].is_some() || (!is_dummy(v) && labeled_port.contains(&(v, segs[si].port)))));
+        let has_label = layers[l].iter().any(|&v| vsucc[v].iter().any(|&si| end_label[si].is_some() || port_label[segs[si].port]));
         channel_label[l] = if has_label { LABEL_H } else { 0. };
         channel_h[l] = (LAYER_GAP + channel_label[l] * 0.6).max(channel_label[l] + (used as f64 + 1.) * TRACK_GAP + 6.);
     }
@@ -931,7 +938,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
 
     // 8. Routes.
     // Segments in no bus run within the last layer, on its first track.
-    let track = |si: usize| buses.get(bus_of[si]).map_or(0, |b| b.3);
+    let track = |si: usize| buses.get(bus_at[segs[si].port]).map_or(0, |b| b.3);
     let track_y = |si: usize| {
         let l = vlayer[segs[si].a];
         band_y[l] + band_h[l] + if arrive { 0. } else { channel_label[l] } + (track(si) as f64 + 1.) * TRACK_GAP + 2.
@@ -962,20 +969,20 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         out.routes[ei] = route;
     }
     // Each branch says what it carries just above the block it reaches; or
-    // one label per port, just under the block it leaves.
-    let mut labeled: Set<(usize, u64)> = Set::default();
-    for (ei, e) in edges.iter().enumerate() {
-        let chain = chain_of(ei);
-        if !e.draw || !e.label || reversed[ei] || chain.is_empty() {
-            continue;
+    // one label per port, on the first edge of its group, just under the
+    // block it leaves.
+    if arrive {
+        for (ei, e) in edges.iter().enumerate() {
+            let chain = chain_of(ei);
+            if e.draw && e.label && !reversed[ei] && !chain.is_empty() {
+                let si = chain[chain.len() - 1];
+                out.labels[ei] = Some((in_x[si] + 4., top(segs[si].b) - 4.));
+            }
         }
-        if arrive {
-            let si = *chain.last().unwrap();
-            out.labels[ei] = Some((in_x[si] + 4., top(segs[si].b) - 4.));
-        } else {
-            let (a, _) = oriented(ei);
-            if labeled.insert((a, e.group)) {
-                let si = chain[0];
+    } else {
+        for (g, &(a, _, rev)) in groups.iter().enumerate() {
+            if let Some(&ei) = by_group[g].iter().find(|&&ei| !rev && edges[ei].label) {
+                let si = chain_of(ei)[0];
                 out.labels[ei] = Some((out_x[si] + 4., top(a) + vh[a] + 10.5));
             }
         }
