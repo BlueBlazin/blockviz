@@ -62,10 +62,9 @@ export class Navigation {
     const at = params.get('at') ?? null;
     const sel = params.get('sel') ?? null;
     if (at !== null) this.engine.flyTo(decodePath(this.model, at), 'fit', 0.04, false);
-    if (sel !== null) {
-      const path = decodePath(this.model, sel);
-      this.select(path.length > 1 ? { id: path[path.length - 1], path } : null);
-    }
+    // A link names its selection, or none.
+    const path = sel === null ? [] : decodePath(this.model, sel);
+    this.select(path.length > 1 ? { id: path[path.length - 1], path } : null);
   }
 
   get canBack() { return this.index > 0; }

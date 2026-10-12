@@ -12,6 +12,7 @@ import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspe
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Tooltip } from './ui/Tooltip';
+import { Minimap } from './ui/Minimap';
 import { hashParam, hashParams, Navigation } from './ui/navigation';
 
 interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
@@ -223,6 +224,8 @@ export default function App() {
 
   const node = loaded && selected !== null ? loaded.model.node(selected) : null;
   const stats = loaded?.scene.stats;
+  // Inside code reached through a call (… › block › attn): where that code is defined.
+  const borrowed = useMemo(() => (loaded ? loaded.model.borrowedDefinition(view.path) : null), [loaded, view.path]);
 
   return (
     <main
@@ -236,7 +239,7 @@ export default function App() {
         if (items?.length) void load(p => droppedProject(items, p));
       }}
     >
-      <canvas ref={canvas} tabIndex={0} aria-label="Code diagram. Scroll or pinch to zoom, drag to pan, double-click a block to zoom into it, press / to search." />
+      <canvas ref={canvas} className="stage" tabIndex={0} aria-label="Code diagram. Scroll or pinch to zoom, drag to pan, double-click a block to zoom into it, press / to search." />
 
       <nav className="topbar" aria-label="Location">
         <button className="brand" onClick={() => engine.current?.home()} title="Whole project (H)">
@@ -257,6 +260,12 @@ export default function App() {
           ))}
         </div>
       </nav>
+      {borrowed && loaded && (
+        <button className="defined-in" title="Go to where this code is defined" onClick={() => goTo(borrowed.id)}>
+          defined in <strong>{loaded.model.qualified(borrowed.id)}</strong>
+          {borrowed.span && <span className="dim"> · {loaded.model.fileOf(borrowed)?.split('/').pop()}:{borrowed.span.line}</span>}
+        </button>
+      )}
 
       <div className="toolbar">
         <button className="search-button" onClick={() => setDialog('search')} aria-label="Search">
@@ -290,6 +299,8 @@ export default function App() {
         </button>
         {stats && <span className="stats">{stats.files} files · {stats.lines.toLocaleString()} lines · {stats.nodes.toLocaleString()} blocks · {Math.round(loaded!.elapsed)} ms</span>}
       </div>
+
+      {!showLegend && loaded && engine.current && view.path.length > 1 && <Minimap model={loaded.model} engine={engine.current} view={view} />}
 
       {showLegend && (
         <aside className="legend" aria-label="Legend">

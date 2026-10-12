@@ -119,11 +119,28 @@ export class SceneModel {
   where(id: number): { name: string; at: number } | null {
     let p = this.nodes[id].parent;
     while (p !== undefined && !WHOLE.has(this.nodes[p].kind)) p = this.nodes[p].parent;
-    if (p === undefined) return null;
-    const def = this.nodes[p];
+    return p === undefined ? null : { name: this.qualified(p), at: p };
+  }
+
+  /** A definition's name as a reader would write it: `Block.forward` for a method. */
+  qualified(id: number): string {
+    const def = this.nodes[id];
     const up = def.parent !== undefined ? this.nodes[def.parent] : null;
-    const name = def.kind === 'function' && up?.kind === 'class' ? `${up.title}.${def.title}` : def.title;
-    return { name, at: p };
+    return def.kind === 'function' && up?.kind === 'class' ? `${up.title}.${def.title}` : def.title;
+  }
+
+  /**
+   * When an instance path runs through a call into code defined elsewhere
+   * (`… › block › attn`), the definition its end is in; null on a path that
+   * stays where things are defined.
+   */
+  borrowedDefinition(path: number[]): SceneNode | null {
+    if (!path.some(id => { const n = this.nodes[id]; const o = this.owner(n); return !!o && o !== n; })) return null;
+    const last = this.nodes[path[path.length - 1]];
+    const o = this.owner(last) ?? last;
+    if (WHOLE.has(o.kind)) return o;
+    const w = this.where(o.id);
+    return w ? this.nodes[w.at] : null;
   }
 
   /**

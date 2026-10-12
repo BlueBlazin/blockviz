@@ -75,4 +75,12 @@ describe('source views', () => {
     expect(m.instancePath(7, [0, 1, 2])).toEqual([0, 1, 6, 7]);
     expect(m.instancePath(7, null)).toEqual([0, 1, 6, 7]);
   });
+
+  it('says where borrowed code is defined', () => {
+    // Inside f, through the call to g: g is defined elsewhere.
+    expect(m.borrowedDefinition([0, 1, 2, 3, 4])?.id).toBe(6);
+    expect(m.borrowedDefinition([0, 1, 2, 3])).toBeNull();
+    expect(m.qualified(3)).toBe('A.f');
+    expect(m.where(5)).toEqual({ name: 'A.f', at: 3 });
+  });
 });

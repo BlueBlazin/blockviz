@@ -131,6 +131,12 @@ export class Engine {
     this.animate(this.camera.flightTo(state, this.width, this.height), false);
   }
 
+  /** Where the screen is relative to the whole project: the root's interior
+   * transform, the screen's size and the containers the view is in. */
+  overview() {
+    return { xf: this.camera.transforms()[0], width: this.width, height: this.height, path: this.focusPath() };
+  }
+
   /** The containers the view is in, root first (what the breadcrumbs show). */
   focus(): number[] {
     return this.focusPath();
