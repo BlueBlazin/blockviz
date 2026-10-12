@@ -1,6 +1,7 @@
 import { FileCode, FolderOpen, Link2, Sparkles, X } from 'lucide-react';
 import { guessFilename } from '../core/loaders';
 import { useEffect, useRef, useState } from 'react';
+import { TOUCH, useMedia } from './media';
 
 export type OpenRequest =
   | { kind: 'example' }
@@ -17,9 +18,11 @@ export function OpenDialog({ onOpen, onClose, canClose, lastUrl }: { onOpen: (r:
   const [named, setNamed] = useState(false);
   const folder = useRef<HTMLInputElement>(null);
   const urlInput = useRef<HTMLInputElement>(null);
+  const touch = useMedia(TOUCH);
   useEffect(() => {
     folder.current?.setAttribute('webkitdirectory', '');
-    urlInput.current?.focus();
+    // On a phone, focusing would cover the choices with the keyboard.
+    if (!window.matchMedia(TOUCH).matches) urlInput.current?.focus();
   }, []);
   return (
     <div className="scrim" onMouseDown={e => { if (e.target === e.currentTarget && canClose) onClose(); }}>
@@ -43,7 +46,7 @@ export function OpenDialog({ onOpen, onClose, canClose, lastUrl }: { onOpen: (r:
           </button>
           <button onClick={() => folder.current?.click()}>
             <FolderOpen size={17} />
-            <span><strong>Local folder…</strong><small>or drop a folder anywhere</small></span>
+            <span><strong>Local folder…</strong><small>{touch ? 'or files on this device' : 'or drop a folder anywhere'}</small></span>
           </button>
           <button onClick={() => setPaste(p => !p)} aria-expanded={paste}>
             <FileCode size={17} />

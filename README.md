@@ -38,7 +38,7 @@ In nanoGPT this gives `prepare.py → train.bin → train.py → ckpt.pt → sam
 
 A reader sees one small part at a time, so every part says where it fits.
 
-* Opening a block (double-click, Enter, search) zooms until its diagram is readable; a block with nothing inside is shown among its neighbours, not alone.
+* Opening a block (double-click, double-tap, Enter, search) zooms until its diagram is readable; a block with nothing inside is shown among its neighbours, not alone.
 * The details panel shows a step's code inside the function around it, its lines marked. Clicking a line selects the block drawn for it; pointing at a block or a line points out the other.
 * *Used by* lists every place a definition is used (callers of a function, constructions and components of a class, calls of a component), each a link, and outlines them in the diagram while it is in focus.
 * Clicking an arrow follows its value through the function: every edge carrying that name, through the steps that re-bind it and into its branches and loops, with where it comes from and what reads it listed.

@@ -18,6 +18,8 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* The page never scrolls or bounces; panels scroll inside themselves. */
+html, body { overscroll-behavior: none; }
 button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; border: 0; background: none; padding: 0; }
 button:disabled { opacity: 0.45; cursor: default; }
@@ -26,8 +28,9 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .dim { color: var(--faint); }
 .mono { font-family: var(--mono); }
 
-.app { position: fixed; inset: 0; overflow: hidden; background: #fff; }
-.app canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; outline: none; }
+.app { position: fixed; inset: 0; overflow: hidden; background: #fff; -webkit-tap-highlight-color: transparent; }
+.app canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; outline: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.topbar, .toolbar, .zoombar, .footer, .defined-in { -webkit-user-select: none; user-select: none; }
 .app.dragging canvas { opacity: 0.4; }
 
 .icon { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: var(--muted); }
@@ -39,6 +42,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
   pointer-events: none;
 }
 .topbar > * { pointer-events: auto; }
+.topbar > .where { display: flex; align-items: center; gap: 4px; min-width: 0; pointer-events: none; }
+.where > * { pointer-events: auto; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 14px; letter-spacing: -0.2px; padding: 6px 9px; border-radius: 8px; background: rgba(255,255,255,0.92); }
 .brand:hover { background: var(--hover); }
 .logo { display: grid; grid-template-columns: 7px 7px; grid-template-rows: 7px 7px; gap: 2px; }
@@ -52,7 +57,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .crumb-root { font-weight: 600; padding: 4px 7px; background: rgba(255,255,255,0.92); border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
 .tagline { color: var(--faint); font-size: 12px; max-width: 520px; min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(255,255,255,0.92); padding: 4px 6px; border-radius: 6px; }
 .crumbs { display: flex; align-items: center; min-width: 0; background: rgba(255,255,255,0.92); border-radius: 8px; padding: 2px; }
-.crumb { display: flex; align-items: center; color: var(--faint); min-width: 0; flex-shrink: 1; }
+.crumb { display: flex; align-items: center; color: var(--faint); min-width: 0; flex-shrink: 0; }
+.crumbs.squeeze .crumb { flex-shrink: 1; }
 .crumb button { padding: 4px 7px; border-radius: 6px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .crumb-fold { position: relative; display: inline-flex; }
 .crumb-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 12; display: flex; flex-direction: column; min-width: 180px; max-width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; }
@@ -85,7 +91,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .legend-toggle:hover, .legend-toggle.on { color: var(--ink); border-color: var(--line-strong); }
 .stats { background: rgba(255,255,255,0.85); padding: 3px 6px; border-radius: 6px; }
 
-.legend { position: absolute; left: 12px; bottom: 52px; width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; }
+.legend { position: absolute; left: 12px; bottom: 52px; width: min(300px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; }
 .legend header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .legend-grid span, .legend-lines span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
@@ -99,7 +105,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
   display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
 }
-.insp-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 16px; border-radius: inherit; }
+.insp-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 14px 16px 16px; border-radius: inherit; }
 /* Resize grip on the inner (left) edge; the top edge of the bottom sheet on narrow screens. */
 .insp-resize { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; z-index: 1; outline: none; }
 .insp-resize::after {
@@ -178,11 +184,11 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .t21 { color: #6639ba; }                    /* preprocessor, attributes, markers */
 
 /* Overlays */
-.scrim { position: absolute; inset: 0; background: rgba(250, 250, 251, 0.6); backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; z-index: 10; }
+.scrim { position: absolute; inset: 0; background: rgba(250, 250, 251, 0.6); backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; z-index: 10; }
 .palette { width: min(640px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 60px rgba(16, 24, 40, 0.18); overflow: hidden; }
 .palette-input { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); color: var(--faint); }
 .palette-input input { flex: 1; border: 0; outline: none; font-size: 15px; background: none; }
-.palette-results { max-height: 52vh; overflow: auto; padding: 6px; }
+.palette-results { max-height: 52vh; overflow: auto; overscroll-behavior: contain; padding: 6px; }
 .palette-results button { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px; }
 .palette-results button[aria-selected="true"] { background: #eef3fe; }
 .pr-title { font-weight: 550; display: flex; gap: 8px; align-items: baseline; }
@@ -190,7 +196,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .pr-path { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palette-empty { padding: 18px; color: var(--faint); text-align: center; }
 
-.open-dialog, .help { width: min(620px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 24px 60px rgba(16, 24, 40, 0.18); padding: 20px 22px 22px; }
+.open-dialog, .help { width: min(620px, calc(100vw - 32px)); max-height: 100%; overflow: auto; overscroll-behavior: contain; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 24px 60px rgba(16, 24, 40, 0.18); padding: 20px 22px 22px; }
 .open-dialog header, .help header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .open-dialog h1, .help h1 { margin: 0 0 4px; font-size: 18px; letter-spacing: -0.2px; }
 .open-dialog header p { margin: 0 0 16px; color: var(--muted); }
@@ -221,15 +227,53 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .toast.over { bottom: auto; top: 20px; }
 .drop-hint { position: absolute; inset: 24px; border: 2px dashed var(--line-strong); border-radius: 18px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--muted); pointer-events: none; }
 
+/* Phones and narrow windows: the brand, history and tools share the first
+   row, the breadcrumbs get the second, and details are a bottom sheet. */
 @media (max-width: 760px) {
-  .topbar { right: 12px; top: 56px; }
-  .search-button { min-width: 0; }
+  .topbar { right: 12px; flex-wrap: wrap; row-gap: 8px; }
+  .topbar > .where { flex-basis: 100%; }
+  .brand-name { display: none; }
+  .brand { padding: 7px 8px; }
+  .search-button { min-width: 0; width: 32px; padding: 0; justify-content: center; }
   .search-button span, .search-button kbd { display: none; }
+  .crumb button { max-width: 160px; }
+  .defined-in { top: 98px; max-width: calc(100vw - 24px); }
   .inspector { left: 12px; width: auto; max-width: none; top: auto; height: var(--panel-h, 46vh); }
+  /* The sheet is short: what is selected stays in sight while its code scrolls. */
+  .insp-head { position: sticky; top: -14px; z-index: 1; margin: -14px -16px 0; padding: 14px 16px 1px; background: var(--panel); }
   .insp-resize { left: 0; right: 0; top: -5px; bottom: auto; width: auto; height: 12px; cursor: row-resize; }
   .insp-resize::after { left: calc(50% - 18px); top: 8px; width: 36px; height: 4px; opacity: 1; }
   .open-options { grid-template-columns: 1fr; }
   .stats { display: none; }
-  .defined-in { display: none; }
+  /* Dialogs sit near the top, clear of the on-screen keyboard. */
+  .scrim { padding: 12px; }
+  .open-dialog, .help { width: 100%; padding: 16px; }
+  .keys { grid-template-columns: 1fr; }
+}
+/* Fingers: bigger targets, and fields large enough that iOS doesn't zoom into them. */
+@media (pointer: coarse) {
+  .icon { width: 36px; height: 36px; }
+  .history .icon { width: 34px; height: 34px; }
+  .search-button, .trunk-switch { height: 36px; }
+  .legend-toggle { padding: 9px 12px; }
+  .crumb button { padding: 8px; }
+  .insp-actions button { padding: 9px 12px; }
+  .uses button { padding: 9px 10px; }
+  .palette-results button { padding: 10px; }
+  .open-options button { padding: 12px; }
+  .palette-input input, .open-row input, .paste input, .paste textarea { font-size: 16px; }
+  .insp-resize { left: -12px; width: 24px; }
+  .insp-resize::after { left: 10px; opacity: 1; }
+}
+@media (max-width: 760px) and (pointer: coarse) {
+  .search-button { width: 36px; }
+  .insp-resize { left: 0; width: auto; top: -14px; height: 28px; }
+  .insp-resize::after { left: calc(50% - 18px); top: 12px; }
+}
+/* The smallest phones: tighter buttons, and the legend button is just its icon. */
+@media (max-width: 359px) {
+  .icon, .history .icon { width: 32px; height: 32px; }
+  .search-button { width: 32px; }
+  .legend-toggle span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

@@ -1,11 +1,13 @@
-import { Search as SearchIcon } from 'lucide-react';
+import { Search as SearchIcon, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SceneModel } from '../canvas/model';
+import { TOUCH, useMedia } from './media';
 
 export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: (id: number) => void; onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const touch = useMedia(TOUCH);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => input.current?.focus(), []);
   const results = useMemo(() => {
@@ -50,7 +52,7 @@ export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: 
               if (e.key === 'Escape') onClose();
             }}
           />
-          <kbd>esc</kbd>
+          {touch ? <button type="button" className="icon" aria-label="Close search" onClick={onClose}><X size={16} /></button> : <kbd>esc</kbd>}
         </label>
         <div className="palette-results" ref={list} role="listbox">
           {results.length === 0 && <div className="palette-empty">No matches</div>}

@@ -4,6 +4,7 @@ import type { SceneNode } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
 import { CodeView, type LineRange } from './CodeView';
+import { NARROW } from './media';
 
 const KIND_LABEL: Record<string, string> = {
   repo: 'Repository', dir: 'Folder', file: 'File', notebook: 'Notebook', doc: 'Document', asset: 'Asset',
@@ -55,7 +56,6 @@ function UsedBy({ model, id, onGo, onPeek }: { model: SceneModel; id: number; on
   );
 }
 
-const NARROW = '(max-width: 760px)';
 export const DEFAULT_PANEL: PanelSize = { w: 380, h: 0 };
 
 /** Keeps the panel inside the window, leaving room to see the diagram. */
@@ -157,11 +157,13 @@ export function Inspector({ model, highlights, node, hover, size, onResize, onCl
     >
       <ResizeHandle size={size} onResize={onResize} />
       <div className="insp-body">
-        <header>
-          <span className="insp-kind">{kind}{node.subtitle ? <> · <span>{node.subtitle}</span></> : null}</span>
-          <button className="icon" aria-label="Close details" onClick={onClose}><X size={15} /></button>
-        </header>
-        <h2 className={node.kind === 'op' ? 'mono' : undefined}>{node.title || kind}</h2>
+        <div className="insp-head">
+          <header>
+            <span className="insp-kind">{kind}{node.subtitle ? <> · <span>{node.subtitle}</span></> : null}</span>
+            <button className="icon" aria-label="Close details" onClick={onClose}><X size={15} /></button>
+          </header>
+          <h2 className={node.kind === 'op' ? 'mono' : undefined}>{node.title || kind}</h2>
+        </div>
         {node.doc && <p className="insp-doc">{node.doc}</p>}
         <div className="insp-actions">
           {owner && <button onClick={onZoom}><Maximize2 size={13} />Zoom in</button>}

@@ -42,7 +42,9 @@ async function readFiles(entries: { path: string; file: File }[], progress: Prog
 /** From `<input type="file" webkitdirectory>`. */
 export async function folderProject(list: FileList, progress: Progress): Promise<Project> {
   const entries = Array.from(list).map(file => ({ path: (file as File & { webkitRelativePath: string }).webkitRelativePath || file.name, file }));
-  const name = entries[0]?.path.split('/')[0] ?? 'folder';
+  // Files picked without their folder (phones can't pick folders) have bare names.
+  const first = entries[0]?.path ?? '';
+  const name = first.includes('/') ? first.split('/')[0] : entries.length === 1 ? first : 'files';
   return { name, files: await readFiles(entries, progress), source: 'local folder' };
 }
 

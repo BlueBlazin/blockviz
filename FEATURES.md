@@ -19,10 +19,10 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - scroll or pinch to zoom; `+` and `−` keys
   - drag or the arrow keys to pan
   - buttons for zoom, fit and whole project
-- **Open a block** (double-click or Enter): zooms until the diagram inside is readable, starting from its top. A block with nothing inside is centred among its neighbours.
-- **Go to a definition** by double-clicking a block that has nothing inside but is defined elsewhere.
+- **Open a block** (double-click, double-tap or Enter): zooms until the diagram inside is readable, starting from its top. A block with nothing inside is centred among its neighbours.
+- **Go to a definition** by double-clicking or double-tapping a block that has nothing inside but is defined elsewhere.
 - **Back out** with Esc. `F` fits the current container; `H`, `0` or the home button shows the whole project.
-- **Breadcrumbs** show the containers you're in; click one to go back out to it. Long paths fold their middle into a "…" menu.
+- **Breadcrumbs** show the containers you're in; click one to go back out to it. Long paths fold their middle into a "…" menu, as far as the width needs.
 - **"Defined in" line**: inside code reached through a call (`… › Block › forward › attn`), it names where that code is defined (`CausalSelfAttention.forward · model.py:52`) and takes you there.
 - **Back and forward**: every jump is a history step. Use the ← → buttons, Alt+←/→, Cmd+[ / Cmd+], or the browser's and mouse's back buttons. Back returns to the exact view and selection.
 - **Links to a view**: the URL always names the current view and selection (`#at=model.py/GPT/forward&sel=…`). Reloading or sharing reopens it, and the link button copies it.
@@ -30,6 +30,13 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Smooth flights** that zoom out, pan and zoom back in. Motion is reduced when the system asks for it.
 - **Clicks land on what you can see**: a block too small to make out is passed over for the one around it.
 - **Export** the current view as a PNG.
+
+## Phones and tablets
+
+- **Touch**: pinch to zoom, drag to pan, tap to select, double-tap to open a block, tap an arrow to follow its value, tap a line of source to select its block.
+- **Layout**: on a phone the brand, history and tools share the top row and the breadcrumbs get the row below; the details panel is a bottom sheet you can drag taller.
+- **Finger-sized** buttons, and fields large enough that the page never zooms into them. Pinching the diagram zooms the diagram, not the page.
+- Help lists the touch gestures instead of keys. Phones can't pick folders, so "Local folder…" picks files.
 
 ## Details panel (click a block)
 
@@ -45,7 +52,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - A step is shown inside its function, with its own lines marked and scrolled into view.
   - Long lines wrap under their indentation.
   - Click a line to select its block (the view moves only if that block is off screen). Point at a line to point out its block; point at a block to tint its lines.
-- **Resizable**: drag its edge, use the arrow keys on the edge, or double-click the edge to reset. The width is remembered. On narrow screens it becomes a bottom sheet.
+- **Resizable**: drag its edge, use the arrow keys on the edge, or double-click the edge to reset. The size is remembered; a smaller window shrinks the panel without forgetting it. On narrow screens it becomes a bottom sheet whose title stays in view.
 
 ## Following values
 

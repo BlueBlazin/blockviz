@@ -15,6 +15,7 @@ import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
+import { NARROW, TOUCH, useMedia } from './ui/media';
 
 interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
 
@@ -25,7 +26,7 @@ const storage = {
 
 /** Screen margins covered by the top bar, footer and (when open) the details panel. */
 function overlayInsets(panelOpen: boolean, panel: PanelSize): Insets {
-  const narrow = window.matchMedia('(max-width: 760px)').matches;
+  const narrow = window.matchMedia(NARROW).matches;
   return {
     top: narrow ? 100 : 56,
     right: panelOpen && !narrow ? panel.w + 24 : 12,
@@ -33,6 +34,9 @@ function overlayInsets(panelOpen: boolean, panel: PanelSize): Insets {
     left: 12,
   };
 }
+
+const KEYS = [['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Esc'], ['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']];
+const TOUCH_KEYS = [['Zoom', 'Pinch, + / −'], ['Pan', 'Drag'], ['Select a block', 'Tap'], ['Zoom into a block', 'Double-tap'], ['Back out', 'Tap a breadcrumb'], ['Back / forward', '← / →'], ['Whole project', 'Home button'], ['Follow a value', 'Tap an arrow'], ['Find a line\'s block', 'Tap the line']];
 
 export default function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -47,7 +51,10 @@ export default function App() {
   /** A value being followed (an edge clicked). */
   const [value, setValue] = useState<EdgeRef | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
-  const [panel, setPanel] = useState<PanelSize>(() => clampPanel({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
+  /** The details panel's size as the reader chose it (remembered), and as it fits this window. */
+  const [panel, setPanel] = useState<PanelSize>(() => ({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
+  const [resized, setResized] = useState(0);
+  const fitted = useMemo(() => clampPanel(panel), [panel, resized]);
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
   const analyzer = useRef(new Analyzer());
@@ -58,6 +65,7 @@ export default function App() {
   const [trunks, setTrunks] = useState(() => storage.get('blockviz.trunks') === '1');
   const trunksRef = useRef(trunks);
   const [copied, setCopied] = useState(false);
+  const touch = useMedia(TOUCH);
 
   const load = useCallback(async (make: (progress: (m: string) => void) => Promise<Project>) => {
     const id = ++request.current;
@@ -164,16 +172,17 @@ export default function App() {
   // Framing keeps blocks clear of the top bar, footer and details panel.
   const panelOpen = selected !== null || value !== null;
   useEffect(() => {
-    engine.current?.setInsets(overlayInsets(panelOpen, panel));
-  }, [panelOpen, panel, loaded]);
+    engine.current?.setInsets(overlayInsets(panelOpen, fitted));
+  }, [panelOpen, fitted, loaded]);
 
   useEffect(() => {
     const t = setTimeout(() => { storage.set('blockviz.panel.w', String(panel.w)); storage.set('blockviz.panel.h', String(panel.h)); }, 300);
     return () => clearTimeout(t);
   }, [panel]);
 
+  // A smaller window (a phone turned sideways) shrinks the panel without forgetting its size.
   useEffect(() => {
-    const fit = () => setPanel(p => clampPanel(p));
+    const fit = () => setResized(n => n + 1);
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
   }, []);
@@ -182,9 +191,9 @@ export default function App() {
     setSelected(id);
     setSelectedPath(loaded?.model.canonicalPath(id) ?? null);
     // The panel opens with this selection: frame the block beside it.
-    engine.current?.setInsets(overlayInsets(true, panel));
+    engine.current?.setInsets(overlayInsets(true, fitted));
     engine.current?.flyToNode(id);
-  }, [loaded, panel]);
+  }, [loaded, fitted]);
 
   /** Selects a block for a line of source, staying in the instance being read. */
   const pick = useCallback((id: number) => {
@@ -259,18 +268,20 @@ export default function App() {
       <canvas ref={canvas} tabIndex={0} aria-label="Code diagram. Scroll or pinch to zoom, drag to pan, double-click a block to zoom into it, press / to search." />
 
       <nav className="topbar" aria-label="Location">
-        <button className="brand" onClick={() => engine.current?.home()} title="Whole project (H)">
-          <span className="logo" aria-hidden="true"><i /><i /><i /></span>blockviz
+        <button className="brand" onClick={() => engine.current?.home()} title="Whole project (H)" aria-label="blockviz: whole project">
+          <span className="logo" aria-hidden="true"><i /><i /><i /></span><span className="brand-name">blockviz</span>
         </button>
         <span className="history">
           <button className="icon" aria-label="Back" title="Back (Alt+←)" disabled={!steps.back} onClick={() => history.back()}><ArrowLeft size={15} /></button>
           <button className="icon" aria-label="Forward" title="Forward (Alt+→)" disabled={!steps.forward} onClick={() => history.forward()}><ArrowRight size={15} /></button>
         </span>
-        {crumbs.length <= 1 && <span className="crumb-root">{loaded?.scene.title}</span>}
-        {view.path.length <= 1 && loaded?.scene.description && <span className="tagline" title={loaded.scene.description}>{loaded.scene.description}</span>}
-        {crumbs.length > 1 && (
-          <Breadcrumbs crumbs={crumbs} onGo={c => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 'fit', 0.06)} />
-        )}
+        <div className="where">
+          {crumbs.length <= 1 && <span className="crumb-root">{loaded?.scene.title}</span>}
+          {view.path.length <= 1 && loaded?.scene.description && <span className="tagline" title={loaded.scene.description}>{loaded.scene.description}</span>}
+          {crumbs.length > 1 && (
+            <Breadcrumbs crumbs={crumbs} onGo={c => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 'fit', 0.06)} />
+          )}
+        </div>
       </nav>
       {borrowed && loaded && (
         <button className="defined-in" title="Go to where this code is defined" onClick={() => goTo(borrowed.id)}>
@@ -323,7 +334,7 @@ export default function App() {
 
       <div className="footer">
         <button className={`legend-toggle ${showLegend ? 'on' : ''}`} onClick={() => setShowLegend(v => !v)} aria-expanded={showLegend}>
-          <Info size={13} />Legend
+          <Info size={13} /><span>Legend</span>
         </button>
         {stats && <span className="stats">{stats.files} files · {stats.lines.toLocaleString()} lines · {stats.nodes.toLocaleString()} blocks · {Math.round(loaded!.elapsed)} ms</span>}
       </div>
@@ -352,7 +363,7 @@ export default function App() {
           highlights={loaded.highlights}
           node={node}
           hover={hoverId}
-          size={panel}
+          size={fitted}
           onResize={setPanel}
           onClose={() => { setSelected(null); setSelectedPath(null); engine.current?.peek(null); }}
           onZoom={() => selectedPath && engine.current?.flyTo(selectedPath)}
@@ -368,7 +379,7 @@ export default function App() {
           owner={traced.owner}
           edges={traced.edges}
           start={traced.start}
-          size={panel}
+          size={fitted}
           onClose={() => { setValue(null); engine.current?.peek(null); }}
           onPick={id => { setValue(null); pick(id); }}
           onPeek={id => engine.current?.peek(id)}
@@ -390,10 +401,10 @@ export default function App() {
             <header><h1>Reading the diagram</h1><button className="icon" aria-label="Close" onClick={() => setDialog(null)}><X size={16} /></button></header>
             <p>Every level is a dataflow diagram read top to bottom: inputs enter at the top, results leave at the bottom, and arrows show what flows into what. Zooming into a block reveals the diagram inside it: repository → files → classes and functions → the steps inside them → the code they call.</p>
             <div className="keys">
-              {[['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Esc'], ['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
+              {(touch ? TOUCH_KEYS : KEYS).map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
             </div>
             <h2>Finding your way</h2>
-            <p>The details panel shows a step's code inside its function with its lines marked; click a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
+            <p>The details panel shows a step's code inside its function with its lines marked; {touch ? 'tap' : 'click'} a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
             <h2>What becomes a block</h2>
             <p>Calls into your own code, sub-modules, library operations and I/O. Glue such as reshapes and arithmetic on sizes is folded into the step it feeds; prints and asserts become side-effect tags. Comment-headed paragraphs in long scripts become sections, and runs of constants become settings tables.</p>
             <h2>Limits</h2>
