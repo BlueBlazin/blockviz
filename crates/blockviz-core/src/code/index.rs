@@ -170,6 +170,9 @@ pub struct Index<'p> {
     pub modules: &'p [Module],
     /// Python modules by dotted name.
     pub by_dotted: HashMap<String, usize>,
+    /// Python modules by the ends of their dotted names (`core.db` and `db`
+    /// for `app.core.db`); `None` where more than one module ends so.
+    by_suffix: HashMap<String, Option<usize>>,
     /// Every module by repository path.
     pub by_path: HashMap<String, usize>,
     /// Modules whose names a module re-exports wholesale (`export * from "./x"`).
@@ -250,10 +253,17 @@ impl<'p> Index<'p> {
         for (i, m) in modules.iter().enumerate().filter(|(_, m)| m.lang == Lang::Python) {
             by_dotted.insert(m.dotted.clone(), i);
         }
+        let mut by_suffix: HashMap<String, Option<usize>> = HashMap::new();
+        for (d, &i) in &by_dotted {
+            for (at, _) in d.match_indices('.') {
+                by_suffix.entry(d[at + 1..].to_string()).and_modify(|t| *t = None).or_insert(Some(i));
+            }
+        }
         let by_path = modules.iter().enumerate().map(|(i, m)| (m.path.clone(), i)).collect();
         let mut ix = Index {
             modules,
             by_dotted,
+            by_suffix,
             by_path,
             stars: vec![vec![]; modules.len()],
             assets: vec![vec![]; modules.len()],
@@ -702,12 +712,7 @@ impl<'p> Index<'p> {
         if let Some(&t) = self.by_dotted.get(name) {
             return Some(t);
         }
-        let suffix = format!(".{name}");
-        let mut hits = self.by_dotted.iter().filter(|(d, _)| d.ends_with(&suffix));
-        match (hits.next(), hits.next()) {
-            (Some((_, &t)), None) => Some(t),
-            _ => None,
-        }
+        self.by_suffix.get(name).copied().flatten()
     }
 
     /// The module that defines a name `m` makes available, following
