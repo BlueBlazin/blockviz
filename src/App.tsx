@@ -13,8 +13,6 @@ import { Highlights } from './core/highlights';
 import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
-import { Tooltip } from './ui/Tooltip';
-import { Minimap } from './ui/Minimap';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation } from './ui/navigation';
 
@@ -46,11 +44,9 @@ export default function App() {
   const [dialog, setDialog] = useState<'open' | 'search' | 'help' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [hover, setHover] = useState<{ id?: number; edge?: EdgeRef; x: number; y: number } | null>(null);
   /** A value being followed (an edge clicked). */
   const [value, setValue] = useState<EdgeRef | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
-  const hoverTimer = useRef(0);
   const [panel, setPanel] = useState<PanelSize>(() => clampPanel({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
@@ -119,18 +115,7 @@ export default function App() {
       onJump: () => nav.current?.jump(),
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); },
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); },
-      onHoverEdge: (edge, x, y) => {
-        clearTimeout(hoverTimer.current);
-        setHover(null);
-        if (edge) hoverTimer.current = window.setTimeout(() => setHover({ edge, x, y }), 250);
-      },
-      onHover: (id, x, y) => {
-        clearTimeout(hoverTimer.current);
-        setHover(null);
-        setHoverId(id);
-        // The card appears once the pointer rests, not while it sweeps across blocks.
-        if (id !== null) hoverTimer.current = window.setTimeout(() => setHover({ id, x, y }), 350);
-      },
+      onHover: id => setHoverId(id),
     }, overlayInsets(false, DEFAULT_PANEL));
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
@@ -153,7 +138,7 @@ export default function App() {
       window.removeEventListener('popstate', pop);
       n.dispose();
       if (nav.current === n) nav.current = null;
-      e.dispose(); clearTimeout(hoverTimer.current); setHover(null); if (engine.current === e) engine.current = null;
+      e.dispose(); setHoverId(null); if (engine.current === e) engine.current = null;
     };
   }, [loaded, loadFromUrl]);
 
@@ -260,7 +245,7 @@ export default function App() {
         if (items?.length) void load(p => droppedProject(items, p));
       }}
     >
-      <canvas ref={canvas} className="stage" tabIndex={0} aria-label="Code diagram. Scroll or pinch to zoom, drag to pan, double-click a block to zoom into it, press / to search." />
+      <canvas ref={canvas} tabIndex={0} aria-label="Code diagram. Scroll or pinch to zoom, drag to pan, double-click a block to zoom into it, press / to search." />
 
       <nav className="topbar" aria-label="Location">
         <button className="brand" onClick={() => engine.current?.home()} title="Whole project (H)">
@@ -316,8 +301,6 @@ export default function App() {
         {stats && <span className="stats">{stats.files} files · {stats.lines.toLocaleString()} lines · {stats.nodes.toLocaleString()} blocks · {Math.round(loaded!.elapsed)} ms</span>}
       </div>
 
-      {!showLegend && loaded && engine.current && view.path.length > 1 && <Minimap model={loaded.model} engine={engine.current} view={view} />}
-
       {showLegend && (
         <aside className="legend" aria-label="Legend">
           <header><strong>Legend</strong><button className="icon" aria-label="Close legend" onClick={() => setShowLegend(false)}><X size={14} /></button></header>
@@ -353,8 +336,6 @@ export default function App() {
         />
       )}
 
-      {hover && loaded && !dialog && <Tooltip model={loaded.model} id={hover.id} edge={hover.edge} x={hover.x} y={hover.y} />}
-
       {traced && loaded && !node && (
         <ValuePanel
           model={loaded.model}
@@ -386,7 +367,7 @@ export default function App() {
               {[['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, two-finger scroll, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Esc'], ['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
             </div>
             <h2>Finding your way</h2>
-            <p>Hover a block to see what it is. The details panel shows a step's code inside its function with its lines marked; click a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
+            <p>The details panel shows a step's code inside its function with its lines marked; click a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
             <h2>What becomes a block</h2>
             <p>Calls into your own code, sub-modules, library operations and I/O. Glue such as reshapes and arithmetic on sizes is folded into the step it feeds; prints and asserts become side-effect tags. Comment-headed paragraphs in long scripts become sections, and runs of constants become settings tables.</p>
             <h2>Limits</h2>

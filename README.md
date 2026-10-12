@@ -36,12 +36,12 @@ In nanoGPT this gives `prepare.py → train.bin → train.py → ckpt.pt → sam
 
 A reader sees one small part at a time, so every part says where it fits.
 
-* Hovering a block says what it is and what double-clicking does. Opening a block (double-click, Enter, search) zooms until its diagram is readable; a block with nothing inside is shown among its neighbours, not alone.
+* Opening a block (double-click, Enter, search) zooms until its diagram is readable; a block with nothing inside is shown among its neighbours, not alone.
 * The details panel shows a step's code inside the function around it, its lines marked. Clicking a line selects the block drawn for it; pointing at a block or a line points out the other.
 * *Used by* lists every place a definition is used (callers of a function, constructions and components of a class, calls of a component), each a link, and outlines them in the diagram while it is in focus.
 * Clicking an arrow follows its value through the function: every edge carrying that name, through the steps that re-bind it and into its branches and loops, with where it comes from and what reads it listed.
 * Every jump is a step in the browser's history (Back, Alt+←), and the URL names the current view and selection (`#at=model.py/CausalSelfAttention/forward`), so a link reopens it.
-* Inside code reached through a call (`… › Block › forward › attn`), a line under the breadcrumbs says where that code is defined; a minimap shows where the view is in the whole project.
+* Inside code reached through a call (`… › Block › forward › attn`), a line under the breadcrumbs says where that code is defined, and long breadcrumb paths fold their middle into a menu.
 
 ### Abstraction rules
 
@@ -146,7 +146,7 @@ src/
   canvas/                      camera (anchored for unlimited depth), renderer, engine, locations
                                (paths as titles), value tracing
   ui/                          inspector (resizable, source linked to blocks, used by), value panel,
-                               history and links, minimap, hover cards, search, open dialog
+                               history and links, breadcrumbs, search, open dialog
 ```
 
 **One uniform scene model.** Every node lives in its parent's interior coordinates. A node with an interior (children, a table, or a `ref` to another node's interior) draws it inside its `inner` rectangle, scaled to fit. That single rule is what makes zoom unbounded: the renderer never needs to know what a node is to descend into it. A call borrows its callee's interior by reference, so the same definition appears wherever it is called without being duplicated.

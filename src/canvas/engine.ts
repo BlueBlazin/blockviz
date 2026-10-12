@@ -16,8 +16,6 @@ export interface EngineEvents {
   onHover?(id: number | null, x: number, y: number): void;
   /** A flight to somewhere else is about to start: a step in the reader's history. */
   onJump?(): void;
-  /** The edge under the pointer changed. */
-  onHoverEdge?(edge: EdgeRef | null, x: number, y: number): void;
   /** An edge was clicked: follow its value. */
   onSelectEdge?(edge: EdgeRef): void;
 }
@@ -145,12 +143,6 @@ export class Engine {
   restore(state: CameraState) {
     if (!state.path.every(id => this.model.nodes[id])) return;
     this.animate(this.camera.flightTo(state, this.width, this.height), false);
-  }
-
-  /** Where the screen is relative to the whole project: the root's interior
-   * transform, the screen's size and the containers the view is in. */
-  overview() {
-    return { xf: this.camera.transforms()[0], width: this.width, height: this.height, path: this.focusPath() };
   }
 
   /** The containers the view is in, root first (what the breadcrumbs show). */
@@ -380,7 +372,6 @@ export class Engine {
       const id = edge ? null : i >= 0 ? this.renderer.hits[i].id : null;
       if (edge?.edge !== this.hoverEdge?.edge) {
         this.hoverEdge = edge;
-        this.events.onHoverEdge?.(edge ? this.refOf(edge) : null, e.clientX, e.clientY);
         this.invalidate();
       }
       if (id !== this.hover) {
@@ -437,7 +428,6 @@ export class Engine {
   private unhover() {
     if (this.hoverEdge) {
       this.hoverEdge = null;
-      this.events.onHoverEdge?.(null, 0, 0);
       this.invalidate();
     }
     if (this.hover === null) return;

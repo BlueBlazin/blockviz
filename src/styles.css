@@ -27,8 +27,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .mono { font-family: var(--mono); }
 
 .app { position: fixed; inset: 0; overflow: hidden; background: #fff; }
-.app > .stage { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; outline: none; }
-.app.dragging > .stage { opacity: 0.4; }
+.app canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; outline: none; }
+.app.dragging canvas { opacity: 0.4; }
 
 .icon { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: var(--muted); }
 .icon:hover { background: var(--hover); color: var(--ink); }
@@ -62,7 +62,6 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .defined-in { position: absolute; top: 50px; left: 12px; max-width: calc(100vw - 440px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 10px; border-radius: 8px; background: #eef3fe; color: var(--muted); font-size: 12px; box-shadow: var(--shadow); }
 .defined-in strong { color: var(--accent); font-weight: 600; }
 .defined-in:hover { background: #e1eafd; }
-.minimap { position: absolute; left: 12px; bottom: 48px; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); background: #fff; cursor: pointer; }
 
 /* Top-right */
 .toolbar { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.94); border-radius: 10px; padding: 3px; }
@@ -222,17 +221,6 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
   .insp-resize::after { left: calc(50% - 18px); top: 8px; width: 36px; height: 4px; opacity: 1; }
   .open-options { grid-template-columns: 1fr; }
   .stats { display: none; }
-  .minimap, .defined-in { display: none; }
+  .defined-in { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
-
-/* Hover card: what a block is, beside the pointer. */
-.tooltip {
-  position: fixed; z-index: 15; pointer-events: none; max-width: 340px;
-  background: rgba(23, 25, 29, 0.94); color: #fff; border-radius: 8px; padding: 6px 9px 7px;
-  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.18); font-size: 12px; line-height: 1.4;
-}
-.tt-title { font-weight: 600; word-break: break-word; }
-.tt-title.mono { font-family: var(--mono); font-weight: 500; font-size: 11.5px; }
-.tt-meta { color: #c9cdd3; }
-.tt-hint { color: #9aa3ae; font-size: 11px; margin-top: 2px; }
