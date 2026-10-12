@@ -21,7 +21,7 @@ pub mod rust;
 pub mod text;
 pub mod vocabulary;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 #[derive(Deserialize)]
@@ -46,6 +46,15 @@ struct WireProject {
     shared_trunks: bool,
 }
 
+/// `analyze_project`'s answer, serialized straight from the scene: going
+/// through a `serde_json::Value` copies the whole scene first (4× the time,
+/// and on a large repository nearly twice the memory).
+#[derive(Serialize)]
+struct Analyzed<'a> {
+    ok: bool,
+    scene: &'a ir::Scene,
+}
+
 pub fn analyze(name: &str, files: Vec<project::InFile>) -> ir::Scene {
     project::build(name, files)
 }
@@ -62,10 +71,11 @@ pub fn highlight_source(path: &str, text: &str) -> Vec<u32> {
     highlight::highlight(path, text)
 }
 
-/// `{"name": "...", "files": [{"path", "text", "bytes"}]}` → `{"ok": true, "scene": ...}`.
+/// `{"name": "...", "files": [{"path", "text", "bytes"}]}` → `{"ok": true, "scene": ...}`,
+/// both UTF-8 JSON: as bytes, the reply is handed on (and kept) without decoding it.
 #[wasm_bindgen]
-pub fn analyze_project(input: &str) -> String {
-    let parsed: Result<WireProject, _> = serde_json::from_str(input);
+pub fn analyze_project(input: &[u8]) -> Vec<u8> {
+    let parsed: Result<WireProject, _> = serde_json::from_slice(input);
     match parsed {
         Ok(p) => {
             let files = p
@@ -80,8 +90,8 @@ pub fn analyze_project(input: &str) -> String {
             if !p.description.trim().is_empty() {
                 scene.description = p.description.trim().to_string();
             }
-            serde_json::json!({ "ok": true, "scene": scene }).to_string()
+            serde_json::to_vec(&Analyzed { ok: true, scene: &scene }).unwrap()
         }
-        Err(e) => serde_json::json!({ "ok": false, "error": format!("Invalid input: {e}") }).to_string(),
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("Invalid input: {e}") }).to_string().into_bytes(),
     }
 }

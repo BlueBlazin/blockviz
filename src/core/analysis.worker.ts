@@ -21,7 +21,8 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
     try {
       await ready;
       const start = performance.now();
-      result = { ...JSON.parse(analyze_project(JSON.stringify({ name: req.name, description: req.description ?? '', files: req.files, shared_trunks: !!req.sharedTrunks }))), elapsed: performance.now() - start };
+      const input = new TextEncoder().encode(JSON.stringify({ name: req.name, description: req.description ?? '', files: req.files, shared_trunks: !!req.sharedTrunks }));
+      result = { ...JSON.parse(new TextDecoder().decode(analyze_project(input))), elapsed: performance.now() - start };
     } catch (e) {
       result = { ok: false, error: `Analysis failed: ${String(e)}` };
     }

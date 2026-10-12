@@ -167,6 +167,20 @@ fn analysis_is_deterministic() {
 }
 
 #[test]
+fn browser_reply_is_the_scene() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nanogpt");
+    let mut files = vec![];
+    load(&root, &root, &mut files);
+    let files: Vec<_> = files.iter().map(|f| serde_json::json!({ "path": f.path, "text": f.text, "bytes": f.bytes })).collect();
+    let input = serde_json::to_vec(&serde_json::json!({ "name": "nanoGPT", "files": files })).unwrap();
+    // The scene's bytes as the CLI writes them, wrapped.
+    let scene = serde_json::to_vec(&scene()).unwrap();
+    assert_eq!(blockviz_core::analyze_project(&input), [&br#"{"ok":true,"scene":"#[..], &scene, b"}"].concat());
+    let error: serde_json::Value = serde_json::from_slice(&blockviz_core::analyze_project(b"{")).unwrap();
+    assert_eq!(error["ok"], false);
+}
+
+#[test]
 fn class_view_shows_components_and_method_calls() {
     let s = scene();
     let gpt = path(&s, &["model.py", "GPT"]);
