@@ -151,7 +151,7 @@ crates/blockviz-core/          Rust → WebAssembly
                                orthogonal routing with track allocation
 src/
   core/                        worker, analyzer, loaders (GitHub repositories, pull requests and
-                               comparisons, folder, drop, paste), saved downloads
+                               comparisons, folder, drop, paste), saved downloads and analyses
   canvas/                      camera (anchored for unlimited depth), renderer, engine, locations
                                (paths as titles), value tracing, scene diff (two versions matched
                                block by block)

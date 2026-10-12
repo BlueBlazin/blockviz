@@ -6,6 +6,8 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 
 - **GitHub repository** by URL: `owner/repo`, a branch or subfolder (`…/tree/main/src`), or a link with `#github=owner/repo`. The last URL is remembered.
 - **Saved downloads**: the last few repositories opened from GitHub are kept in the browser. A reload, a link or Back opens them without downloading anything; after a day, or when a repository is opened from the Open dialog, GitHub is asked for the latest commit and only changed files are downloaded. If GitHub can't be reached or its rate limit is spent, the saved copy opens.
+- **Saved analyses**: the last few diagrams are kept with the code they were made from, so reopening a project, switching "Tidy arrows" back, or reloading shows it in well under a second instead of analyzing again. A diagram is reused only for exactly the same files, settings and version of the analyzer.
+- **Cancel** any download or analysis from the progress message; the project on screen stays. A download that fails is tried again; a file that still can't be fetched is listed without its text.
 - **Bundled example**: karpathy/nanoGPT.
 - **Local folder**, from the picker or by dropping it anywhere on the page.
 - **Pasted code**: a single file, with its language guessed from the code (Python, JavaScript, TypeScript, JSX/TSX, Rust, Go).
