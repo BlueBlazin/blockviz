@@ -26,7 +26,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **"Defined in" line**: inside code reached through a call (`… › Block › forward › attn`), it names where that code is defined (`CausalSelfAttention.forward · model.py:52`) and takes you there.
 - **Back and forward**: every jump is a history step. Use the ← → buttons, Alt+←/→, Cmd+[ / Cmd+], or the browser's and mouse's back buttons. Back returns to the exact view and selection.
 - **Links to a view**: the URL always names the current view and selection (`#at=model.py/GPT/forward&sel=…`). Reloading or sharing reopens it, and the link button copies it.
-- **Search** (`/` or ⌘K): files, classes, functions and blocks, ranked by kind and match. Picking one flies there and selects it.
+- **Search** (`/` or ⌘K): files, classes, functions and blocks, by name or by a name inside another (`Block.forward`, `block forward`, `api.py get`, `Db::get`), definitions before the steps that mention them. Picking one flies there and selects it.
 - **Smooth flights** that zoom out, pan and zoom back in. Motion is reduced when the system asks for it.
 - **Clicks land on what you can see**: a block too small to make out is passed over for the one around it.
 - **Export** the current view as a PNG.

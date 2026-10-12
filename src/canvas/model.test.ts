@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project, Scene, SceneNode, Span } from '../core/types';
-import { SceneModel } from './model';
+import { findEntries, SceneModel, type SearchEntry } from './model';
 
 // A file holding a class whose method calls a helper defined after it.
 const src = [
@@ -82,5 +82,51 @@ describe('source views', () => {
     expect(m.borrowedDefinition([0, 1, 2, 3])).toBeNull();
     expect(m.qualified(3)).toBe('A.f');
     expect(m.where(5)).toEqual({ name: 'A.f', at: 3 });
+  });
+});
+
+describe('search', () => {
+  // Part of nanoGPT's model.py, as the search index holds it.
+  const rank = { file: 0, class: 1, function: 2, call: 6, dir: 3 } as Record<string, number>;
+  let next = 0;
+  const entry = (title: string, kind: string, chain: string[], detail = ''): SearchEntry => ({
+    id: next++, title, detail, path: chain.join(' › '), chain: chain.map(c => c.toLowerCase()),
+    haystack: `${title} ${detail} ${chain.join(' ')}`.toLowerCase(), rank: rank[kind],
+  });
+  const all = [
+    entry('model.py', 'file', []),
+    entry('LayerNorm', 'class', ['model.py']),
+    entry('forward', 'function', ['model.py', 'LayerNorm']),
+    entry('Block', 'class', ['model.py']),
+    entry('forward', 'function', ['model.py', 'Block']),
+    entry('ln_1', 'call', ['model.py', 'Block', 'forward'], 'LayerNorm'),
+    entry('attn', 'call', ['model.py', 'Block', 'forward'], 'CausalSelfAttention'),
+    entry('GPT', 'class', ['model.py']),
+    entry('forward', 'function', ['model.py', 'GPT']),
+    entry('block', 'call', ['model.py', 'GPT', 'forward', 'for block in self.transformer.h'], 'Block'),
+    entry('generate', 'function', ['model.py', 'GPT']),
+    entry('forward', 'call', ['model.py', 'GPT', 'generate'], 'self'),
+    entry('Docs & assets', 'dir', []),
+    entry('copy_', 'call', ['model.py', 'GPT', 'from_pretrained']),
+  ];
+  const find = (q: string) => findEntries(all, q).map(e => [...e.chain, e.title.toLowerCase()].join('.'));
+
+  it('finds a method by its qualified name', () => {
+    expect(find('Block.forward')[0]).toBe('model.py.block.forward');
+    expect(find('block forward')[0]).toBe('model.py.block.forward');
+    expect(find('GPT::forward')[0]).toBe('model.py.gpt.forward');
+    // The method comes before the steps inside it.
+    expect(find('block forward').indexOf('model.py.block.forward.ln_1')).toBeGreaterThan(0);
+  });
+
+  it('puts definitions named by the query before mentions', () => {
+    expect(find('forward').slice(0, 3)).toEqual(['model.py.layernorm.forward', 'model.py.block.forward', 'model.py.gpt.forward']);
+    // `py` in `model.py` is a word, not the end of `copy`.
+    expect(find('model.py').slice(0, 4)).toEqual(['model.py', 'model.py.layernorm', 'model.py.block', 'model.py.gpt']);
+    expect(find('model.py').indexOf('model.py.gpt.from_pretrained.copy_')).toBeGreaterThan(find('model.py').indexOf('model.py.gpt.generate'));
+    expect(find('docs assets')).toEqual(['docs & assets']);
+    // The last word names the block; the others what it is in.
+    expect(find('forward block')[0]).toBe('model.py.gpt.forward.for block in self.transformer.h.block');
+    expect(find('Block.backward')).toEqual([]);
   });
 });

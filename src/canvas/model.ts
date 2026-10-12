@@ -1,7 +1,40 @@
 import type { Project, Scene, SceneNode, Span } from '../core/types';
 import { childXf, parentXf, type Xf } from './geometry';
 
-export interface SearchEntry { id: number; title: string; detail: string; path: string; haystack: string; rank: number }
+/** A block as search sees it: `chain` holds the titles of what it is in, lowercased, outermost first. */
+export interface SearchEntry { id: number; title: string; detail: string; path: string; chain: string[]; haystack: string; rank: number }
+
+/**
+ * Search results for `query`, best first: blocks named by it (exactly, by
+ * its start, anywhere in the name); then blocks named by its last word
+ * inside blocks named by the others, so `Block.forward`, `block forward`,
+ * `Db::get` and `api.py get` find the definition; then blocks whose
+ * caption or path mentions it. Definitions come before steps.
+ */
+export function findEntries(all: SearchEntry[], query: string): SearchEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return all.filter(e => e.rank <= 2).slice(0, 40);
+  const words = q.split(/[\s.:/\\›#,()]+/).filter(Boolean);
+  const last = words[words.length - 1];
+  const scored: { e: SearchEntry; score: number }[] = [];
+  for (const e of all) {
+    const t = e.title.toLowerCase();
+    let tier = -1;
+    if (t === q) tier = 0;
+    else if (t.startsWith(q)) tier = 1;
+    else if (t.includes(q)) tier = 2;
+    else if (words.length > 1 && startsWord(t, last) && words.slice(0, -1).every(w => t.includes(w) || e.chain.some(c => c.includes(w)))) {
+      tier = t === last ? 3 : t.startsWith(last) ? 4 : 5;
+    } else if (e.haystack.includes(q)) tier = 6;
+    if (tier >= 0) scored.push({ e, score: tier * 1000 + e.rank * 10 + Math.min(e.chain.length, 9) });
+  }
+  return scored.sort((a, b) => a.score - b.score).slice(0, 60).map(s => s.e);
+}
+
+/** Whether `w` begins `t` or one of the words in it (`forw` in `forward`, `py` in `prepare.py`, not in `copy`). */
+function startsWord(t: string, w: string): boolean {
+  return t.startsWith(w) || t.split(/[\s_\-.]+/).some(p => p.startsWith(w));
+}
 
 /** Source shown for a block: `span` around it, read as part of `root`. */
 export interface SourceView { root: SceneNode; span: Span }
@@ -250,6 +283,7 @@ export class SceneModel {
           title: n.title,
           detail: n.subtitle ?? '',
           path: chain.join(' › '),
+          chain: chain.map(c => c.toLowerCase()),
           haystack: `${n.title} ${n.subtitle ?? ''} ${chain.join(' ')}`.toLowerCase(),
           rank: rankOf(n),
         };

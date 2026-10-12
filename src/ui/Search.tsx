@@ -1,6 +1,6 @@
 import { Search as SearchIcon, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SceneModel } from '../canvas/model';
+import { findEntries, type SceneModel } from '../canvas/model';
 import { TOUCH, useMedia } from './media';
 
 export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: (id: number) => void; onClose: () => void }) {
@@ -10,22 +10,7 @@ export function Search({ model, onPick, onClose }: { model: SceneModel; onPick: 
   const touch = useMedia(TOUCH);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const all = model.search();
-    if (!q) return all.filter(e => e.rank <= 2).slice(0, 40);
-    const scored: { e: typeof all[number]; score: number }[] = [];
-    for (const e of all) {
-      const t = e.title.toLowerCase();
-      let score = -1;
-      if (t === q) score = 0;
-      else if (t.startsWith(q)) score = 1;
-      else if (t.includes(q)) score = 2;
-      else if (e.haystack.includes(q)) score = 4;
-      if (score >= 0) scored.push({ e, score: score * 10 + e.rank + e.path.split('›').length * 0.1 });
-    }
-    return scored.sort((a, b) => a.score - b.score).slice(0, 60).map(s => s.e);
-  }, [query, model]);
+  const results = useMemo(() => findEntries(model.search(), query), [query, model]);
   useEffect(() => setActive(0), [query]);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
