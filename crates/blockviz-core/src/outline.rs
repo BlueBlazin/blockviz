@@ -8,7 +8,7 @@
 
 use crate::ir::Row;
 use crate::text::{clip, squash, summary};
-use regex_lite::Regex;
+use regex_lite::{Captures, Regex};
 use std::sync::OnceLock;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -131,48 +131,72 @@ macro_rules! rx {
     }};
 }
 
+/// A pattern matched at line starts (see `line_matches`). Anchored, each try
+/// stops where it fails: regex-lite has no literal search, and across the
+/// whole text it ran its machine over every byte.
+macro_rules! line_rx {
+    ($p:expr) => {{
+        static CELL: OnceLock<Regex> = OnceLock::new();
+        CELL.get_or_init(|| Regex::new(&format!(r"\A(?:{})", $p)).expect("valid outline pattern"))
+    }};
+}
+
+/// Matches of a `line_rx!` pattern tried at each line start, in order and
+/// not overlapping as `captures_iter` finds them, with where each starts.
+fn line_matches<'t>(re: &'static Regex, text: &'t str) -> impl Iterator<Item = (usize, Captures<'t>)> {
+    let mut end = 0;
+    std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).filter_map(move |at| {
+        if at < end {
+            return None;
+        }
+        let c = re.captures(&text[at..])?;
+        end = at + c.get(0).unwrap().end();
+        Some((at, c))
+    })
+}
+
 /// (pattern, kind, name group, kind group)
 fn definitions(lang: &str) -> Vec<(&'static Regex, &'static str, usize, usize)> {
     match lang {
         "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" => vec![
-            (rx!(r"(?m)^(?:template\s*<[^>\n]*>\s*)?(?:(?:static|inline|extern|virtual|constexpr|__global__|__device__|__host__|__forceinline__|kernel|const|unsigned|signed|struct)\s+)*[A-Za-z_][\w:<>\*&, ]*?[\s\*&]+\**([A-Za-z_][\w:~]*)\s*\("), "function", 1, 0),
-            (rx!(r"(?m)^\s*(?:typedef\s+)?(class|struct|union|enum|namespace)\s+([A-Za-z_]\w*)[^;\n]*\{?\s*$"), "", 2, 1),
+            (line_rx!(r"(?m)^(?:template\s*<[^>\n]*>\s*)?(?:(?:static|inline|extern|virtual|constexpr|__global__|__device__|__host__|__forceinline__|kernel|const|unsigned|signed|struct)\s+)*[A-Za-z_][\w:<>\*&, ]*?[\s\*&]+\**([A-Za-z_][\w:~]*)\s*\("), "function", 1, 0),
+            (line_rx!(r"(?m)^\s*(?:typedef\s+)?(class|struct|union|enum|namespace)\s+([A-Za-z_]\w*)[^;\n]*\{?\s*$"), "", 2, 1),
         ],
         "Go" => vec![
-            (rx!(r"(?m)^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[\(\[]"), "function", 1, 0),
-            (rx!(r"(?m)^type\s+([A-Za-z_]\w*)\s+(struct|interface)"), "", 1, 2),
+            (line_rx!(r"(?m)^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[\(\[]"), "function", 1, 0),
+            (line_rx!(r"(?m)^type\s+([A-Za-z_]\w*)\s+(struct|interface)"), "", 1, 2),
         ],
         "JavaScript" | "TypeScript" | "Vue" | "Svelte" => vec![
-            (rx!(r"(?m)^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)"), "function", 1, 0),
-            (rx!(r"(?m)^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)"), "class", 1, 0),
-            (rx!(r"(?m)^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:async\s+)?(?:function\b|\([^)\n]*\)\s*(?::[^=\n]+)?=>|[A-Za-z_$][\w$]*\s*=>)"), "function", 1, 0),
-            (rx!(r"(?m)^(?:export\s+)?(?:declare\s+)?(interface|type|enum)\s+([A-Za-z_$][\w$]*)"), "", 2, 1),
+            (line_rx!(r"(?m)^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)"), "function", 1, 0),
+            (line_rx!(r"(?m)^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)"), "class", 1, 0),
+            (line_rx!(r"(?m)^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:async\s+)?(?:function\b|\([^)\n]*\)\s*(?::[^=\n]+)?=>|[A-Za-z_$][\w$]*\s*=>)"), "function", 1, 0),
+            (line_rx!(r"(?m)^(?:export\s+)?(?:declare\s+)?(interface|type|enum)\s+([A-Za-z_$][\w$]*)"), "", 2, 1),
         ],
         "Java" | "Kotlin" | "Swift" | "Scala" | "C#" | "Dart" => vec![
-            (rx!(r"(?m)^\s{0,4}(?:@\w+\s+)*(?:(?:public|private|protected|internal|abstract|final|static|sealed|open|data|partial|export)\s+)*(class|interface|enum|struct|record|object|trait|protocol|extension)\s+([A-Za-z_]\w*)"), "", 2, 1),
-            (rx!(r"(?m)^(?:(?:public|private|internal)\s+)?(?:fun|func|def)\s+([A-Za-z_]\w*)"), "function", 1, 0),
+            (line_rx!(r"(?m)^\s{0,4}(?:@\w+\s+)*(?:(?:public|private|protected|internal|abstract|final|static|sealed|open|data|partial|export)\s+)*(class|interface|enum|struct|record|object|trait|protocol|extension)\s+([A-Za-z_]\w*)"), "", 2, 1),
+            (line_rx!(r"(?m)^(?:(?:public|private|internal)\s+)?(?:fun|func|def)\s+([A-Za-z_]\w*)"), "function", 1, 0),
         ],
         "Ruby" => vec![
-            (rx!(r"(?m)^\s*def\s+(?:self\.)?([A-Za-z_]\w*[?!]?)"), "function", 1, 0),
-            (rx!(r"(?m)^\s*(class|module)\s+([A-Z]\w*(?:::\w+)*)"), "", 2, 1),
+            (line_rx!(r"(?m)^\s*def\s+(?:self\.)?([A-Za-z_]\w*[?!]?)"), "function", 1, 0),
+            (line_rx!(r"(?m)^\s*(class|module)\s+([A-Z]\w*(?:::\w+)*)"), "", 2, 1),
         ],
         "PHP" => vec![
-            (rx!(r"(?m)^\s*(?:(?:public|private|protected|static|abstract|final)\s+)*function\s+([A-Za-z_]\w*)"), "function", 1, 0),
-            (rx!(r"(?m)^\s*(?:abstract\s+|final\s+)?(class|interface|trait)\s+([A-Za-z_]\w*)"), "", 2, 1),
+            (line_rx!(r"(?m)^\s*(?:(?:public|private|protected|static|abstract|final)\s+)*function\s+([A-Za-z_]\w*)"), "function", 1, 0),
+            (line_rx!(r"(?m)^\s*(?:abstract\s+|final\s+)?(class|interface|trait)\s+([A-Za-z_]\w*)"), "", 2, 1),
         ],
-        "Lua" => vec![(rx!(r"(?m)^\s*(?:local\s+)?function\s+([A-Za-z_][\w.:]*)"), "function", 1, 0)],
+        "Lua" => vec![(line_rx!(r"(?m)^\s*(?:local\s+)?function\s+([A-Za-z_][\w.:]*)"), "function", 1, 0)],
         "Shell" | "PowerShell" => vec![
-            (rx!(r"(?m)^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)"), "function", 1, 0),
-            (rx!(r"(?m)^\s*function\s+([A-Za-z_][\w-]*)\s*\{"), "function", 1, 0),
+            (line_rx!(r"(?m)^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)"), "function", 1, 0),
+            (line_rx!(r"(?m)^\s*function\s+([A-Za-z_][\w-]*)\s*\{"), "function", 1, 0),
         ],
-        "R" => vec![(rx!(r"(?m)^([A-Za-z_.][\w.]*)\s*(?:<-|=)\s*function"), "function", 1, 0)],
+        "R" => vec![(line_rx!(r"(?m)^([A-Za-z_.][\w.]*)\s*(?:<-|=)\s*function"), "function", 1, 0)],
         "Julia" => vec![
-            (rx!(r"(?m)^(?:function|macro)\s+([A-Za-z_][\w!]*)"), "function", 1, 0),
-            (rx!(r"(?m)^(?:mutable\s+)?struct\s+([A-Za-z_]\w*)"), "struct", 1, 0),
+            (line_rx!(r"(?m)^(?:function|macro)\s+([A-Za-z_][\w!]*)"), "function", 1, 0),
+            (line_rx!(r"(?m)^(?:mutable\s+)?struct\s+([A-Za-z_]\w*)"), "struct", 1, 0),
         ],
-        "SQL" => vec![(rx!(r#"(?im)^\s*create\s+(?:or\s+replace\s+)?(table|view|function|procedure|index|trigger)\s+(?:if\s+not\s+exists\s+)?([\w."]+)"#), "", 2, 1)],
-        "Protobuf" => vec![(rx!(r"(?m)^\s*(message|service|enum)\s+([A-Za-z_]\w*)"), "", 2, 1)],
-        "Makefile" => vec![(rx!(r"(?m)^([A-Za-z0-9_.%/-]+)\s*:([^=]|$)"), "target", 1, 0)],
+        "SQL" => vec![(line_rx!(r#"(?im)^\s*create\s+(?:or\s+replace\s+)?(table|view|function|procedure|index|trigger)\s+(?:if\s+not\s+exists\s+)?([\w."]+)"#), "", 2, 1)],
+        "Protobuf" => vec![(line_rx!(r"(?m)^\s*(message|service|enum)\s+([A-Za-z_]\w*)"), "", 2, 1)],
+        "Makefile" => vec![(line_rx!(r"(?m)^([A-Za-z0-9_.%/-]+)\s*:([^=]|$)"), "target", 1, 0)],
         _ => vec![],
     }
 }
@@ -384,7 +408,7 @@ pub fn outline(lang: &str, text: &str) -> Outline {
             return out;
         }
         "Dockerfile" => {
-            for c in rx!(r"(?m)^\s*(FROM|RUN|COPY|ADD|CMD|ENTRYPOINT|ENV|WORKDIR|EXPOSE|ARG)\s+(.*)$").captures_iter(text).take(40) {
+            for (_, c) in line_matches(line_rx!(r"(?m)^\s*(FROM|RUN|COPY|ADD|CMD|ENTRYPOINT|ENV|WORKDIR|EXPOSE|ARG)\s+(.*)$"), text).take(40) {
                 out.rows.push(Row { key: c[1].to_string(), value: clip(&squash(&c[2]), 44), note: String::new(), heading: false });
             }
             out.doc = leading_comment(text);
@@ -395,20 +419,18 @@ pub fn outline(lang: &str, text: &str) -> Outline {
     out.doc = leading_comment(text);
     let mut syms: Vec<OSym> = vec![];
     for (re, kind, name_group, kind_group) in definitions(lang) {
-        for c in re.captures_iter(text) {
+        for (start, c) in line_matches(re, text) {
             let Some(name) = c.get(name_group) else { continue };
             let name = name.as_str().trim_matches('"').to_string();
             if KEYWORDS.contains(&name.as_str()) || name.len() > 60 {
                 continue;
             }
             let kind = if kind_group > 0 { c.get(kind_group).map(|k| leak_kind(k.as_str())).unwrap_or("type") } else { kind };
-            let whole = c.get(0).unwrap();
-            let start = whole.start();
             let line_text = &text[start..text[start..].find('\n').map(|e| start + e).unwrap_or(text.len())];
             let kind = if line_text.contains("__global__") || (lang == "Metal" && line_text.contains("kernel")) { "kernel" } else { kind };
-            let mut end = whole.end();
+            let mut end = start + c.get(0).unwrap().end();
             if brace_language(lang) {
-                match body_end(text, whole.end()) {
+                match body_end(text, end) {
                     Some((_, e)) => end = e,
                     None if kind == "function" && matches!(lang, "C" | "C header" | "C++" | "CUDA" | "Objective-C") => continue,
                     None => {}
@@ -441,8 +463,11 @@ pub fn outline(lang: &str, text: &str) -> Outline {
         for s in keep.iter_mut() {
             let body = &text[s.start..s.end.min(text.len())];
             let header_end = body.find('{').unwrap_or(0);
+            let body = &body[header_end..];
+            // Every call ends at its `(`: what follows the last cannot hold one.
+            let body = &body[..body.rfind('(').map_or(0, |i| i + 1)];
             let mut calls = vec![];
-            for c in call.captures_iter(&body[header_end..]) {
+            for c in call.captures_iter(body) {
                 let n = c[1].to_string();
                 if n != s.name && names.contains(&n) && !calls.contains(&n) {
                     calls.push(n);
@@ -513,7 +538,7 @@ pub fn imports(lang: &str, text: &str) -> Vec<String> {
             }
         }
         "C" | "C header" | "C++" | "CUDA" | "Objective-C" | "Metal" => {
-            for c in rx!(r#"(?m)^\s*#\s*(?:include|import)\s*"([^"]+)""#).captures_iter(text) {
+            for (_, c) in line_matches(line_rx!(r#"(?m)^\s*#\s*(?:include|import)\s*"([^"]+)""#), text) {
                 push(&c[1]);
             }
         }
