@@ -112,11 +112,9 @@ pub fn front_end(_b: &mut Builder, inputs: Vec<GoInput>, resolver: &Resolver, di
         for spec in file.imports() {
             let path = lower::unquote(&spec.path.value);
             let target = resolver.resolve(&input.path, &path).and_then(|d| targets.get(&d));
-            let local = match &spec.name {
-                Some(n) => n.name.clone(),
-                None => target.map(|t| t.0.clone()).unwrap_or_else(|| resolve::assumed_name(&path)),
-            };
-            imports.insert(local, lower::Import { file: target.map(|t| t.1.clone()), path });
+            let name = target.map(|t| t.0.clone()).unwrap_or_else(|| resolve::assumed_name(&path));
+            let local = spec.name.as_ref().map(|n| n.name.clone()).unwrap_or_else(|| name.clone());
+            imports.insert(local, lower::Import { file: target.map(|t| t.1.clone()), path, name });
         }
         let lowerer = lower::Lower::new(&input.text, &input.path, file, imports);
         let body = lowerer.file(file);

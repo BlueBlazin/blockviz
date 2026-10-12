@@ -156,6 +156,23 @@ fn errors_wrapped_or_not_are_passed_on() {
 }
 
 #[test]
+fn a_package_imported_twice_is_reached_either_way() {
+    // `models` and `. models` in one file (gorm's tests do this). Each run
+    // hashes differently, so a few runs catch an answer that depends on it.
+    for _ in 0..8 {
+        let s = analyze(&[
+            ("go.mod", "module example.com/m\n"),
+            ("models/models.go", "package models\n\n// User is a person.\ntype User struct{ Name string }\n\n// NewUser makes one.\nfunc NewUser(n string) *User { return &User{Name: n} }\n"),
+            ("app/app_test.go", "package app_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/m/models\"\n\t. \"example.com/m/models\"\n)\n\nfunc TestUsers(t *testing.T) {\n\tu := models.NewUser(\"a\")\n\tv := NewUser(\"b\")\n\tt.Log(u, v)\n}\n"),
+        ]);
+        let test = find(&s, "TestUsers");
+        let calls: Vec<&Node> = descendants(&s, test).into_iter().filter(|n| n.title == "NewUser" || n.title == "User").collect();
+        assert_eq!(calls.len(), 2, "{:?}", descendants(&s, test).iter().map(|n| &n.title).collect::<Vec<_>>());
+        assert!(calls.iter().all(|c| c.reference.is_some()), "{:?}", calls.iter().map(|c| (&c.title, c.reference)).collect::<Vec<_>>());
+    }
+}
+
+#[test]
 fn every_go_file_is_analyzed_not_outlined() {
     let s = shop();
     for f in ["api/handlers.go", "cmd/server/main.go", "worker/pool.go", "cli/root.go"] {

@@ -32,6 +32,8 @@ pub struct Import {
     pub path: String,
     /// The project file standing for the package, when it is the project's.
     pub file: Option<String>,
+    /// What the package is called where it is imported without a name.
+    pub name: String,
 }
 
 pub struct Lower<'s> {
@@ -359,7 +361,8 @@ impl<'s> Lower<'s> {
             Some("_") => vec![Stmt::Import(StmtImport { names: vec![Alias { name: path, asname: Some("_".into()), range }], style: ModuleStyle::Path, resolved: file, declaration: false, range })],
             Some(".") => vec![Stmt::ImportFrom(StmtImportFrom { module: Some(path), names: vec![Alias { name: "*".into(), asname: None, range }], level: 0, style: ModuleStyle::Path, resolved: file, range })],
             _ => {
-                let local = self.imports.iter().find(|(_, i)| i.path == path).map(|(l, _)| l.clone()).unwrap_or_else(|| super::resolve::assumed_name(&path));
+                // A file may import a package twice (`tests` and `. tests`).
+                let local = local.unwrap_or_else(|| self.imports.values().find(|i| i.path == path).map(|i| i.name.clone()).unwrap_or_else(|| super::resolve::assumed_name(&path)));
                 vec![Stmt::Import(StmtImport { names: vec![Alias { name: path, asname: Some(local), range }], style: ModuleStyle::Path, resolved: file, declaration: false, range })]
             }
         }
