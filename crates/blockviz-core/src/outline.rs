@@ -151,11 +151,20 @@ macro_rules! line_rx {
     }};
 }
 
+fn line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1))
+}
+
 /// Matches of a `line_rx!` pattern tried at each line start its lead allows,
 /// in order and not overlapping as `captures_iter` finds them, with where each starts.
 fn line_matches<'t>(p: &'static LinePattern, text: &'t str) -> impl Iterator<Item = (usize, Captures<'t>)> {
+    matches_at(p, text, line_starts(text))
+}
+
+/// `line_matches` for a pattern whose matches can begin only at `starts`, in order.
+fn matches_at<'t>(p: &'static LinePattern, text: &'t str, starts: impl IntoIterator<Item = usize>) -> impl Iterator<Item = (usize, Captures<'t>)> {
     let mut end = 0;
-    std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).filter_map(move |at| {
+    starts.into_iter().filter_map(move |at| {
         if at < end || !(p.lead)(&text.as_bytes()[at..]) {
             return None;
         }
@@ -163,6 +172,11 @@ fn line_matches<'t>(p: &'static LinePattern, text: &'t str) -> impl Iterator<Ite
         end = at + c.get(0).unwrap().end();
         Some((at, c))
     })
+}
+
+/// `\w`
+fn is_word(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
 }
 
 /// `\s`: ASCII whitespace, vertical tab included.
@@ -303,7 +317,7 @@ fn body_end(text: &str, from: usize) -> Option<(usize, usize)> {
 /// by hand because regex-lite ran its machine over every byte of every body.
 fn called(code: &str) -> impl Iterator<Item = &str> {
     let bytes = code.as_bytes();
-    let word = |i: usize| bytes.get(i).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_');
+    let word = |i: usize| bytes.get(i).is_some_and(|&c| is_word(c));
     let mut i = 0;
     std::iter::from_fn(move || {
         while i < bytes.len() {
@@ -599,7 +613,14 @@ pub fn imports(lang: &str, text: &str) -> Vec<String> {
     };
     match lang {
         "JavaScript" | "TypeScript" | "Vue" | "Svelte" => {
-            for c in rx!(r#"(?m)(?:^\s*import\s[^'"]*?from\s*|^\s*import\s*|^\s*export\s[^'"]*?from\s*|\brequire\(\s*|\bimport\(\s*)['"]([^'"]+)['"]"#).captures_iter(text) {
+            // A specifier follows `import` or `export` opening a line, or a `require(`
+            // or `import(` call: the only places a match can begin, so the only ones tried.
+            let pattern = line_rx!(r#"(?m)(?:^\s*import\s[^'"]*?from\s*|^\s*import\s*|^\s*export\s[^'"]*?from\s*|\brequire\(\s*|\bimport\(\s*)['"]([^'"]+)['"]"#, |l| opens_with(l, &["import", "export"]) || l.starts_with(b"require("));
+            let calls = ["require(", "import("].iter().flat_map(|call| text.match_indices(call)).map(|(i, _)| i).filter(|&i| i == 0 || !is_word(text.as_bytes()[i - 1]));
+            let mut starts: Vec<usize> = line_starts(text).chain(calls).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            for (_, c) in matches_at(pattern, text, starts) {
                 push(&c[1]);
             }
         }
@@ -647,6 +668,11 @@ mod tests {
         // `.vue` and `.svelte` files are outlined with TypeScript's rules.
         let ts = outline("TypeScript", "export function a() {}\nexport const b = (x: number) => x;\nclass C {}\ninterface D {}\n");
         assert_eq!(ts.symbols.len(), 4);
+    }
+    #[test]
+    fn script_imports() {
+        let src = "import a from './a'\n\n  export * from \"./b\"\nconst c = require('./c'), d = await import('./d');\nmyrequire('./e')\n";
+        assert_eq!(imports("JavaScript", src), ["./a", "./b", "./c", "./d"]);
     }
     #[test]
     fn env_values_are_masked() {
