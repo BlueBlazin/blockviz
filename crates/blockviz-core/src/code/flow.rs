@@ -4490,47 +4490,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
         // A Go type satisfies the project's interfaces whose methods it has,
         // without saying so: it lists them, as a Rust type lists its traits.
         if modules[mi].lang == Lang::Go && def.kind == ast::ClassKind::Class {
-            // Methods by name and signature: parameter and result types as
-            // written, without package qualifiers or pointers.
-            let signature = |name: &str, args: &[ast::Param], returns: Option<&Expr>, module: usize| -> String {
-                let src = &modules[module].src;
-                let norm = |e: &Expr| {
-                    let t = squash(src.of(e));
-                    t.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '[' || c == ']')).filter(|w| !w.is_empty()).map(|w| w.rsplit('.').next().unwrap_or(w).to_string()).collect::<Vec<_>>().join(" ")
-                };
-                let params: Vec<String> = args.iter().map(|a| a.annotation.as_ref().map(norm).unwrap_or_default()).collect();
-                format!("{name}({})->{}", params.join(", "), returns.map(norm).unwrap_or_default())
-            };
-            // An interface's methods are the signatures in its body.
-            let contract = |k: usize| -> Vec<String> {
-                let c = &cx.ix.classes[k];
-                c.def.body.iter().filter_map(|s| if let Stmt::FunctionDef(f) = s { Some(signature(&f.name, &f.params, f.returns.as_deref(), c.module)) } else { None }).collect()
-            };
-            let mut have: Vec<String> = vec![];
-            let mut stack = vec![cid];
-            while let Some(k) = stack.pop() {
-                let c = &cx.ix.classes[k];
-                if c.def.kind == ast::ClassKind::Interface {
-                    have.extend(contract(k));
-                } else {
-                    have.extend(c.methods.iter().chain(&c.extra).map(|(_, f)| {
-                        let info = &cx.ix.funcs[*f];
-                        signature(&info.name, info.def.args.get(1..).unwrap_or(&[]), info.def.returns, info.module)
-                    }));
-                }
-                stack.extend(c.bases.iter().filter_map(|b| if let Ty::Class(p) = b { Some(*p) } else { None }).filter(|p| *p != k).take(4));
-                if stack.len() > 16 {
-                    break;
-                }
-            }
-            let mut satisfied: Vec<String> = (0..cx.ix.classes.len())
-                .filter(|&k| cx.ix.classes[k].def.kind == ast::ClassKind::Interface && modules[cx.ix.classes[k].module].lang == Lang::Go)
-                .filter(|&k| {
-                    let need = contract(k);
-                    !need.is_empty() && need.iter().all(|m| have.contains(m))
-                })
-                .map(|k| cx.ix.classes[k].name.clone())
-                .collect();
+            let mut satisfied: Vec<String> = cx.ix.implements[cid].iter().map(|&k| cx.ix.classes[k].name.clone()).collect();
             satisfied.sort();
             satisfied.dedup();
             if !satisfied.is_empty() {
