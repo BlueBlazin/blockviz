@@ -56,6 +56,42 @@ struct Analyzed<'a> {
     scene: &'a ir::Scene,
 }
 
+/// The reply, written in pieces and joined once the scene is freed: one
+/// growing buffer would need a block as large as the reply (and, while
+/// doubling, half as large again) beside the whole scene.
+#[derive(Default)]
+struct Pieces {
+    full: Vec<Vec<u8>>,
+    last: Vec<u8>,
+}
+
+impl Pieces {
+    fn join(mut self) -> Vec<u8> {
+        self.full.push(self.last);
+        self.full.concat()
+    }
+}
+
+impl std::io::Write for Pieces {
+    // serde_json writes every token with this: inlined, as `Vec`'s is, it costs no more.
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        if self.last.capacity() - self.last.len() < buf.len() {
+            let full = std::mem::replace(&mut self.last, Vec::with_capacity(buf.len().max(1 << 16)));
+            self.full.push(full);
+        }
+        self.last.extend_from_slice(buf);
+        Ok(())
+    }
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.write_all(buf).map(|_| buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub fn analyze(name: &str, files: Vec<project::InFile>) -> ir::Scene {
     project::build(name, files)
 }
@@ -94,7 +130,10 @@ pub fn analyze_project(input: Vec<u8>) -> Vec<u8> {
             if !p.description.trim().is_empty() {
                 scene.description = p.description.trim().to_string();
             }
-            serde_json::to_vec(&Analyzed { ok: true, scene: &scene }).unwrap()
+            let mut reply = Pieces::default();
+            serde_json::to_writer(&mut reply, &Analyzed { ok: true, scene: &scene }).unwrap();
+            drop(scene);
+            reply.join()
         }
         Err(e) => serde_json::json!({ "ok": false, "error": format!("Invalid input: {e}") }).to_string().into_bytes(),
     }
