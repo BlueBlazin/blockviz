@@ -126,6 +126,25 @@ describe('scene diff', () => {
     expect(r.status(id(h, 'a.py'))).toBe('added');
   });
 
+  it('pairs a folder moved under src/ with the one it was', () => {
+    const bf = { 'pkg/a.py': 'A', 'pkg/b.py': 'B', 'tests/t.py': 'T' };
+    const hf = { 'src/pkg/a.py': 'A2', 'src/pkg/b.py': 'B', 'tests/t.py': 'T' };
+    const repo = (files: Record<string, string>, pkg: string): Spec => ({
+      kind: 'repo', title: 'repo', edges: [['tests/', pkg, 'uses']], children: [
+        { kind: 'dir', title: pkg, children: Object.keys(files).filter(f => !f.startsWith('tests')).map(f => ({ kind: 'file' as Kind, title: f.split('/').pop()!, file: f })) },
+        { kind: 'dir', title: 'tests/', children: [{ kind: 'file', title: 't.py', file: 'tests/t.py' }] },
+      ],
+    });
+    const b = model(bf, repo(bf, 'pkg/'));
+    const h = model(hf, repo(hf, 'src/pkg/'));
+    const r = new SceneDiff(b, h, [{ path: 'src/pkg/a.py', status: 'renamed', previous: 'pkg/a.py' }, { path: 'src/pkg/b.py', status: 'renamed', previous: 'pkg/b.py' }]);
+    expect(r.baseOf(id(h, 'src/pkg/'))).toBe(id(b, 'pkg/'));
+    expect(r.status(id(h, 'src/pkg/'))).toBeNull();
+    // tests/ depended on the package before too.
+    expect(r.added.size).toBe(0);
+    expect(changes(r)).toEqual(['changed a.py', 'changed b.py']);
+  });
+
   it('pairs blocks of the same title by their code first', () => {
     const bf = { 'm.py': 'def f():\n    view(a)\n    view(b)\n' };
     const hf = { 'm.py': 'def f():\n    view(z)\n    view(a)\n    view(b)\n' };

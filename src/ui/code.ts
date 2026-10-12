@@ -9,7 +9,8 @@ const decoder = new TextDecoder();
 /**
  * The whole lines a span touches, as classed segments. Text on those lines
  * outside the span is marked `dim`, so a call is shown in its statement.
- * Common indentation is removed. `runs` is `[len, class, ...]` over the
+ * Common indentation is removed unless `keepIndent` (two versions of code
+ * shown together share one cut). `runs` is `[len, class, ...]` over the
  * file's UTF-8 bytes; without it everything is plain.
  */
 export function codeLines(
@@ -17,6 +18,7 @@ export function codeLines(
   runs: Uint32Array | null,
   span: { start: number; end: number; line: number },
   maxLines = 2000,
+  keepIndent = false,
 ): { lines: CodeLine[]; more: number } {
   const start = Math.min(span.start, bytes.length);
   let end = Math.min(Math.max(span.end, start), bytes.length);
@@ -62,7 +64,7 @@ export function codeLines(
     if (at < to) piece(Math.max(at, from), to, 0);
   }
   const more = full ? countLines(bytes, from, to) - lines.length : 0;
-  return { lines: dedent(lines), more };
+  return { lines: keepIndent ? lines : dedent(lines), more };
 }
 
 function countLines(bytes: Uint8Array, from: number, to: number): number {
@@ -106,6 +108,9 @@ export function dedent(lines: CodeLine[]): CodeLine[] {
     return { no: l.no, segs };
   });
 }
+
+/** A line's text, without its syntax classes. */
+export const lineText = (l: CodeLine) => l.segs.map(s => s.text).join('');
 
 /** Width of a line's leading whitespace, in characters (a tab is four). */
 export function indentWidth(l: CodeLine): number {

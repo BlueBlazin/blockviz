@@ -1,17 +1,26 @@
 import { ArrowUpRight, Maximize2, X } from 'lucide-react';
-import { useEffect, useMemo, useState, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { SceneNode } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
 import { CodeView, type LineRange } from './CodeView';
-import { NARROW } from './media';
+import { KIND_LABEL, ResizeHandle, type PanelSize } from './panel';
+import type { SceneDiff } from '../canvas/diff';
+import { ChangeSteps, describeChange } from './ChangesPanel';
+import { DiffView } from './DiffView';
 
-const KIND_LABEL: Record<string, string> = {
-  repo: 'Repository', dir: 'Folder', file: 'File', notebook: 'Notebook', doc: 'Document', asset: 'Asset',
-  class: 'Class', function: 'Function', section: 'Section', loop: 'Loop', branch: 'Branch', lane: 'Branch arm',
-  group: 'Group', call: 'Call', op: 'Step', glyph: 'Operator', table: 'Settings', artifact: 'File on disk',
-  symbol: 'Definition', input: 'Input', output: 'Output',
-};
+export { clampPanel, DEFAULT_PANEL, type PanelSize } from './panel';
+
+/** Reading a change (a pull request): how the code on screen differs from its base version. */
+export interface InspectorChange {
+  diff: SceneDiff;
+  baseHighlights: Highlights;
+  /** The change being read, as its index in `diff.changes` (-1: the block is not one). */
+  index: number;
+  onStep: (delta: number) => void;
+  /** Goes to a change, by its index. */
+  onChange: (index: number) => void;
+}
 
 function List({ label, values, mono = true }: { label: string; values?: string[]; mono?: boolean }) {
   if (!values?.length) return null;
@@ -23,7 +32,44 @@ function List({ label, values, mono = true }: { label: string; values?: string[]
   );
 }
 
-export interface PanelSize { w: number; h: number }
+/** What a change did to a block, and where it is among the changes. */
+function ChangeLine({ compare, node }: { compare: InspectorChange; node: SceneNode }) {
+  const { diff } = compare;
+  const status = diff.status(node.id);
+  const inside = diff.inside(node.id);
+  const through = inside ? 0 : diff.through(node.id);
+  const plural = (n: number) => (n === 1 ? '' : 's');
+  const says = status === 'added' ? 'New in this change'
+    : inside ? `${inside} change${plural(inside)} inside`
+    : through ? `Leads into code with ${through} change${plural(through)}`
+    : status ? 'Its code changed' : 'Unchanged';
+  const removed = diff.removedIn(node.id);
+  return (
+    <>
+      <div className="change-status">
+        {status && <span className={`change-badge ${status}`}>{status === 'added' ? 'Added' : 'Changed'}</span>}
+        <span>{says}</span>
+      </div>
+      <ChangeSteps index={compare.index} total={diff.changes.length} onStep={compare.onStep} />
+      {removed.length > 0 && (
+        <div className="insp-field">
+          <label>Removed from here <span className="count">{removed.length}</span></label>
+          <div className="uses changes">
+            {removed.map(c => {
+              const d = describeChange(diff, c);
+              return (
+                <button key={c.id} onClick={() => compare.onChange(diff.indexOf(c.id, true))}>
+                  <span className="use-name"><span className="change-mark removed">−</span>{d.name}<span className="dim"> · {d.kind.toLowerCase()}</span></span>
+                  {d.line !== undefined && <span className="use-at">{d.line}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /** What a use is, when it is not a call. */
 const USE_KIND: Record<string, string> = { symbol: 'component', class: 'methods', file: 'imports' };
@@ -56,70 +102,12 @@ function UsedBy({ model, id, onGo, onPeek }: { model: SceneModel; id: number; on
   );
 }
 
-export const DEFAULT_PANEL: PanelSize = { w: 380, h: 0 };
-
-/** Keeps the panel inside the window, leaving room to see the diagram. */
-export function clampPanel(size: PanelSize): PanelSize {
-  const maxW = Math.max(300, window.innerWidth - 160);
-  const maxH = Math.max(180, window.innerHeight - 140);
-  return {
-    w: Math.round(Math.min(Math.max(size.w || DEFAULT_PANEL.w, 300), maxW)),
-    h: size.h ? Math.round(Math.min(Math.max(size.h, 160), maxH)) : 0,
-  };
-}
-
-/** Drag (or arrow keys) on the panel's inner edge: the left edge beside the
- * diagram, or the top edge when the panel is a bottom sheet on narrow screens. */
-function ResizeHandle({ size, onResize }: { size: PanelSize; onResize: (s: PanelSize) => void }) {
-  const drag = useRef<{ x: number; y: number; start: PanelSize; narrow: boolean } | null>(null);
-  const narrow = () => window.matchMedia(NARROW).matches;
-  const sheetHeight = (s: PanelSize) => s.h || Math.round(window.innerHeight * 0.46);
-  const end = () => {
-    drag.current = null;
-    document.body.classList.remove('resizing-x', 'resizing-y');
-  };
-  return (
-    <div
-      className="insp-resize"
-      role="separator"
-      aria-orientation={narrow() ? 'horizontal' : 'vertical'}
-      aria-label="Resize details panel"
-      aria-valuenow={narrow() ? sheetHeight(size) : size.w}
-      tabIndex={0}
-      title="Drag to resize · double-click to reset"
-      onPointerDown={e => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        e.currentTarget.setPointerCapture(e.pointerId);
-        const n = narrow();
-        drag.current = { x: e.clientX, y: e.clientY, start: { w: size.w, h: sheetHeight(size) }, narrow: n };
-        document.body.classList.add(n ? 'resizing-y' : 'resizing-x');
-      }}
-      onPointerMove={e => {
-        const d = drag.current;
-        if (!d) return;
-        onResize(clampPanel(d.narrow ? { w: d.start.w, h: d.start.h - (e.clientY - d.y) } : { w: d.start.w - (e.clientX - d.x), h: d.start.h }));
-      }}
-      onPointerUp={end}
-      onLostPointerCapture={end}
-      onDoubleClick={() => onResize(clampPanel(narrow() ? { ...size, h: 0 } : { ...size, w: DEFAULT_PANEL.w }))}
-      onKeyDown={e => {
-        const step = e.shiftKey ? 96 : 24;
-        const n = narrow();
-        const grow = n ? (e.key === 'ArrowUp' ? 1 : e.key === 'ArrowDown' ? -1 : 0) : (e.key === 'ArrowLeft' ? 1 : e.key === 'ArrowRight' ? -1 : 0);
-        if (!grow) return;
-        e.preventDefault();
-        e.stopPropagation();
-        onResize(clampPanel(n ? { w: size.w, h: sheetHeight(size) + grow * step } : { w: size.w + grow * step, h: size.h }));
-      }}
-    />
-  );
-}
-
-export function Inspector({ model, highlights, node, hover, size, onResize, onClose, onZoom, onGo, onPick, onPeek }: {
+export function Inspector({ model, highlights, node, hover, size, compare, onResize, onClose, onZoom, onGo, onPick, onPeek }: {
   model: SceneModel;
   highlights: Highlights;
   node: SceneNode;
+  /** When reading a change: its block's status, the change steps, and code shown as it changed. */
+  compare?: InspectorChange;
   /** The block under the pointer in the diagram: its lines are tinted. */
   hover: number | null;
   size: PanelSize;
@@ -147,6 +135,12 @@ export function Inspector({ model, highlights, node, hover, size, onResize, onCl
   const hovered: LineRange | null = view && h?.span && h.id !== view.root.id && h.span.file === view.span.file
     && h.span.start >= view.span.start && h.span.end <= view.span.end ? [h.span.line, h.span.endLine] : null;
   const where = view && view.root !== node && view.root.kind !== 'file' ? view.root.title : null;
+  // In a change, code is shown as it changed: the whole definition around the block, folded, its lines kept.
+  const diff = compare?.diff;
+  const changed = !!diff && !!view && (diff.status(view.root.id) !== null || diff.inside(view.root.id) > 0);
+  const baseRoot = changed ? diff!.baseOf(view!.root.id) : undefined;
+  const baseSpan = baseRoot !== undefined ? diff!.base.node(baseRoot).span : undefined;
+  const rootSpan = view?.root.span ?? view?.span;
   const kind = KIND_LABEL[node.kind] ?? node.kind;
   const effects = node.effects?.filter(e => !e.startsWith('__'));
   return (
@@ -165,6 +159,7 @@ export function Inspector({ model, highlights, node, hover, size, onResize, onCl
           <h2 className={node.kind === 'op' ? 'mono' : undefined}>{node.title || kind}</h2>
         </div>
         {node.doc && <p className="insp-doc">{node.doc}</p>}
+        {compare && <ChangeLine compare={compare} node={node} />}
         <div className="insp-actions">
           {owner && <button onClick={onZoom}><Maximize2 size={13} />Zoom in</button>}
           {def && <button onClick={() => onGo(def.id)}><ArrowUpRight size={13} />Go to {def.kind === 'class' ? 'class' : 'definition'}<span className="dim">{def.title}</span></button>}
@@ -183,7 +178,19 @@ export function Inspector({ model, highlights, node, hover, size, onResize, onCl
         {(hasSource || node.code) && (
           <div className="insp-source">
             <label>{file ? <>{file}{span ? <span className="dim">{where ? ` · in ${where}` : ''} · {span.line === span.endLine ? `line ${span.line}` : `lines ${span.line}–${span.endLine}`}</span> : null}</> : 'Code'}</label>
-            {hasSource
+            {hasSource && changed && rootSpan
+              ? <DiffView
+                  head={{ model, highlights, span: rootSpan }}
+                  base={baseSpan && diff!.base.fileBytes(baseSpan.file) ? { model: diff!.base, highlights: compare!.baseHighlights, span: baseSpan } : null}
+                  marked={marked}
+                  hovered={hovered}
+                  onLine={line => onPick(model.blockAt(view!.root, line).id)}
+                  onLineHover={line => {
+                    const b = line === null ? null : model.blockAt(view!.root, line);
+                    onPeek(b && b !== view!.root ? b.id : null);
+                  }}
+                />
+              : hasSource
               ? <CodeView
                   model={model}
                   highlights={highlights}

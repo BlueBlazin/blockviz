@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, GitPullRequest, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubComparison, githubProject, isComparison, parseGitHub, pastedProject, type Progress } from './core/loaders';
@@ -9,7 +9,8 @@ import { traceValue } from './canvas/trace';
 import { ValuePanel } from './ui/ValuePanel';
 import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
-import { legend, swatch } from './canvas/theme';
+import { changeColor, legend, swatch } from './canvas/theme';
+import { ChangesPanel, RemovedDetails } from './ui/ChangesPanel';
 import { Highlights } from './core/highlights';
 import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
@@ -59,6 +60,10 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   /** A value being followed (an edge clicked). */
   const [value, setValue] = useState<EdgeRef | null>(null);
+  /** Reading a change: the list of its changes is open (when nothing else is in the panel). */
+  const [changesOpen, setChangesOpen] = useState(true);
+  /** Reading a change: a block it removed (a base block), shown in the panel. */
+  const [removedSel, setRemovedSel] = useState<number | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
   /** The details panel's size as the reader chose it (remembered), and as it fits this window. */
   const [panel, setPanel] = useState<PanelSize>(() => ({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
@@ -110,6 +115,8 @@ export default function App() {
       setSelected(null);
       setSelectedPath(null);
       setValue(null);
+      setRemovedSel(null);
+      setChangesOpen(true);
       setView({ path: [], zoom: 1 });
       setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed, compare });
       setDialog(null);
@@ -157,8 +164,8 @@ export default function App() {
     const e = new Engine(canvas.current, loaded.model, {
       onView: v => { setView(v); nav.current?.viewChanged(); },
       onJump: () => nav.current?.jump(),
-      onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); },
-      onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); },
+      onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); setRemovedSel(null); },
+      onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); setRemovedSel(null); },
       onHover: id => setHoverId(id),
     }, insets);
     e.setDiff(loaded.compare?.diff ?? null);
@@ -200,7 +207,8 @@ export default function App() {
   useEffect(() => engine.current?.trace(traced && { scope: traced.scope, edges: traced.edges }), [traced]);
 
   // Framing keeps blocks clear of the top bar, footer and details panel.
-  const panelOpen = selected !== null || value !== null;
+  const compare = loaded?.compare;
+  const panelOpen = selected !== null || value !== null || removedSel !== null || (!!compare && changesOpen);
   useEffect(() => {
     engine.current?.setInsets(overlayInsets(panelOpen, fitted));
   }, [panelOpen, fitted, loaded]);
@@ -225,6 +233,33 @@ export default function App() {
     engine.current?.flyToNode(id);
   }, [loaded, fitted]);
 
+  /** Where the change being read is among the changes (-1: what is selected is not one). */
+  const changeIndex = !compare ? -1 : removedSel !== null ? compare.diff.indexOf(removedSel, true) : selected !== null ? compare.diff.indexOf(selected) : -1;
+
+  /** Goes to a change: selects its block (or shows the removed one) and flies to it. */
+  const goToChange = useCallback((i: number) => {
+    const c = compare?.diff.changes[i];
+    if (!c) return;
+    setValue(null);
+    if (c.status === 'removed') {
+      setSelected(null);
+      setSelectedPath(null);
+      setRemovedSel(c.id);
+      engine.current?.setInsets(overlayInsets(true, fitted));
+      engine.current?.flyToNode(c.at);
+    } else {
+      setRemovedSel(null);
+      goTo(c.id);
+    }
+  }, [compare, fitted, goTo]);
+
+  /** The next (`delta` 1) or previous (-1) change from the one being read, round the list. */
+  const stepChange = useCallback((delta: number) => {
+    const n = compare?.diff.changes.length ?? 0;
+    if (!n) return;
+    goToChange(changeIndex < 0 ? (delta > 0 ? 0 : n - 1) : (changeIndex + delta + n) % n);
+  }, [compare, changeIndex, goToChange]);
+
   /** Selects a block for a line of source, staying in the instance being read. */
   const pick = useCallback((id: number) => {
     if (!loaded) return;
@@ -243,7 +278,9 @@ export default function App() {
       if (e.key === 'Escape') {
         if (dialog) { if (dialog !== 'open' || loaded) setDialog(null); return; }
         if (selected !== null) { setSelected(null); setSelectedPath(null); engine.current?.peek(null); }
+        else if (removedSel !== null) setRemovedSel(null);
         else if (value !== null) { setValue(null); engine.current?.peek(null); }
+        else if (loaded?.compare && changesOpen) { setChangesOpen(false); engine.current?.peek(null); }
         return;
       }
       // Back and forward, as in a browser.
@@ -258,6 +295,7 @@ export default function App() {
       else if (e.key === '+' || e.key === '=') eng.zoomBy(1.5);
       else if (e.key === '-' || e.key === '_') eng.zoomBy(1 / 1.5);
       else if (e.key === 'Enter' && selectedPath) eng.flyTo(selectedPath);
+      else if ((e.key === 'n' || e.key === 'p') && loaded?.compare) stepChange(e.key === 'n' ? 1 : -1);
       else if (e.key === '?') setDialog('help');
       else if (e.key.startsWith('Arrow')) {
         e.preventDefault();
@@ -267,7 +305,7 @@ export default function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [dialog, selected, selectedPath, loaded, value]);
+  }, [dialog, selected, selectedPath, loaded, value, removedSel, changesOpen, stepChange]);
 
   const crumbs = useMemo(() => {
     if (!loaded) return [];
@@ -307,9 +345,25 @@ export default function App() {
         </span>
         <div className="where">
           {crumbs.length <= 1 && <span className="crumb-root">{loaded?.scene.title}</span>}
-          {view.path.length <= 1 && loaded?.scene.description && <span className="tagline" title={loaded.scene.description}>{loaded.scene.description}</span>}
+          {view.path.length <= 1 && !compare && loaded?.scene.description && <span className="tagline" title={loaded.scene.description}>{loaded.scene.description}</span>}
           {crumbs.length > 1 && (
             <Breadcrumbs crumbs={crumbs} onGo={c => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 'fit', 0.06)} />
+          )}
+          {compare && (
+            <button
+              className="change-chip"
+              title={`${compare.comparison.info.title}: show its changes`}
+              onClick={() => { setSelected(null); setSelectedPath(null); setValue(null); setRemovedSel(null); setChangesOpen(true); }}
+            >
+              <GitPullRequest size={13} />
+              <span className="cc-num">{compare.comparison.info.kind === 'pr' ? `#${compare.comparison.info.number}` : 'compare'}</span>
+              {view.path.length <= 1 && <span className="cc-title">{compare.comparison.info.title}</span>}
+              <span className="cc-counts">
+                <b className="added">+{compare.diff.summary.added}</b>
+                <b className="changed">~{compare.diff.summary.changed}</b>
+                <b className="removed">−{compare.diff.summary.removed}</b>
+              </span>
+            </button>
           )}
         </div>
       </nav>
@@ -383,7 +437,17 @@ export default function App() {
             <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill="#fff" stroke="#2c3036" /><path d="M13.5 7h7M17 3.5v7" stroke="#2c3036" /></svg>add (residual)</span>
             <span><svg width="34" height="14"><circle cx="17" cy="7" r="3.5" fill="#d97706" /></svg>has side effects</span>
           </div>
-          <p>Bigger blocks contain more. Zoom into any block with a corner mark to see inside.</p>
+          {compare && (
+            <div className="legend-lines">
+              <span><i className="legend-box" style={{ background: changeColor.added.tint, borderColor: changeColor.added.ink }} />added</span>
+              <span><i className="legend-box" style={{ background: changeColor.changed.tint, borderColor: changeColor.changed.ink }} />changed</span>
+              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={changeColor.added.ink} strokeWidth="2" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={changeColor.added.ink} /></svg>new connection</span>
+              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={changeColor.removed.ink} strokeWidth="1.6" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={changeColor.removed.ink} /></svg>removed connection</span>
+              <span><i className="legend-count">3</i>changes inside</span>
+              <span><i className="legend-box dashed" style={{ borderColor: changeColor.changed.ink }} />leads into changes</span>
+            </div>
+          )}
+          <p>Bigger blocks contain more. Zoom into any block with a corner mark to see inside.{compare ? ' What the change did not touch is faded.' : ''}</p>
         </aside>
       )}
 
@@ -400,10 +464,38 @@ export default function App() {
           onGo={goTo}
           onPick={pick}
           onPeek={id => engine.current?.peek(id)}
+          compare={compare && { diff: compare.diff, baseHighlights: compare.baseHighlights, index: changeIndex, onStep: stepChange, onChange: goToChange }}
         />
       )}
 
-      {traced && loaded && !node && (
+      {compare && removedSel !== null && !node && (
+        <RemovedDetails
+          diff={compare.diff}
+          change={compare.diff.changes[compare.diff.indexOf(removedSel, true)]}
+          baseHighlights={compare.baseHighlights}
+          size={fitted}
+          index={changeIndex}
+          onResize={setPanel}
+          onClose={() => setRemovedSel(null)}
+          onShow={id => engine.current?.flyToNode(id)}
+          onStep={stepChange}
+        />
+      )}
+
+      {compare && changesOpen && !node && removedSel === null && !traced && (
+        <ChangesPanel
+          diff={compare.diff}
+          info={compare.comparison.info}
+          size={fitted}
+          current={changeIndex}
+          onResize={setPanel}
+          onClose={() => { setChangesOpen(false); engine.current?.peek(null); }}
+          onGo={goToChange}
+          onPeek={id => engine.current?.peek(id)}
+        />
+      )}
+
+      {traced && loaded && !node && removedSel === null && (
         <ValuePanel
           model={loaded.model}
           owner={traced.owner}
@@ -431,7 +523,7 @@ export default function App() {
             <header><h1>Reading the diagram</h1><button className="icon" aria-label="Close" onClick={() => setDialog(null)}><X size={16} /></button></header>
             <p>Every level is a dataflow diagram read top to bottom: inputs enter at the top, results leave at the bottom, and arrows show what flows into what. Zooming into a block reveals the diagram inside it: repository → files → classes and functions → the steps inside them → the code they call.</p>
             <div className="keys">
-              {(touch ? TOUCH_KEYS : KEYS).map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
+              {[...(touch ? TOUCH_KEYS : KEYS), ...(compare && !touch ? [['Next / previous change', 'N / P']] : [])].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
             </div>
             <h2>Finding your way</h2>
             <p>The details panel shows a step's code inside its function with its lines marked; {touch ? 'tap' : 'click'} a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>

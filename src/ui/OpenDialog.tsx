@@ -30,13 +30,13 @@ export function OpenDialog({ onOpen, onClose, canClose, lastUrl }: { onOpen: (r:
         <header>
           <div>
             <h1 id="open-title">Open a codebase</h1>
-            <p>Code is analyzed in your browser with Rust/WebAssembly. Nothing is uploaded or executed.</p>
+            <p>Code is analyzed in your browser with Rust/WebAssembly. Nothing is uploaded or executed. A pull request (…/pull/123) or comparison (…/compare/main...dev) shows what it changes.</p>
           </div>
           {canClose && <button className="icon" aria-label="Close" onClick={onClose}><X size={16} /></button>}
         </header>
         <form className="open-row" onSubmit={e => { e.preventDefault(); if (url.trim()) onOpen({ kind: 'github', url }); }}>
           <Link2 size={17} />
-          <input ref={urlInput} value={url} onChange={e => setUrl(e.target.value)} placeholder="github.com/owner/repo" aria-label="GitHub repository" spellCheck={false} />
+          <input ref={urlInput} value={url} onChange={e => setUrl(e.target.value)} placeholder="github.com/owner/repo, or a pull request" aria-label="GitHub repository, pull request or comparison" spellCheck={false} />
           <button className="primary" type="submit" disabled={!url.trim()}>Open</button>
         </form>
         <div className="open-options">

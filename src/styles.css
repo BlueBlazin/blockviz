@@ -10,6 +10,14 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 6px 20px rgba(16, 24, 40, 0.07);
   --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, sans-serif;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* A change being read (keep in step with changeColor in src/canvas/theme.ts). */
+  --added: #1a7f37;
+  --added-bg: #e6ffec;
+  --changed: #9a6700;
+  --changed-strong: #bf8700;
+  --changed-bg: #fff8c5;
+  --removed: #cf222e;
+  --removed-bg: #ffebe9;
   font-family: var(--ui);
   font-size: 13px;
   color: var(--ink);
@@ -166,6 +174,17 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .code .ln.marked { background: #e3ebfd; border-left-color: var(--accent); }
 .code .ln.marked .no { color: var(--accent); }
 .code-more { padding: 6px 12px 0; color: var(--faint); font-family: var(--ui); font-size: 11.5px; position: sticky; left: 0; }
+/* Code as it changed: a sign column, removed and added lines tinted. */
+.code.diff .ln { grid-template-columns: auto 1.6ch 1fr; }
+.code .sign { color: #a3a9b2; user-select: none; }
+.code .ln.add { background: var(--added-bg); }
+.code .ln.add .sign, .code .ln.add .no { color: var(--added); }
+.code .ln.del { background: var(--removed-bg); }
+.code .ln.del .sign, .code .ln.del .no { color: var(--removed); }
+.code .ln.del .src { opacity: 0.85; }
+.code .ln.gap { cursor: pointer; color: var(--faint); font-family: var(--ui); font-size: 11px; background: #f0f2f5; }
+.code .ln.gap:hover { color: var(--accent); }
+.code .ln.marked.add, .code .ln.marked.del { border-left-color: var(--accent); }
 /* Syntax classes, numbered as in crates/blockviz-core/src/highlight (Hl). */
 .t1 { color: #cf222e; }                     /* keyword */
 .t2 { color: #0a3069; }                     /* string */
@@ -182,6 +201,46 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .t19 { color: #0969da; }                    /* link */
 .t20 { color: #0a3069; }                    /* code in documents */
 .t21 { color: #6639ba; }                    /* preprocessor, attributes, markers */
+
+/* Reading a change (a pull request) */
+.change-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 460px; padding: 4px 9px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid var(--line); color: var(--muted); flex-shrink: 1; }
+.change-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.cc-num { font-weight: 650; color: var(--ink); white-space: nowrap; }
+.cc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-counts { display: inline-flex; gap: 5px; font: 600 11.5px var(--mono); white-space: nowrap; }
+.cc-counts .added, .change-summary .added, .change-mark.added { color: var(--added); }
+.cc-counts .changed, .change-summary .changed, .change-mark.changed { color: var(--changed); }
+.cc-counts .removed, .change-summary .removed, .change-mark.removed { color: var(--removed); }
+.change-refs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--faint); font-size: 12px; }
+.change-refs code { font: 11.5px var(--mono); color: var(--muted); background: #f3f4f6; padding: 1px 5px; border-radius: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.change-refs a { display: inline-flex; align-items: center; gap: 3px; color: var(--accent); text-decoration: none; margin-left: auto; }
+.change-refs a:hover { text-decoration: underline; }
+.change-summary { display: flex; gap: 12px; margin: 0 0 10px; font-weight: 600; font-size: 12.5px; }
+.change-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; color: var(--muted); }
+.change-badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 650; }
+.change-badge.added { background: var(--added-bg); color: var(--added); }
+.change-badge.changed { background: var(--changed-bg); color: var(--changed); }
+.change-badge.removed { background: var(--removed-bg); color: var(--removed); }
+.change-steps { display: flex; align-items: center; gap: 2px; margin: 0 0 8px; color: var(--faint); font-size: 12px; }
+.change-steps span { margin-right: 4px; }
+.change-steps strong { color: var(--ink); font-weight: 600; }
+.change-steps .icon { width: 26px; height: 26px; }
+button.link { color: var(--accent); font-weight: 500; }
+button.link:hover { text-decoration: underline; }
+.change-mark { display: inline-block; width: 1.3ch; margin-right: 5px; font: 700 12px var(--mono); }
+.uses.changes button[aria-current="true"] { background: #eef3fe; box-shadow: inset 2px 0 0 var(--accent); }
+.change-file { display: flex; align-items: center; gap: 6px; text-transform: none !important; letter-spacing: 0 !important; font: 500 11.5px var(--mono) !important; color: var(--muted) !important; }
+.file-mark { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 3px; font: 700 10px var(--ui); color: #fff; flex: none; margin-right: 6px; }
+.change-file .file-mark { margin-right: 0; }
+.file-mark.A { background: var(--added); }
+.file-mark.M { background: var(--changed-strong); }
+.file-mark.D { background: var(--removed); }
+.file-mark.R { background: #8250df; }
+.other-files { display: flex; flex-direction: column; gap: 3px; font: 11.5px var(--mono); color: var(--muted); }
+.other-files div { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-box { width: 18px; height: 12px; border: 1.6px solid; border-radius: 3px; flex: none; }
+.legend-box.dashed { border-style: dashed; background: #fff; }
+.legend-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 13px; border-radius: 7px; background: var(--changed-strong); color: #fff; font: 600 9.5px var(--ui); font-style: normal; flex: none; }
 
 /* Overlays */
 .scrim { position: absolute; inset: 0; background: rgba(250, 250, 251, 0.6); backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; z-index: 10; }
@@ -237,6 +296,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
   .search-button { min-width: 0; width: 32px; padding: 0; justify-content: center; }
   .search-button span, .search-button kbd { display: none; }
   .crumb button { max-width: 160px; }
+  .cc-title { display: none; }
   .defined-in { top: 98px; max-width: calc(100vw - 24px); }
   .inspector { left: 12px; width: auto; max-width: none; top: auto; height: var(--panel-h, 46vh); }
   /* The sheet is short: what is selected stays in sight while its code scrolls. */

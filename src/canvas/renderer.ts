@@ -248,7 +248,8 @@ export class Renderer {
   private changeMarks(n: SceneNode, b: Box, t: Xf, alpha: number, unfaded: number, diff: SceneDiff, status: Status | null) {
     const inside = diff.inside(n.id);
     const through = inside || status === 'added' ? 0 : diff.through(n.id);
-    if ((!inside && !through) || b.w < 14 || b.h < 10) return;
+    // In a thumbnail the tint shows where changes are; the closed block's badge counts them.
+    if ((!inside && !through) || b.w < 14 || b.h < 10 || this.thumbnails) return;
     const ctx = this.ctx;
     const ink = changeColor.changed.ink;
     const radius = clamp(6 * t.s, 1.2, 10) + 3;

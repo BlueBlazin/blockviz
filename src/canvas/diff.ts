@@ -54,6 +54,7 @@ export class SceneDiff {
     }
     this.pairFiles();
     this.pairTree(head.root, base.root);
+    this.pairFolders(head.root);
     this.pairMoved();
     this.mark(head.root);
     this.findRemoved();
@@ -172,6 +173,30 @@ export class SceneDiff {
   private inChange(h: number): boolean {
     const file = scopeFile(this.head, this.head.node(h));
     return file !== undefined && this.headChanges.has(file);
+  }
+
+  /**
+   * A folder renamed or regrouped (a package moved under `src/`) is the base
+   * folder most of what it holds came from. Inner folders first, so a moved
+   * tree pairs from the files up.
+   */
+  private pairFolders(h: number) {
+    const n = this.head.node(h);
+    for (const c of n.children ?? []) this.pairFolders(c);
+    if (this.match.has(h) || n.span) return;
+    const votes = new Map<number, number>();
+    let matched = 0;
+    for (const c of n.children ?? []) {
+      const b = this.match.get(c);
+      if (b === undefined) continue;
+      matched++;
+      const p = this.base.node(b).parent;
+      if (p !== undefined && !this.back.has(p) && this.base.node(p).kind === n.kind) votes.set(p, (votes.get(p) ?? 0) + 1);
+    }
+    let best: number | undefined;
+    let most = 0;
+    for (const [p, v] of votes) if (v > most) [best, most] = [p, v];
+    if (best !== undefined && most * 2 >= matched) this.pairTree(h, best);
   }
 
   /**
