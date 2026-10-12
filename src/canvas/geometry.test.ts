@@ -73,6 +73,32 @@ describe('camera', () => {
     expect(Math.max(...[0.25, 0.5, 0.75].map(t => p.at(t).w))).toBeGreaterThan(a.w);
   });
 
+  it('smooth paths stay finite between views far apart in zoom, starting exactly where they are', () => {
+    // From a block about forty levels deep to a file across the project: 10²⁰ apart in zoom.
+    const deep = { cx: 12.3456789, cy: 45.678, w: 1e-17 };
+    const far = { cx: 300, cy: -40, w: 1e3 };
+    for (const [a, b] of [[deep, far], [far, deep]]) {
+      const p = smoothPath(a, b);
+      expect(p.length).toBeGreaterThan(0);
+      for (let i = 0; i <= 100; i++) {
+        const v = p.at(i / 100);
+        expect([v.cx, v.cy, v.w].every(Number.isFinite)).toBe(true);
+        expect(v.w).toBeGreaterThan(0);
+      }
+      expect(p.at(0)).toEqual(a);
+      expect(p.at(1).cx).toBeCloseTo(b.cx, 9);
+      expect(p.at(1).w / b.w).toBeCloseTo(1, 9);
+    }
+    // Leaving a deep view, it zooms out before it moves: the first frames keep the start in view.
+    const out = smoothPath(deep, far);
+    for (const t of [1e-3, 1e-2]) {
+      const v = out.at(t);
+      expect(Math.abs(v.cx - deep.cx)).toBeLessThan(v.w / 2);
+    }
+    const pure = smoothPath({ cx: 0, cy: 0, w: 1e-200 }, { cx: 0, cy: 0, w: 1e200 });
+    expect(pure.at(0.5).w).toBeCloseTo(1, 9);
+  });
+
   it('pure zooms interpolate scale', () => {
     const p = smoothPath({ cx: 1, cy: 1, w: 100 }, { cx: 1, cy: 1, w: 1 });
     expect(p.at(1).w).toBeCloseTo(1);

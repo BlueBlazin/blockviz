@@ -119,24 +119,24 @@ export function smoothPath(a: View, b: View, rho = 1.35) {
   const w0 = a.w;
   const w1 = b.w;
   if (d < 1e-9 * Math.max(w0, w1)) {
-    const S = Math.abs(Math.log(w1 / w0)) / rho;
-    return { length: S, at: (t: number): View => ({ cx: a.cx, cy: a.cy, w: w0 * Math.exp(rho * S * t * Math.sign(Math.log(w1 / w0))) }) };
+    const zoom = Math.log(w1) - Math.log(w0);
+    return { length: Math.abs(zoom) / rho, at: (t: number): View => ({ cx: a.cx, cy: a.cy, w: w0 * Math.exp(zoom * t) }) };
   }
-  const r = (i: 0 | 1) => {
-    const wi = i ? w1 : w0;
-    const bi = (w1 * w1 - w0 * w0 + (i ? -1 : 1) * rho ** 4 * d * d) / (2 * wi * rho * rho * d);
-    return Math.log(-bi + Math.sqrt(bi * bi + 1));
-  };
-  const r0 = r(0);
-  const r1 = r(1);
+  // The paper writes -asinh(b) as log(-b + sqrt(b² + 1)), which cancels to
+  // log 0 once the views are more than about 10⁸ apart in zoom (deep in a large project).
+  const r = (wi: number, sign: number) => -Math.asinh((w1 * w1 - w0 * w0 + sign * rho ** 4 * d * d) / (2 * wi * rho * rho * d));
+  const r0 = r(w0, 1);
+  const r1 = r(w1, -1);
   const S = (r1 - r0) / rho;
   const at = (t: number): View => {
-    const s = t * S;
-    const u = (w0 / (rho * rho * d)) * (Math.cosh(r0) * Math.tanh(rho * s + r0) - Math.sinh(r0));
-    const w = (w0 * Math.cosh(r0)) / Math.cosh(rho * s + r0);
+    const s = rho * t * S;
+    // The paper's cosh(r0)·tanh(s + r0) − sinh(r0) as one ratio: its two terms
+    // are huge and nearly equal at a deep start, and their difference is noise.
+    const u = ((w0 / (rho * rho * d)) * Math.sinh(s)) / Math.cosh(s + r0);
+    const w = w0 * (Math.cosh(r0) / Math.cosh(s + r0));
     return { cx: a.cx + dx * u, cy: a.cy + dy * u, w };
   };
-  return { length: Number.isFinite(S) ? S : 0, at };
+  return { length: S, at };
 }
 
 /** A stretch of a line kept on screen: its points, the corner radius at each,
