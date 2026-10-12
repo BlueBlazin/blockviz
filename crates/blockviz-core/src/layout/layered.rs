@@ -162,12 +162,14 @@ impl Lists {
 
 impl std::ops::Index<usize> for Lists {
     type Output = [usize];
+    #[inline]
     fn index(&self, k: usize) -> &[usize] {
         &self.items[self.start[k]..self.start[k + 1]]
     }
 }
 
 impl std::ops::IndexMut<usize> for Lists {
+    #[inline]
     fn index_mut(&mut self, k: usize) -> &mut [usize] {
         &mut self.items[self.start[k]..self.start[k + 1]]
     }
