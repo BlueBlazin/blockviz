@@ -56,36 +56,38 @@ pub struct CodeResult {
 /// definitions, functions written as values and annotations; and the
 /// members it reads of names (`store.Open` is `("store", "Open")`), in order.
 #[derive(Default)]
-struct Used {
-    names: std::collections::HashSet<String>,
-    members: Vec<(String, String)>,
+struct Used<'a> {
+    names: std::collections::HashSet<&'a str>,
+    members: Vec<(&'a str, &'a str)>,
 }
 
-fn names_used(body: &[syntax::Stmt]) -> Used {
+fn names_used(body: &[syntax::Stmt]) -> Used<'_> {
     use syntax::{Expr, Stmt};
-    fn expr(e: &Expr, out: &mut Used) {
+    fn expr<'a>(e: &'a Expr, out: &mut Used<'a>) {
         walk::walk(e, &mut |x| match x {
             Expr::Name(n) => {
-                out.names.insert(n.id.clone());
+                out.names.insert(&n.id);
             }
             Expr::Attribute(a) => {
                 if let Expr::Name(n) = &*a.value {
-                    let m = (n.id.clone(), a.attr.clone());
-                    if !out.members.contains(&m) {
-                        out.members.push(m);
-                    }
+                    out.members.push((&n.id, &a.attr));
                 }
             }
             Expr::Function(f) => stmts(&f.body, out),
             _ => {}
         });
     }
-    fn stmts(body: &[Stmt], out: &mut Used) {
+    fn stmts<'a>(body: &'a [Stmt], out: &mut Used<'a>) {
         let mut roots = vec![];
         walk::stmt_exprs(body, false, &mut |e| roots.push(e));
         for e in roots {
             expr(e, out);
         }
+        defs(body, out);
+    }
+    /// What `stmt_exprs` leaves out, in the control flow it already went
+    /// through: definitions' annotations and bodies.
+    fn defs<'a>(body: &'a [Stmt], out: &mut Used<'a>) {
         for s in body {
             match s {
                 Stmt::FunctionDef(f) => {
@@ -97,25 +99,28 @@ fn names_used(body: &[syntax::Stmt]) -> Used {
                 Stmt::ClassDef(c) => stmts(&c.body, out),
                 Stmt::AnnAssign(a) => expr(&a.annotation, out),
                 Stmt::If(x) => {
-                    stmts(&x.body, out);
-                    x.elif_else_clauses.iter().for_each(|c| stmts(&c.body, out));
+                    defs(&x.body, out);
+                    x.elif_else_clauses.iter().for_each(|c| defs(&c.body, out));
                 }
-                Stmt::For(x) => stmts(&x.body, out),
-                Stmt::While(x) => stmts(&x.body, out),
-                Stmt::With(x) => stmts(&x.body, out),
+                Stmt::For(x) => defs(&x.body, out),
+                Stmt::While(x) => defs(&x.body, out),
+                Stmt::With(x) => defs(&x.body, out),
                 Stmt::Try(x) => {
-                    stmts(&x.body, out);
-                    x.handlers.iter().for_each(|h| stmts(&h.body, out));
-                    stmts(&x.orelse, out);
-                    stmts(&x.finalbody, out);
+                    defs(&x.body, out);
+                    x.handlers.iter().for_each(|h| defs(&h.body, out));
+                    defs(&x.orelse, out);
+                    defs(&x.finalbody, out);
                 }
-                Stmt::Match(x) => x.cases.iter().for_each(|c| stmts(&c.body, out)),
+                Stmt::Match(x) => x.cases.iter().for_each(|c| defs(&c.body, out)),
                 _ => {}
             }
         }
     }
     let mut out = Used::default();
     stmts(body, &mut out);
+    // Each member where it is first read.
+    let mut seen = std::collections::HashSet::new();
+    out.members.retain(|m| seen.insert(*m));
     out
 }
 
@@ -214,15 +219,15 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
             imports: cx.ix.imports[mi].iter().map(|(t, names)| (modules[*t].file, names.clone())).collect(),
             uses: {
                 let mut out: Vec<(u32, Vec<String>)> = vec![];
-                let mut add = |t: usize, name: Option<&String>| {
+                let mut add = |t: usize, name: Option<&str>| {
                     let file = modules[t].file;
                     let i = out.iter().position(|(f, _)| *f == file).unwrap_or_else(|| {
                         out.push((file, vec![]));
                         out.len() - 1
                     });
                     if let Some(n) = name {
-                        if !out[i].1.contains(n) {
-                            out[i].1.push(n.clone());
+                        if !out[i].1.iter().any(|x| x == n) {
+                            out[i].1.push(n.to_string());
                         }
                     }
                 };
@@ -246,7 +251,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
                     }
                 };
                 // Names another file of the namespace defines (a Go package's).
-                let mut peer: Vec<(usize, &String)> = used.iter().filter(|n| !cx.ix.syms[mi].contains_key(*n)).filter_map(|n| match cx.ix.namespace_member(mi, n) {
+                let mut peer: Vec<(usize, &str)> = used.iter().filter(|n| !cx.ix.syms[mi].contains_key(**n)).filter_map(|&n| match cx.ix.namespace_member(mi, n) {
                     Some(index::Sym::Member(p, _)) => Some((*p, n)),
                     _ => None,
                 }).collect();
@@ -259,7 +264,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
                     // the members code reads of it are defined where they are
                     // (`store.Open` in `store/db.go`).
                     if names.is_empty() {
-                        let read: Vec<&String> = members.iter().filter(|(base, attr)| matches!(cx.ix.sym(mi, base), Some(index::Sym::Module(b)) if b == t) && cx.ix.sym(*t, attr).is_some()).map(|(_, attr)| attr).collect();
+                        let read: Vec<&str> = members.iter().filter(|(base, attr)| matches!(cx.ix.sym(mi, base), Some(index::Sym::Module(b)) if b == t) && cx.ix.sym(*t, attr).is_some()).map(|&(_, attr)| attr).collect();
                         if read.is_empty() {
                             add(*t, None);
                         }
