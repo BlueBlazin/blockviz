@@ -68,7 +68,7 @@ export function CodeView({ model, highlights, span, marked, hovered = NO_LINES, 
  * coloured by another file's runs.
  */
 export function useRuns(highlights: Highlights | undefined, file: number | undefined): Uint32Array | null | undefined {
-  useEffect(() => { if (file !== undefined) void highlights?.runs(file); }, [highlights, file]);
+  useEffect(() => { if (file !== undefined) highlights?.request(file); }, [highlights, file]);
   return useSyncExternalStore(highlights?.subscribe ?? never, () => (file === undefined ? undefined : highlights?.peek(file)));
 }
 
