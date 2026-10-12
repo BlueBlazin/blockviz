@@ -77,7 +77,8 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     // A single wrapping directory (an extracted archive) becomes the repo name.
     let mut title = name.to_string();
     if let Some(first) = files.first().and_then(|f| f.path.split_once('/').map(|(d, _)| d.to_string())) {
-        if files.len() > 1 && files.iter().all(|f| f.path.starts_with(&format!("{first}/"))) {
+        let prefix = format!("{first}/");
+        if files.len() > 1 && files.iter().all(|f| f.path.starts_with(&prefix)) {
             for f in &mut files {
                 f.path = f.path[first.len() + 1..].to_string();
             }
@@ -592,7 +593,8 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
             continue;
         }
         let name = name.trim_start_matches('/');
-        let hits: Vec<usize> = entries.iter().enumerate().filter(|(_, e)| e.path.ends_with(&format!("templates/{name}")) || (name.contains('/') && e.path.ends_with(&format!("/{name}")))).map(|(i, _)| i).collect();
+        let (templates, nested) = (format!("templates/{name}"), format!("/{name}"));
+        let hits: Vec<usize> = entries.iter().enumerate().filter(|(_, e)| e.path.ends_with(&templates) || (name.contains('/') && e.path.ends_with(&nested))).map(|(i, _)| i).collect();
         let module_dir = entries[*module as usize].path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
         // Prefer the template next to the view (a Flask app or Django app directory).
         let t = match hits.as_slice() {
@@ -958,7 +960,8 @@ fn resolve_run(runner: &str, run: &crate::invocations::Run, paths: &HashMap<&str
         let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty() && *p != "." && !p.contains('$')).collect();
         for k in 0..parts.len() {
             let suffix = parts[k..].join("/");
-            let hits: Vec<usize> = paths.iter().filter(|(p, _)| **p == suffix || p.ends_with(&format!("/{suffix}"))).map(|(_, &i)| i).collect();
+            let nested = format!("/{suffix}");
+            let hits: Vec<usize> = paths.iter().filter(|(p, _)| **p == suffix || p.ends_with(&nested)).map(|(_, &i)| i).collect();
             if hits.len() == 1 {
                 return Some(hits[0]);
             }
