@@ -43,8 +43,7 @@ pub fn library_domains(root: &str) -> Domains {
 pub fn words(ident: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![];
     let mut cur = String::new();
-    let chars: Vec<char> = ident.chars().collect();
-    for (i, &c) in chars.iter().enumerate() {
+    for (i, c) in ident.char_indices() {
         if !c.is_alphanumeric() {
             if !cur.is_empty() {
                 out.push(std::mem::take(&mut cur));
@@ -53,9 +52,11 @@ pub fn words(ident: &str) -> Vec<String> {
         }
         // A new word starts at an upper-case letter after a lower-case one, or
         // at the last capital of an acronym (`HTTPServer` → http, server).
+        let prev = ident[..i].chars().next_back();
+        let next = ident[i + c.len_utf8()..].chars().next();
         let boundary = c.is_uppercase()
             && !cur.is_empty()
-            && (chars[i - 1].is_lowercase() || chars[i - 1].is_ascii_digit() || chars.get(i + 1).is_some_and(|n| n.is_lowercase()) && chars[i - 1].is_uppercase());
+            && prev.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit() || next.is_some_and(|n| n.is_lowercase()) && p.is_uppercase());
         if boundary {
             out.push(std::mem::take(&mut cur));
         }
@@ -71,14 +72,17 @@ pub fn words(ident: &str) -> Vec<String> {
 /// `c_attn` → attention, `lm_head` → linear. Only meaningful in ML code.
 pub fn ml_category(name: &str) -> Option<&'static str> {
     let ws = words(name);
-    let whole: String = ws.concat();
-    if let Some(c) = ml_word(&whole) {
+    let mut w = ws.concat();
+    if let Some(c) = ml_word(&w) {
         return Some(c);
     }
     // The head noun comes last: `attn_dropout` is a dropout.
     for i in (0..ws.len()).rev() {
         if i > 0 {
-            if let Some(c) = ml_word(&format!("{}{}", ws[i - 1], ws[i])) {
+            w.clear();
+            w.push_str(&ws[i - 1]);
+            w.push_str(&ws[i]);
+            if let Some(c) = ml_word(&w) {
                 return Some(c);
             }
         }
