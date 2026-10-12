@@ -532,8 +532,18 @@ fn dollar_string(b: &[u8], i: usize, j: usize, runs: &mut Runs) {
     runs.mark(seg, j, Hl::String);
 }
 
-/// A backtick template literal with `${expr}` parts, lexed recursively.
-fn template(text: &str, i: usize, end: usize, spec: &Spec, runs: &mut Runs) -> usize {
+/// Templates nested deeper than this read as plain strings. Each level
+/// rescans the interpolations inside it, so the bound keeps lexing linear and
+/// the recursion shallow; real code nests two or three deep.
+const TEMPLATE_DEPTH: usize = 16;
+
+/// A backtick template literal with `${expr}` parts, lexed recursively;
+/// `depth` templates enclose it.
+fn template(text: &str, i: usize, end: usize, spec: &Spec, runs: &mut Runs, depth: usize) -> usize {
+    if depth == TEMPLATE_DEPTH {
+        runs.mark(i, end, Hl::String);
+        return end;
+    }
     let b = text.as_bytes();
     let mut j = i + 1;
     let mut seg = i;
@@ -549,7 +559,7 @@ fn template(text: &str, i: usize, end: usize, spec: &Spec, runs: &mut Runs) -> u
                 runs.mark(j, j + 2, Hl::Interp);
                 let close = matching(b, j + 1, end, b'{', b'}');
                 let inner_end = if close <= end && close > j + 2 && b[close - 1] == b'}' { close - 1 } else { close };
-                lex(text, j + 2, inner_end, spec, runs);
+                lex_in(text, j + 2, inner_end, spec, runs, depth + 1);
                 if inner_end < close {
                     runs.mark(inner_end, close, Hl::Interp);
                 }
@@ -648,6 +658,11 @@ fn skip_inline_space(b: &[u8], mut i: usize, end: usize) -> usize {
 
 /// Lexes `text[start..end]` into `runs`.
 pub(super) fn lex(text: &str, start: usize, end: usize, spec: &Spec, runs: &mut Runs) {
+    lex_in(text, start, end, spec, runs, 0)
+}
+
+/// `lex` inside `depth` template literals.
+fn lex_in(text: &str, start: usize, end: usize, spec: &Spec, runs: &mut Runs, depth: usize) {
     let b = text.as_bytes();
     let has = |f: u32| spec.flags & f != 0;
     let nocase = has(NOCASE);
@@ -728,7 +743,7 @@ pub(super) fn lex(text: &str, start: usize, end: usize, spec: &Spec, runs: &mut 
         }
         if spec.quotes.as_bytes().contains(&c) {
             if c == b'`' && has(TEMPLATE) {
-                i = template(text, i, end, spec, runs);
+                i = template(text, i, end, spec, runs, depth);
             } else if has(TRIPLE) && rest.starts_with(&[c, c, c]) {
                 let j = find(b, i + 3, end, &[c, c, c]).map_or(end, |k| k + 3);
                 runs.mark(i, j, Hl::String);

@@ -70,6 +70,16 @@ fn unclosed_markdown_openers_take_linear_time() {
     }
 }
 
+#[test]
+fn deeply_nested_templates_neither_overflow_nor_go_quadratic() {
+    // Each template rescanned the ones inside it, recursing once per level:
+    // 8000 levels took a quarter of a second, and 50 000 overflowed the stack.
+    let src = "`${".repeat(50_000) + &"}`".repeat(50_000);
+    let start = Instant::now();
+    check("a.js", &src);
+    assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
+}
+
 /// `BLOCKVIZ_CORPUS=/path/to/repos cargo test --release --test highlight -- --ignored`
 #[test]
 #[ignore]
