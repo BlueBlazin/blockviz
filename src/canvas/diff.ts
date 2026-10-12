@@ -226,16 +226,16 @@ export class SceneDiff {
         visit(root);
         return out;
       };
-      const left = unpaired(this.base, b, this.back);
-      if (!left.length) continue;
+      // Grouped by kind and title, so a block looks only among those it could be.
+      const left = new Map<string, number[]>();
+      for (const x of unpaired(this.base, b, this.back)) push(left, keyOf(this.base.node(x)), x);
+      if (!left.size) continue;
       for (const c of unpaired(this.head, h, this.match)) {
         if (this.match.has(c)) continue;
         const text = this.text(this.head, c);
         if (text === null) continue;
-        const key = keyOf(this.head.node(c));
-        const i = left.findIndex(x => !this.back.has(x) && keyOf(this.base.node(x)) === key && this.text(this.base, x) === text);
-        if (i < 0) continue;
-        this.pairTree(c, left[i]);
+        const was = left.get(keyOf(this.head.node(c)))?.find(x => !this.back.has(x) && this.text(this.base, x) === text);
+        if (was !== undefined) this.pairTree(c, was);
       }
     }
   }
