@@ -161,19 +161,19 @@ export class SceneModel {
    */
   users(id: number): number[] {
     if (!this.userIndex) {
-      const index = new Map<number, number[]>();
+      // A set per block: some have thousands of users.
+      const index = new Map<number, Set<number>>();
       const add = (target: number, user: number) => {
-        const list = index.get(target);
-        if (!list) index.set(target, [user]);
-        else if (!list.includes(user)) list.push(user);
+        const users = index.get(target);
+        if (users) users.add(user);
+        else index.set(target, new Set([user]));
       };
       for (const n of this.nodes) {
         if (n.link !== undefined && n.link !== n.id) add(n.link, n.id);
         if (n.ref !== undefined && n.ref !== n.id) add(n.ref, n.id);
         for (const u of n.usedBy ?? []) add(n.id, u);
       }
-      for (const list of index.values()) list.sort((a, b) => a - b);
-      this.userIndex = index;
+      this.userIndex = new Map([...index].map(([target, users]) => [target, [...users].sort((a, b) => a - b)]));
     }
     return this.userIndex.get(id) ?? [];
   }
