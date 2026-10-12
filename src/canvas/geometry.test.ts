@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SceneNode } from '../core/types';
-import { childXf, frame, parentXf, smoothPath, viewOf, xfOf, zoomAt } from './geometry';
+import { childXf, frame, frameAround, frameReadable, NO_INSETS, parentXf, READABLE, smoothPath, viewOf, xfOf, zoomAt } from './geometry';
 
 const box = (over: Partial<SceneNode> = {}): SceneNode => ({
   id: 1, kind: 'function', shape: 'box', category: 'function', title: 'f',
@@ -77,5 +77,41 @@ describe('camera', () => {
     const p = smoothPath({ cx: 1, cy: 1, w: 100 }, { cx: 1, cy: 1, w: 1 });
     expect(p.at(1).w).toBeCloseTo(1);
     expect(p.at(0.5).w).toBeCloseTo(10, 0);
+  });
+
+  // Screen position of a frame point under a view.
+  const screen = (v: { cx: number; cy: number; w: number }, x: number, y: number, W = 1000, H = 800) => {
+    const s = W / v.w;
+    return { x: W / 2 + (x - v.cx) * s, y: H / 2 + (y - v.cy) * s, s };
+  };
+
+  it('opens a box whole when its diagram is readable that way', () => {
+    const b = { x: 0, y: 0, w: 400, h: 300 };
+    expect(frameReadable(b, 2, 1000, 800, 0.08, NO_INSETS)).toEqual(frame(b, 1000, 800, 0.08));
+  });
+
+  it('opens a tall diagram at a readable size from its top', () => {
+    // One interior unit is 0.01 frame units: fitting the whole box would show
+    // its text at a fraction of a pixel.
+    const b = { x: 0, y: 0, w: 4, h: 40 };
+    const v = frameReadable(b, 0.01, 1000, 800, 0.08, NO_INSETS);
+    const top = screen(v, 2, 0);
+    expect(top.s * 0.01).toBeCloseTo(READABLE);
+    expect(top.y).toBeCloseTo(16);
+    expect(top.x).toBeCloseTo(500);
+    // Never wider than the box's full width, even if text is then smaller.
+    const wide = screen(frameReadable(b, 0.001, 1000, 800, 0.08, NO_INSETS), 0, 0);
+    expect(4 * wide.s).toBeCloseTo(1000 / 1.06);
+  });
+
+  it('shows a block with nothing inside among its neighbours', () => {
+    const b = { x: 100, y: 100, w: 20, h: 10 };
+    const v = frameAround(b, 0.1, 1000, 800, NO_INSETS);
+    const c = screen(v, 110, 105);
+    expect(c.x).toBeCloseTo(500);
+    expect(c.y).toBeCloseTo(400);
+    // Its diagram's names read at a comfortable size; the block stays small.
+    expect(c.s * 0.1).toBeCloseTo(READABLE * 1.15);
+    expect(20 * c.s).toBeLessThan(1000 * 0.55);
   });
 });

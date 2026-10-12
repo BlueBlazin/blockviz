@@ -1,4 +1,9 @@
-import { boxOf, covers, frameIn, NO_INSETS, smoothPath, viewOf, xfOf, zoomAt, type Box, type Insets, type View, type Xf } from './geometry';
+import { boxOf, covers, frameAround, frameIn, frameReadable, NO_INSETS, smoothPath, viewOf, xfOf, zoomAt, type Box, type Insets, type View, type Xf } from './geometry';
+import type { SceneNode } from '../core/types';
+
+/** How a flight frames its target: `open` reads it (zooming until its
+ * diagram is legible), `fit` shows all of it. */
+export type Framing = 'open' | 'fit';
 import type { SceneModel } from './model';
 
 /**
@@ -76,23 +81,30 @@ export class Camera {
 
   /** The box of the node at the end of `path`, in the interior frame of `path[upTo]`. */
   boxIn(path: number[], upTo: number): Box {
+    return this.place(path, upTo).box;
+  }
+
+  /** The node at the end of `path` in the interior frame of `path[upTo]`: its
+   * box, the scale of the diagram it sits in, and of its own interior. */
+  private place(path: number[], upTo: number): { node: SceneNode; box: Box; outer: number; inner: number | null } {
     let t: Xf = { x: 0, y: 0, s: 1 };
     for (let i = upTo + 1; i < path.length - 1; i++) t = this.model.interior(t, this.model.node(path[i])) ?? t;
-    return boxOf(t, this.model.node(path[path.length - 1]));
+    const node = this.model.node(path[path.length - 1]);
+    return { node, box: boxOf(t, node), outer: t.s, inner: this.model.interior(t, node)?.s ?? null };
   }
 
   /**
    * Plans a smooth flight to frame the node at the end of `target` (an
    * instance path). Returns a function of t∈[0,1] that positions the camera.
    */
-  flight(target: number[], width: number, height: number, pad = 0.1): { duration: number; step: (t: number) => void } {
+  flight(target: number[], width: number, height: number, how: Framing = 'fit', pad = 0.1): { duration: number; step: (t: number) => void } {
     let common = 0;
     while (common < this.path.length && common < target.length && this.path[common] === target[common]) common++;
     const lca = Math.max(0, common - 1);
     const base = target.slice(0, lca + 1);
     const xfs = this.transforms();
     const from: View = viewOf(xfs[lca], width, height);
-    const to: View = target.length - 1 > lca ? frameIn(this.boxIn(target, lca), width, height, pad, this.insets) : this.contentView(target[lca], width, height, pad);
+    const to = this.framing(target, lca, width, height, how, pad);
     const path = smoothPath(from, to);
     const duration = Math.min(1400, Math.max(320, path.length * 260));
     return {
@@ -103,6 +115,20 @@ export class Camera {
         this.reanchor(width, height);
       },
     };
+  }
+
+  /** Where a flight to `target` ends, in the interior frame of `target[lca]`. */
+  private framing(target: number[], lca: number, width: number, height: number, how: Framing, pad: number): View {
+    if (target.length - 1 <= lca) {
+      if (how === 'fit') return this.contentView(target[lca], width, height, pad);
+      const owner = this.model.owner(this.model.node(target[lca])) ?? this.model.node(target[lca]);
+      return frameReadable({ x: 0, y: 0, w: owner.cw ?? 1, h: owner.ch ?? 1 }, 1, width, height, pad, this.insets);
+    }
+    const { node, box, outer, inner } = this.place(target, lca);
+    // A block with nothing inside is shown among its neighbours, not blown up alone.
+    if (!this.model.owner(node)) return frameAround(box, outer, width, height, this.insets);
+    if (how === 'open' && inner) return frameReadable(box, inner, width, height, pad, this.insets);
+    return frameIn(box, width, height, pad, this.insets);
   }
 
   /** View framing a node's whole interior in its own interior frame. */

@@ -65,6 +65,49 @@ export function frameIn(b: Box, width: number, height: number, pad: number, i: I
   return { cx: v.cx - ((i.left - i.right) / 2) * k, cy: v.cy - ((i.top - i.bottom) / 2) * k, w };
 }
 
+/** Interior scale at which names (13 units) read comfortably, and the least
+ * that counts as readable. */
+export const READABLE = 1;
+const READABLE_MIN = 0.8;
+
+/** The part of the screen overlays leave visible. */
+function visible(width: number, height: number, i: Insets) {
+  return { vw: Math.max(width - i.left - i.right, width * 0.3), vh: Math.max(height - i.top - i.bottom, height * 0.3) };
+}
+
+/** The view at screen scale `s` (pixels per frame unit) that puts frame point
+ * (x, y) at screen point (sx, sy). */
+function viewAt(x: number, y: number, sx: number, sy: number, s: number, width: number, height: number): View {
+  return { cx: x + (width / 2 - sx) / s, cy: y + (height / 2 - sy) / s, w: width / s };
+}
+
+/**
+ * Frames a box so the diagram inside it can be read. `k` is the size of one
+ * interior unit in frame units. The whole box when that is readable already;
+ * otherwise as much as readable text needs, never past the box's full width,
+ * starting at its top (diagrams read top to bottom).
+ */
+export function frameReadable(b: Box, k: number, width: number, height: number, pad: number, i: Insets): View {
+  const whole = frameIn(b, width, height, pad, i);
+  const s0 = width / whole.w;
+  if (s0 * k >= READABLE_MIN) return whole;
+  const { vw, vh } = visible(width, height, i);
+  const s = Math.max(s0, Math.min(READABLE / k, vw / (b.w * 1.06)));
+  const sy = b.h * s <= vh - 32 ? i.top + vh / 2 - (b.h * s) / 2 : i.top + 16;
+  return viewAt(b.x + b.w / 2, b.y, i.left + vw / 2, sy, s, width, height);
+}
+
+/**
+ * Frames a block with nothing inside among its neighbours: centred, at the
+ * size its diagram reads at (`k`: one unit of the diagram it sits in, in frame
+ * units), and never filling more than about half the screen.
+ */
+export function frameAround(b: Box, k: number, width: number, height: number, i: Insets): View {
+  const { vw, vh } = visible(width, height, i);
+  const s = Math.min((READABLE * 1.15) / k, (vw * 0.55) / Math.max(b.w, 1e-9), (vh * 0.55) / Math.max(b.h, 1e-9));
+  return viewAt(b.x + b.w / 2, b.y + b.h / 2, i.left + vw / 2, i.top + vh / 2, s, width, height);
+}
+
 /**
  * Smooth and efficient zooming and panning (van Wijk & Nuij, 2003): the
  * perceptually shortest path between two views zooms out, pans, then zooms in.

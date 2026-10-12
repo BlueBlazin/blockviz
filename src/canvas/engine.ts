@@ -1,4 +1,4 @@
-import { Camera } from './camera';
+import { Camera, type Framing } from './camera';
 import { clamp, type Insets } from './geometry';
 import type { SceneModel } from './model';
 import { Renderer, type Hit } from './renderer';
@@ -86,11 +86,10 @@ export class Engine {
     this.camera.insets = insets;
   }
 
-  /** Flies to frame the node at the end of an instance path. */
-  flyTo(path: number[], pad?: number) {
-    const leaf = !this.model.owner(this.model.node(path[path.length - 1]));
-    const plan = this.camera.flight(path, this.width, this.height, pad ?? (leaf ? 0.9 : 0.08));
-    this.animate(plan);
+  /** Flies to the node at the end of an instance path: `open` to read it
+   * (the default), `fit` to see all of it. */
+  flyTo(path: number[], how: Framing = 'open', pad = 0.08) {
+    this.animate(this.camera.flight(path, this.width, this.height, how, pad));
   }
 
   flyToNode(id: number) {
@@ -104,17 +103,17 @@ export class Engine {
       this.fit();
       return;
     }
-    this.flyTo(path.slice(0, -1).length > 1 ? path.slice(0, -1) : [this.model.root], 0.08);
+    this.flyTo(path.slice(0, -1).length > 1 ? path.slice(0, -1) : [this.model.root], 'fit', 0.08);
   }
 
   fit() {
     const path = this.camera.path;
     if (path.length <= 1) this.home();
-    else this.flyTo(path, 0.04);
+    else this.flyTo(path, 'fit', 0.04);
   }
 
   home() {
-    const plan = this.camera.flight([this.model.root], this.width, this.height, 0.05);
+    const plan = this.camera.flight([this.model.root], this.width, this.height, 'fit', 0.05);
     this.animate(plan);
   }
 

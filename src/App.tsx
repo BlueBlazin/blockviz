@@ -204,7 +204,7 @@ export default function App() {
           {crumbs.length > 1 && crumbs.map((c, k) => (
             <span key={`${c.id}-${c.i}`} className="crumb">
               {k > 0 && <ChevronRight size={13} />}
-              <button onClick={() => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 0.06)}>{c.title}</button>
+              <button onClick={() => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 'fit', 0.06)}>{c.title}</button>
             </span>
           ))}
         </div>
