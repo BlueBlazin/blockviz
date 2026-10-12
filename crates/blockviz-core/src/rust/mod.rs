@@ -217,7 +217,7 @@ pub fn parse(b: &mut Builder, inputs: Vec<RsInput>, resolver: &Resolver, diagnos
         src.lang = Lang::Rust;
         src.mark_docs(&docs);
         headers.push(doc.unwrap_or_else(|| crate::js::header(&src, header_end.min(src.text.lines().count() as u32 + 1))));
-        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: false, lang: Lang::Rust, tags: vec![], error });
+        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: false, lang: Lang::Rust, tags: vec![], error, namespace: None });
     }
     (modules, headers, failed)
 }

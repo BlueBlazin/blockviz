@@ -16,6 +16,7 @@ pub enum Lang {
     JavaScript,
     TypeScript,
     Rust,
+    Go,
 }
 
 impl Lang {
@@ -28,6 +29,7 @@ impl Lang {
             Lang::JavaScript => "JavaScript",
             Lang::TypeScript => "TypeScript",
             Lang::Rust => "Rust",
+            Lang::Go => "Go",
         }
     }
     /// Classes declare their fields in their body (`users = new Map()`,

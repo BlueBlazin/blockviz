@@ -1,0 +1,101 @@
+ok
+File 0 560 package=0 doc=0
+  Ident 8 15 unicode
+  GenDecl 64 155 type lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 17 63
+      Comment 17 63 // Identifiers are Unicode letters and digits.
+    TypeSpec 69 155 tparams=0 assign=-1 doc=0 comment=0
+      Ident 69 76 Größe
+      StructType 77 155
+        FieldList 84 155 open=84 close=154
+          Field 87 108 names=2 tag=0 doc=0 comment=0
+            Ident 87 93 Breite
+            Ident 95 100 Höhe
+            Ident 101 108 float64
+          Field 110 131 names=1 tag=0 doc=0 comment=0
+            Ident 110 116 名前
+            Ident 125 131 string
+          Field 133 153 names=1 tag=0 doc=0 comment=0
+            Ident 133 139 αβγ
+            ArrayType 148 153 len=0
+              Ident 150 153 int
+  GenDecl 157 184 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 161 184 names=1 type=0 values=1 doc=0 comment=0
+      Ident 161 170 日本語
+      BasicLit 173 184 STRING "日本語"
+  GenDecl 186 202 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 190 202 names=1 type=0 values=1 doc=0 comment=0
+      Ident 190 192 π
+      BasicLit 195 202 FLOAT 3.14159
+  GenDecl 204 219 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 208 219 names=1 type=0 values=1 doc=0 comment=0
+      Ident 208 212 _ü9
+      BasicLit 215 219 CHAR 'ü'
+  GenDecl 221 235 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 225 235 names=2 type=1 values=0 doc=0 comment=1
+      Ident 225 227 ǅ
+      Ident 229 231 ǈ
+      Ident 232 235 int
+      CommentGroup 236 257
+        Comment 236 257 // title-case letters
+  GenDecl 259 270 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 263 270 names=1 type=0 values=1 doc=0 comment=1
+      Ident 263 266 x۱
+      BasicLit 269 270 INT 1
+      CommentGroup 271 310
+        Comment 271 310 // an Arabic-Indic digit after a letter
+  FuncDecl 312 376 recv=1 body=1 doc=0
+    FieldList 317 328 open=317 close=327
+      Field 318 327 names=1 tag=0 doc=0 comment=0
+        Ident 318 319 g
+        Ident 320 327 Größe
+    Ident 329 336 Fläche
+    FuncType 312 346 func=312 tparams=0 results=1
+      FieldList 336 338 open=336 close=337
+      FieldList 339 346 open=-1 close=-1
+        Field 339 346 names=0 tag=0 doc=0 comment=0
+          Ident 339 346 float64
+    BlockStmt 347 376 rbrace=375
+      ReturnStmt 349 374 results=1
+        BinaryExpr 356 374 * op=365
+          SelectorExpr 356 364
+            Ident 356 357 g
+            Ident 358 364 Breite
+          SelectorExpr 367 374
+            Ident 367 368 g
+            Ident 369 374 Höhe
+  FuncDecl 378 455 recv=0 body=1 doc=0
+    Ident 383 389 émoji
+    FuncType 378 398 func=378 tparams=0 results=1
+      FieldList 389 391 open=389 close=390
+      FieldList 392 398 open=-1 close=-1
+        Field 392 398 names=0 tag=0 doc=0 comment=0
+          Ident 392 398 string
+    BlockStmt 399 455 rbrace=454
+      ReturnStmt 402 453 results=1
+        BinaryExpr 409 453 + op=428
+          BasicLit 409 427 STRING "😀 in a string"
+          BasicLit 430 453 STRING `and 🎉 in a raw one`
+  GenDecl 506 535 const lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 457 505
+      Comment 457 505 /* Комментарий на русском */
+    ValueSpec 512 535 names=1 type=0 values=1 doc=0 comment=1
+      Ident 512 524 привет
+      BasicLit 527 535 STRING "мир"
+      CommentGroup 536 545
+        Comment 536 545 // 世界
+  GenDecl 547 560 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 551 560 names=1 type=0 values=1 doc=0 comment=0
+      Ident 551 552 r
+      BasicLit 555 560 CHAR '世'
+comments
+  CommentGroup 17 63
+    Comment 17 63 // Identifiers are Unicode letters and digits.
+  CommentGroup 236 257
+    Comment 236 257 // title-case letters
+  CommentGroup 271 310
+    Comment 271 310 // an Arabic-Indic digit after a letter
+  CommentGroup 457 505
+    Comment 457 505 /* Комментарий на русском */
+  CommentGroup 536 545
+    Comment 536 545 // 世界

@@ -51,20 +51,35 @@ pub struct CodeResult {
     pub templates: Vec<(u32, String)>,
 }
 
-/// Every name a module's code reads: in statements, nested definitions,
-/// functions written as values, and annotations.
-fn names_used(body: &[syntax::Stmt]) -> std::collections::HashSet<String> {
+/// What a module's code reads: every name, in statements, nested
+/// definitions, functions written as values and annotations; and the
+/// members it reads of names (`store.Open` is `("store", "Open")`), in order.
+#[derive(Default)]
+struct Used {
+    names: std::collections::HashSet<String>,
+    members: Vec<(String, String)>,
+}
+
+fn names_used(body: &[syntax::Stmt]) -> Used {
     use syntax::{Expr, Stmt};
-    fn expr(e: &Expr, out: &mut std::collections::HashSet<String>) {
+    fn expr(e: &Expr, out: &mut Used) {
         walk::walk(e, &mut |x| match x {
             Expr::Name(n) => {
-                out.insert(n.id.clone());
+                out.names.insert(n.id.clone());
+            }
+            Expr::Attribute(a) => {
+                if let Expr::Name(n) = &*a.value {
+                    let m = (n.id.clone(), a.attr.clone());
+                    if !out.members.contains(&m) {
+                        out.members.push(m);
+                    }
+                }
             }
             Expr::Function(f) => stmts(&f.body, out),
             _ => {}
         });
     }
-    fn stmts(body: &[Stmt], out: &mut std::collections::HashSet<String>) {
+    fn stmts(body: &[Stmt], out: &mut Used) {
         let mut roots = vec![];
         walk::stmt_exprs(body, false, &mut |e| roots.push(e));
         for e in roots {
@@ -98,7 +113,7 @@ fn names_used(body: &[syntax::Stmt]) -> std::collections::HashSet<String> {
             }
         }
     }
-    let mut out = std::collections::HashSet::new();
+    let mut out = Used::default();
     stmts(body, &mut out);
     out
 }
@@ -162,7 +177,19 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
         }
         d
     };
-    let domains: Vec<Domains> = (0..n).map(reach).collect();
+    let mut domains: Vec<Domains> = (0..n).map(reach).collect();
+    // The files of a namespace (a Go package) work in one set of domains.
+    let mut shared: Vec<Domains> = vec![Domains::default(); ix.namespaces.len()];
+    for (mi, ns) in ix.namespace_of.iter().enumerate() {
+        if let Some(ns) = ns {
+            shared[*ns] = shared[*ns].union(domains[mi]);
+        }
+    }
+    for (mi, ns) in ix.namespace_of.iter().enumerate() {
+        if let Some(ns) = ns {
+            domains[mi] = domains[mi].union(shared[*ns]);
+        }
+    }
     let mounts = frameworks::mounts(&modules, &ix);
     let routes = frameworks::routes(&modules, &ix);
     let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes };
@@ -200,20 +227,41 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
                 // Rust lowers every type it names, so what its code uses is
                 // known; elsewhere (TypeScript types are kept as text) only
                 // names re-exported by `export { … }` are left out.
-                let used = names_used(&m.ast);
+                let Used { names: used, members } = names_used(&m.ast);
                 let exported: std::collections::HashSet<&str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::Export(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().filter(|(local, exported)| local == exported).map(|(local, _)| local.as_str())).collect();
                 let local: HashMap<&str, &str> = m.ast.iter().filter_map(|s| if let syntax::Stmt::ImportFrom(x) = s { Some(x) } else { None }).flat_map(|x| x.names.iter().map(|a| (a.name.as_str(), a.asname.as_deref().unwrap_or(&a.name)))).collect();
                 let depends = |n: &str| {
                     let l = *local.get(n).unwrap_or(&n);
-                    if m.lang == Lang::Rust {
+                    if matches!(m.lang, Lang::Rust | Lang::Go) {
                         used.contains(l)
                     } else {
                         !exported.contains(l)
                     }
                 };
+                // Names another file of the namespace defines (a Go package's).
+                let mut peer: Vec<(usize, &String)> = used.iter().filter(|n| !cx.ix.syms[mi].contains_key(*n)).filter_map(|n| match cx.ix.namespace_member(mi, n) {
+                    Some(index::Sym::Member(p, _)) => Some((*p, n)),
+                    _ => None,
+                }).collect();
+                peer.sort();
+                for (p, n) in peer {
+                    add(p, Some(n));
+                }
                 for (t, names) in &cx.ix.imports[mi] {
+                    // A module bound whole (`import utils`, Go's `import "…/store"`):
+                    // the members code reads of it are defined where they are
+                    // (`store.Open` in `store/db.go`).
                     if names.is_empty() {
-                        add(*t, None);
+                        let read: Vec<&String> = members.iter().filter(|(base, attr)| matches!(cx.ix.sym(mi, base), Some(index::Sym::Module(b)) if b == t) && cx.ix.sym(*t, attr).is_some()).map(|(_, attr)| attr).collect();
+                        if read.is_empty() {
+                            add(*t, None);
+                        }
+                        for attr in read {
+                            let d = cx.ix.defined_in(*t, attr);
+                            if d != mi {
+                                add(d, Some(attr));
+                            }
+                        }
                     }
                     for n in names.iter().filter(|n| depends(n)) {
                         let d = cx.ix.defined_in(*t, n);

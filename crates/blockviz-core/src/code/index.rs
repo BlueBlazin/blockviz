@@ -11,7 +11,7 @@ use super::walk;
 use crate::ir::Id;
 use crate::text::{clip, squash};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// One source file, parsed and lowered to the shared syntax tree.
 pub struct Module {
@@ -29,6 +29,9 @@ pub struct Module {
     pub tags: Vec<String>,
     /// First syntax error (the parser recovered and the tree is still usable).
     pub error: Option<String>,
+    /// Modules of one namespace (the files of a Go package) see each other's
+    /// top-level definitions without importing them.
+    pub namespace: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -178,6 +181,10 @@ pub struct Index<'p> {
     pub imports: Vec<Vec<(usize, Vec<String>)>>,
     /// External top-level packages each module imports.
     pub externals: Vec<BTreeSet<String>>,
+    /// The namespace each module shares with others (a Go package), if any.
+    pub namespace_of: Vec<Option<usize>>,
+    /// Each namespace's definitions, as members of the module defining them.
+    pub namespaces: Vec<HashMap<String, Sym>>,
 }
 
 pub trait Locals {
@@ -239,12 +246,36 @@ impl<'p> Index<'p> {
             returns: RefCell::new(HashMap::new()),
             imports: vec![vec![]; modules.len()],
             externals: vec![BTreeSet::new(); modules.len()],
+            namespace_of: vec![None; modules.len()],
+            namespaces: vec![],
         };
         for (mi, m) in modules.iter().enumerate() {
             ix.collect_defs(mi, &m.ast, &mut alloc, true);
         }
         for (mi, m) in modules.iter().enumerate() {
             ix.collect_imports(mi, &m.ast, true);
+        }
+        // A namespace's files use each other's definitions as if each had
+        // imported them by name (what a file defines or imports itself takes
+        // precedence): one table per namespace, looked up on demand.
+        let mut namespaces: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (mi, m) in modules.iter().enumerate() {
+            if let Some(ns) = &m.namespace {
+                namespaces.entry(ns.as_str()).or_default().push(mi);
+            }
+        }
+        for peers in namespaces.values().filter(|p| p.len() > 1) {
+            let ns = ix.namespaces.len();
+            let mut table: HashMap<String, Sym> = HashMap::new();
+            for &p in peers {
+                ix.namespace_of[p] = Some(ns);
+                let mut names: Vec<&String> = ix.syms[p].iter().filter(|(_, s)| matches!(s, Sym::Class(_) | Sym::Func(_) | Sym::Var)).map(|(n, _)| n).collect();
+                names.sort();
+                for n in names {
+                    table.entry(n.clone()).or_insert(Sym::Member(p, n.clone()));
+                }
+            }
+            ix.namespaces.push(table);
         }
         for (mi, m) in modules.iter().enumerate() {
             ix.collect_exports(mi, &m.ast);
@@ -356,7 +387,9 @@ impl<'p> Index<'p> {
         self.classes.push(ClassInfo { name: c.name.to_string(), module: mi, def: c, bases: vec![], base_text, methods: vec![], extra: vec![], fields: vec![], data: false, node });
         self.defs_at.insert((mi, u32::from(c.range.start())), Sym::Class(cid));
         let mut methods = vec![];
-        for s in &c.body {
+        // A Go interface lists signatures (its rows); there is nothing to draw or call.
+        let contract = self.modules[mi].lang == Lang::Go && c.kind == ast::ClassKind::Interface && c.body.iter().all(|s| matches!(s, Stmt::FunctionDef(f) if f.body.is_empty()));
+        for s in c.body.iter().filter(|_| !contract) {
             if let Some(f) = FnDef::from_stmt(s) {
                 let node = alloc(f.name, false);
                 let kind = match f.kind {
@@ -381,7 +414,7 @@ impl<'p> Index<'p> {
         // a class of field declarations only (a DTO, a Rust struct).
         let lang = self.modules[mi].lang;
         let fields_only = lang.declares_fields() && methods.is_empty() && c.kind == ast::ClassKind::Class && c.body.iter().any(|s| matches!(s, Stmt::AnnAssign(_) | Stmt::Assign(_)));
-        let declared = matches!(c.kind, ast::ClassKind::Interface | ast::ClassKind::Enum | ast::ClassKind::Trait) && methods.is_empty() || fields_only;
+        let declared = matches!(c.kind, ast::ClassKind::Interface | ast::ClassKind::Enum | ast::ClassKind::Trait) && methods.is_empty() || fields_only || contract;
         self.classes[cid].data = declared || (data_decorator || data_base) && !behaviour;
         self.classes[cid].methods = methods;
         cid
@@ -504,6 +537,16 @@ impl<'p> Index<'p> {
                         self.assets[mi].push(p.to_string());
                     }
                 }
+                // Go: modules outside the standard library, by module path.
+                // (A standard package that says what the code works with, like
+                // `database/sql`, is recorded too.)
+                None if self.modules[mi].lang == Lang::Go => {
+                    if !crate::go::resolve::is_std(spec) {
+                        self.externals[mi].insert(crate::go::resolve::module_path(spec));
+                    } else if crate::vocabulary::library_domains(spec) != crate::vocabulary::Domains::default() {
+                        self.externals[mi].insert(spec.to_string());
+                    }
+                }
                 None if self.modules[mi].lang == Lang::Rust => {
                     let krate = spec.split(['.', ':']).next().unwrap_or(spec);
                     if !matches!(krate, "crate" | "self" | "super" | "") {
@@ -615,7 +658,7 @@ impl<'p> Index<'p> {
     pub fn defined_in(&self, m: usize, name: &str) -> usize {
         let (mut m, mut name) = (m, name.to_string());
         for _ in 0..8 {
-            match self.syms[m].get(&name) {
+            match self.sym(m, &name) {
                 Some(Sym::Member(t, n)) => {
                     m = *t;
                     name = n.clone();
@@ -631,15 +674,23 @@ impl<'p> Index<'p> {
         m
     }
 
+    /// What a name is in a module: its own definitions and imports, then
+    /// what the other files of its namespace define.
     pub fn sym(&self, mi: usize, name: &str) -> Option<&Sym> {
-        self.syms[mi].get(name)
+        self.syms[mi].get(name).or_else(|| self.namespace_member(mi, name))
+    }
+
+    /// A definition of another file of the module's namespace.
+    pub fn namespace_member(&self, mi: usize, name: &str) -> Option<&Sym> {
+        let ns = self.namespace_of[mi]?;
+        self.namespaces[ns].get(name).filter(|s| !matches!(s, Sym::Member(p, _) if *p == mi))
     }
 
     pub fn sym_ty(&self, mi: usize, name: &str, depth: u32) -> Ty {
         if depth > 6 {
             return Ty::Unknown;
         }
-        match self.syms[mi].get(name) {
+        match self.sym(mi, name) {
             Some(Sym::Class(c)) => Ty::Class(*c),
             Some(Sym::Func(f)) => Ty::Func(*f),
             Some(Sym::Module(m)) => Ty::Module(*m),

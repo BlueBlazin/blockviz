@@ -1,0 +1,56 @@
+ok
+File 54 314 package=54 doc=1
+  CommentGroup 0 52
+    Comment 0 52 // Package crlf has Windows line endings throughout.
+  Ident 62 66 crlf
+  GenDecl 133 196 type lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 70 131
+      Comment 70 111 /* A block comment\n   over two lines. */
+      Comment 113 131 // A line comment.
+    TypeSpec 138 196 tparams=0 assign=-1 doc=0 comment=0
+      Ident 138 139 T
+      StructType 140 196
+        FieldList 147 196 open=147 close=195
+          Field 151 156 names=1 tag=0 doc=0 comment=1
+            Ident 151 152 A
+            Ident 153 156 int
+            CommentGroup 157 172
+              Comment 157 172 // line comment
+          Field 175 193 names=1 tag=1 doc=0 comment=0
+            Ident 175 176 B
+            Ident 177 183 string
+            BasicLit 184 193 STRING `tag:"x"`
+  GenDecl 200 232 const lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 206 232 names=1 type=0 values=1 doc=0 comment=0
+      Ident 206 209 raw
+      BasicLit 212 232 STRING `line one\nline two`
+  FuncDecl 236 314 recv=0 body=1 doc=0
+    Ident 241 242 f
+    FuncType 236 248 func=236 tparams=0 results=1
+      FieldList 242 244 open=242 close=243
+      FieldList 245 248 open=-1 close=-1
+        Field 245 248 names=0 tag=0 doc=0 comment=0
+          Ident 245 248 int
+    BlockStmt 249 314 rbrace=313
+      AssignStmt 253 259 := tok=255 lhs=1 rhs=1
+        Ident 253 254 x
+        BasicLit 258 259 INT 1
+      IfStmt 274 300 init=0 else=0
+        BinaryExpr 277 282 > op=279
+          Ident 277 278 x
+          BasicLit 281 282 INT 0
+        BlockStmt 283 300 rbrace=299
+          ReturnStmt 288 296 results=1
+            Ident 295 296 x
+      ReturnStmt 303 311 results=1
+        BasicLit 310 311 INT 0
+comments
+  CommentGroup 0 52
+    Comment 0 52 // Package crlf has Windows line endings throughout.
+  CommentGroup 70 131
+    Comment 70 111 /* A block comment\n   over two lines. */
+    Comment 113 131 // A line comment.
+  CommentGroup 157 172
+    Comment 157 172 // line comment
+  CommentGroup 260 271
+    Comment 260 271 // trailing

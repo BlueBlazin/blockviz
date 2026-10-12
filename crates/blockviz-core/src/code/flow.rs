@@ -149,6 +149,8 @@ impl Locals for TypesView<'_> {
 }
 
 const SECTION_MIN: usize = 12;
+/// Branches with more arms are drawn as a table of the arms.
+const MAX_LANES: usize = 24;
 const MINOR_EXT: &[&str] = &[
     "os.path.", "math.", "operator.", "typing.", "functools.", "itertools.", "collections.", "copy.", "inspect.", "string.", "re.", "builtins.", "dataclasses.", "time.", "sys.exit",
     // JavaScript: language globals and helpers are glue, like Python builtins.
@@ -157,6 +159,9 @@ const MINOR_EXT: &[&str] = &[
     "std.", "core.", "alloc.", "tokio.sync.", "parking_lot.", "crossbeam", "once_cell.", "bytes.", "anyhow.", "thiserror.",
     // Query builders are part of the query that runs them (`.fetch_one(&pool)`).
     "sqlx.", "diesel.", "sea_orm.",
+    // Go: the standard library's text, sorting, synchronisation, context and
+    // error plumbing; formatting builds values (`fmt.Sprintf`).
+    "context.", "errors.", "strings.", "strconv.", "unicode.", "sort.", "slices.", "maps.", "cmp.", "sync.", "sync/atomic.", "path/filepath.", "math/", "reflect.", "regexp.", "fmt.Sprint", "fmt.Errorf", "flag.", "encoding/binary.", "container/", "iter.", "unicode/",
     // Method routers (`get(handler)`) are parts of the route they register.
     "axum.routing.", "actix_web.web.get", "actix_web.web.post", "actix_web.web.put", "actix_web.web.patch", "actix_web.web.delete", "actix_web.web.resource", "actix_web.web.scope",
 ];
@@ -870,12 +875,33 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let Expr::Call(c) = &*e.value else { return None };
                 let Expr::Attribute(a) = &*c.func else { return None };
                 let path = c.arguments.args.first().and_then(string_literal)?;
-                if !is_http_verb(&a.attr) || !(path.starts_with('/') || path == "*") || c.arguments.args.len() < 2 {
+                if c.arguments.args.len() < 2 {
+                    return None;
+                }
+                let handler = namer.code(c.arguments.args.last().unwrap(), 36);
+                let middle: Vec<String> = c.arguments.args[1..c.arguments.args.len() - 1].iter().map(|m| namer.code(m, 24)).collect();
+                // Go: `r.GET(…)`, `r.Get(…)`, `mux.HandleFunc("GET /items/{id}", …)`;
+                // paths are already under their group's.
+                if self.m.lang == Lang::Go {
+                    let attr = a.attr.as_str();
+                    // Routes registered on a group a caller passed in serve under its path.
+                    let prefix = self.fid.and_then(|f| self.cx.routes.prefixes.get(&f)).cloned().unwrap_or_default();
+                    let (verb, p) = match path.split_once(' ') {
+                        Some((v, p)) if v.chars().all(|c| c.is_ascii_uppercase()) && p.starts_with('/') => (format!("{v} "), p),
+                        // `router.GET("", …)` serves the group's own path.
+                        _ if !path.starts_with('/') && !path.is_empty() => return None,
+                        _ if is_http_verb(&attr.to_ascii_lowercase()) => (format!("{} ", attr.to_ascii_uppercase()), path),
+                        _ if matches!(attr, "Handle" | "HandleFunc" | "Any") => (String::new(), path),
+                        _ => return None,
+                    };
+                    let full = frameworks::join_path(&prefix, p);
+                    let full = if full.is_empty() { "/".to_string() } else { full };
+                    return Some(Row { key: format!("{verb}{full}"), value: handler, note: naming::list(&middle, 40), heading: false });
+                }
+                if !is_http_verb(&a.attr) || !(path.starts_with('/') || path == "*") {
                     return None;
                 }
                 let full = if path == "/" && !mount.is_empty() { mount.clone() } else { frameworks::join_path(&mount, path) };
-                let handler = namer.code(c.arguments.args.last().unwrap(), 36);
-                let middle: Vec<String> = c.arguments.args[1..c.arguments.args.len() - 1].iter().map(|m| namer.code(m, 24)).collect();
                 Some(Row { key: format!("{} {full}", a.attr.to_uppercase()), value: handler, note: naming::list(&middle, 40), heading: false })
             })
             .collect();
@@ -956,7 +982,15 @@ impl<'c, 'p> Fb<'c, 'p> {
         n.reference = None;
         n.link = None;
         n.badges.clear();
-        if let Some(rows) = routes {
+        if let Some(mut rows) = routes {
+            // `/users` and `/users/` for one handler are one route.
+            let mut seen: Vec<(String, String)> = vec![];
+            rows.retain(|r| {
+                let k = (r.key.trim_end_matches('/').to_string(), r.value.clone());
+                let new = !seen.contains(&k);
+                seen.push(k);
+                new
+            });
             if !self.cx.handlers[self.mi].contains(&Handler::Route) {
                 self.cx.handlers[self.mi].push(Handler::Route);
             }
@@ -1508,8 +1542,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         };
         let id = self.add(Kind::Table, Shape::Box, title);
         // A table gathered from across a module points at its first row.
-        let last = if contiguous { stmts[stmts.len() - 1].end() } else { stmts[0].end() };
-        let span = self.src().span(TextRange::new(stmts[0].start(), last));
+        // (Statements a front end hoisted can come out of source order.)
+        let first = stmts.iter().map(|s| s.start()).min().unwrap_or_default();
+        let last = if contiguous { stmts.iter().map(|s| s.end()).max().unwrap_or(first) } else { stmts[0].end() };
+        let span = self.src().span(TextRange::new(first.min(last), last.max(first)));
         {
             let n = self.cx.b.get_mut(id);
             n.category = "config";
@@ -1586,6 +1622,15 @@ impl<'c, 'p> Fb<'c, 'p> {
             Expr::Name(n) => matches!(n.id.as_str(), "print" | "pprint") || is_print_macro(&n.id) || is_log_macro(&n.id),
             // `log::info!`, `tracing::warn!`
             Expr::Attribute(a) if is_log_macro(&a.attr) => true,
+            // Go: `fmt.Println`, `log.Printf`, `slog.Info`, `logger.Infof`, `fmt.Fprintf(os.Stderr, …)`.
+            Expr::Attribute(a) if self.m.lang == Lang::Go => {
+                let base = self.src().of(&*a.value);
+                let m = a.attr.as_str();
+                let leveled = ["Debug", "Info", "Warn", "Warning", "Error", "Trace", "Print", "Notice"].iter().any(|l| m.strip_prefix(l).is_some_and(|rest| matches!(rest, "" | "f" | "ln" | "w" | "Context" | "Ctx")));
+                (base == "fmt" && matches!(m, "Print" | "Println" | "Printf"))
+                    || (base == "fmt" && m.starts_with("Fprint") && matches!(c.arguments.args.first(), Some(Expr::Attribute(w)) if self.src().of(w) == "os.Stderr" || self.src().of(w) == "os.Stdout"))
+                    || (matches!(base, "log" | "slog" | "klog" | "glog" | "logrus" | "zap" | "zerolog") || base.ends_with("log") || base.ends_with("logger") || base.ends_with("Logger") || base.ends_with(".log") || base == "l" || base == "lg") && leveled
+            }
             Expr::Attribute(a) => {
                 let base = self.src().of(&*a.value);
                 (base == "console" && matches!(a.attr.as_str(), "log" | "info" | "warn" | "error" | "debug" | "trace" | "table" | "dir" | "group" | "groupEnd" | "time" | "timeEnd"))
@@ -1604,6 +1649,8 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let label = match &*c.func {
                     Expr::Name(n) if is_log_macro(&n.id) => "logs",
                     Expr::Name(_) => "prints",
+                    // Go's `fmt.Println` prints; loggers log.
+                    Expr::Attribute(a) if self.m.lang == Lang::Go && self.src().of(&*a.value) == "fmt" => "prints",
                     _ => "logs",
                 };
                 self.effect(label);
@@ -1736,6 +1783,15 @@ impl<'c, 'p> Fb<'c, 'p> {
                 for (t, v) in tt.elts.iter().zip(&vt.elts) {
                     if let Expr::Name(n) = t {
                         let ty = self.cx.ix.infer(self.mi, v, &TypesView(&self.types));
+                        self.types.insert(n.id.to_string(), ty);
+                    }
+                }
+            } else if let (Expr::Tuple(tt), Lang::Go) = (&targets[0], self.m.lang) {
+                // `db, err := Open(…)`, `v, ok := m[k]`: the first value is the
+                // result; what follows is an error or a flag.
+                if let Some(Expr::Name(n)) = tt.elts.first() {
+                    let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
+                    if ty != Ty::Unknown {
                         self.types.insert(n.id.to_string(), ty);
                     }
                 }
@@ -2113,6 +2169,16 @@ impl<'c, 'p> Fb<'c, 'p> {
                         });
                         (verb, what.unwrap_or_default())
                     }
+                    // `close(done)`, `cache.clear()`: an arm whose only step is a small call.
+                    Expr::Call(c) => {
+                        let func = self.namer().brief(&c.func);
+                        let (verb, owner) = match func.rsplit_once('.') {
+                            Some((o, v)) => (v.to_string(), o.to_string()),
+                            None => (func, String::new()),
+                        };
+                        let what = if owner.is_empty() { naming::list(&c.arguments.args.iter().map(|a| self.namer().code(a, 20)).collect::<Vec<_>>(), naming::CAPTION_MAX) } else { owner };
+                        (verb.trim_end_matches('!').to_string(), what)
+                    }
                     _ => continue,
                 },
                 // `case Err(e): assert …`: an arm that only checks.
@@ -2156,10 +2222,13 @@ impl<'c, 'p> Fb<'c, 'p> {
         let (verb, effect) = match self.m.lang {
             Lang::Python => ("raise", "raises"),
             Lang::JavaScript | Lang::TypeScript => ("throw", "throws"),
-            Lang::Rust => ("error", "returns error"),
+            Lang::Rust | Lang::Go => ("error", "returns error"),
         };
+        let go = self.m.lang == Lang::Go;
         let macro_name = |c: &ast::ExprCall| match &*c.func {
             Expr::Name(n) if n.id.ends_with('!') => Some(n.id.trim_end_matches('!').to_string()),
+            // Go's `panic(err)`.
+            Expr::Name(n) if go && n.id == "panic" => Some(n.id.clone()),
             Expr::Attribute(a) if a.attr.ends_with('!') => Some(a.attr.trim_end_matches('!').to_string()),
             _ => None,
         };
@@ -2176,11 +2245,15 @@ impl<'c, 'p> Fb<'c, 'p> {
                     _ => format!("{mac} {what}"),
                 }
             }
+            // Go's `errors.New("not serving")`, `fmt.Errorf("read %s: %w", …)`: the message says which error.
+            Some(Expr::Call(c)) if go && matches!(&*c.func, Expr::Attribute(a) if matches!(a.attr.as_str(), "New" | "Errorf") && matches!(self.src().of(&*a.value), "errors" | "fmt")) && !c.arguments.args.is_empty() => {
+                format!("{verb} {}", self.namer().code(&c.arguments.args[0], 24))
+            }
             Some(Expr::Call(c)) => format!("{verb} {}", self.namer().brief(&c.func)),
             // `Err((StatusCode::BAD_REQUEST, message))`: named by what leads.
             Some(Expr::Tuple(t)) if !t.elts.is_empty() => format!("{verb} {}", self.namer().brief(&t.elts[0])),
             // `Err(())`: an error that carries nothing.
-            Some(Expr::NoneLiteral(_)) if self.m.lang == Lang::Rust => verb.to_string(),
+            Some(Expr::NoneLiteral(_)) if matches!(self.m.lang, Lang::Rust | Lang::Go) => verb.to_string(),
             Some(e) => format!("{verb} {}", self.namer().brief(e)),
             None => format!("re-{verb}"),
         };
@@ -2321,6 +2394,17 @@ impl<'c, 'p> Fb<'c, 'p> {
             } else {
                 self.statements(&x.body, later, true);
             }
+            return;
+        }
+        if x.elif_else_clauses.len() >= MAX_LANES {
+            let mut cond = self.condition_vals(&x.test);
+            for c in x.elif_else_clauses.iter().filter_map(|c| c.test.as_ref()) {
+                cond.extend(self.condition_vals(c));
+            }
+            dedup_vals(&mut cond);
+            let mut arms = vec![(self.namer().code(&x.test, 30), &x.body[..])];
+            arms.extend(x.elif_else_clauses.iter().map(|c| (c.test.as_ref().map(|t| self.namer().code(t, 30)).unwrap_or_else(|| "else".into()), &c.body[..])));
+            self.case_table(s, "if / else if".to_string(), arms, &cond);
             return;
         }
         let mut lanes: Vec<(String, &'p [Stmt], Option<&'p Expr>, TextRange)> = vec![(format!("if {}", self.namer().code(&x.test, 40)), &x.body, Some(&*x.test), x.range)];
@@ -2480,6 +2564,28 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn with_stmt(&mut self, items: &'p [ast::WithItem], body: &'p [Stmt], later: &HashSet<String>) {
+        // Go's `go f()` and `defer f()`: the steps run, marked with when.
+        if let ([item], Lang::Go) = (items, self.m.lang) {
+            if let Expr::Name(n) = &item.context_expr {
+                let when = match n.id.as_str() {
+                    "go" => Some("in background"),
+                    "defer" => Some("on return"),
+                    _ => None,
+                };
+                if let Some(when) = when {
+                    let first = self.cx.b.nodes.len() as Id;
+                    self.statements(body, later, false);
+                    let container = self.container();
+                    for id in first..self.cx.b.nodes.len() as Id {
+                        let n = self.cx.b.get_mut(id);
+                        if n.parent == Some(container) && !n.is_port() && !n.badges.iter().any(|b| b == when) {
+                            n.badges.push(when.to_string());
+                        }
+                    }
+                    return;
+                }
+            }
+        }
         for item in items {
             let e = &item.context_expr;
             let callee = match e {
@@ -2556,9 +2662,84 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.close_region(later);
     }
 
+    /// A branch with more arms than anyone reads side by side (an option
+    /// parser's `switch arg` with hundreds of cases) is a table of its arms:
+    /// what each one matches and what it does first.
+    fn case_table(&mut self, s: &'p Stmt, title: String, arms: Vec<(String, &'p [Stmt])>, cond: &[Val]) {
+        let rows: Vec<Row> = arms
+            .iter()
+            .map(|(key, body)| {
+                let first = body.iter().find(|st| !matches!(st, Stmt::Pass(_)));
+                let value = first.map(|st| compact(self.src().of(st), 40)).unwrap_or_default();
+                Row { key: naming::shorten(key, 30), value, note: String::new(), heading: false }
+            })
+            .collect();
+        let id = self.add(Kind::Table, Shape::Box, title);
+        let code = compact(self.src().of(s), 160);
+        let n = self.cx.b.get_mut(id);
+        n.subtitle = naming::count(arms.len(), "case");
+        n.category = "config";
+        n.rows = rows;
+        n.code = code;
+        self.set_span(id, s);
+        // What the arms do still shows: errors, printing, logging.
+        let mut effects: BTreeSet<String> = BTreeSet::new();
+        let (raises, _) = match self.m.lang {
+            Lang::Python => ("raises", ""),
+            Lang::JavaScript | Lang::TypeScript => ("throws", ""),
+            Lang::Rust | Lang::Go => ("returns error", ""),
+        };
+        let mut stack: Vec<&[Stmt]> = arms.iter().map(|(_, b)| *b).collect();
+        while let Some(body) = stack.pop() {
+            for st in body {
+                match st {
+                    Stmt::Raise(_) => {
+                        effects.insert(raises.to_string());
+                    }
+                    Stmt::Expr(e) => {
+                        if let Expr::Call(c) = &*e.value {
+                            if self.is_print(c) {
+                                effects.insert("prints".to_string());
+                            }
+                        }
+                    }
+                    Stmt::If(i) => {
+                        stack.push(&i.body);
+                        stack.extend(i.elif_else_clauses.iter().map(|c| &c.body[..]));
+                    }
+                    Stmt::For(f) => stack.push(&f.body),
+                    Stmt::While(w) => stack.push(&w.body),
+                    Stmt::With(w) => stack.push(&w.body),
+                    _ => {}
+                }
+            }
+        }
+        self.cx.b.get_mut(id).effects = effects.into_iter().collect();
+        for v in cond {
+            self.link_control(v, id);
+        }
+    }
+
     fn match_stmt(&mut self, s: &'p Stmt, x: &'p ast::StmtMatch, later: &HashSet<String>) {
         let cond = self.condition_vals(&x.subject);
-        let id = self.open_region(Kind::Branch, format!("{} {}", if self.m.lang.is_js() { "switch" } else { "match" }, self.namer().code(&x.subject, 30)), s);
+        if x.cases.len() > MAX_LANES {
+            let title = format!("{} {}", if self.m.lang.is_js() || self.m.lang == Lang::Go { "switch" } else { "match" }, self.namer().code(&x.subject, 30));
+            let arms = x.cases.iter().map(|c| {
+                let key = match &c.patterns[..] {
+                    [] => "default".to_string(),
+                    ps => naming::list(&ps.iter().map(|p| compact(self.src().slice(*p), 20)).collect::<Vec<_>>(), 30),
+                };
+                (key, &c.body[..])
+            }).collect();
+            self.case_table(s, title, arms, &cond);
+            return;
+        }
+        // A Go `select` waits on channels; there is no value to switch on.
+        let title = match &*x.subject {
+            Expr::Name(n) if self.m.lang == Lang::Go && n.id == "select" => "select".to_string(),
+            subject => format!("{} {}", if self.m.lang.is_js() || self.m.lang == Lang::Go { "switch" } else { "match" }, self.namer().code(subject, 30)),
+        };
+        let id = self.open_region(Kind::Branch, title, s);
         self.cx.b.get_mut(id).hints.lanes = true;
         self.regions.last_mut().unwrap().merging = true;
         // What the patterns bind comes from the subject.
@@ -2606,6 +2787,12 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let mi = self.cx.ix.classes[c].module;
                 if let Some(t) = payload.map(|p| self.cx.ix.annotated(mi, p, &NoLocals)).filter(|t| *t != Ty::Unknown) {
                     self.types.insert(n.id.to_string(), t);
+                }
+            }
+            // A Go type switch's case names the type the value has in it.
+            if let (None, Some(v), Some(Expr::Name(n)), Lang::Go) = (subject_class, &case.variant, case.binds.as_deref(), self.m.lang) {
+                if let Ty::Class(c) = self.cx.ix.sym_ty(self.mi, v, 0) {
+                    self.types.insert(n.id.to_string(), Ty::Inst(c));
                 }
             }
             if let Some(b) = &case.binds {
@@ -2899,7 +3086,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         // where `prisma` is a service extending `PrismaClient`.
         if vocabulary::is_database_verb(a.attr.as_str()) {
             if let Some(p) = self.library_of(&a.value) {
-                let root = crate::js::resolve::package_name(p.split('.').next().unwrap_or(&p)).0.to_string();
+                let root = self.library_root(&p);
                 if vocabulary::library_domains(&root).database {
                     return true;
                 }
@@ -2923,7 +3110,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     _ => break None,
                 }
             };
-            if root.is_some_and(|p| self.m.lang == Lang::Rust && vocabulary::library_domains(p.split('.').next().unwrap_or(&p)).database) {
+            if root.is_some_and(|p| matches!(self.m.lang, Lang::Rust | Lang::Go) && vocabulary::library_domains(&self.library_root(&p)).database) {
                 return true;
             }
         }
@@ -2932,8 +3119,22 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         let Some(root) = root_name(&a.value) else { return true };
         match self.cx.ix.sym(self.mi, root) {
-            Some(Sym::Ext(p)) => vocabulary::library_domains(p.split('.').next().unwrap_or(p)).database,
+            Some(Sym::Ext(p)) => vocabulary::library_domains(&self.library_root(p)).database,
             _ => true,
+        }
+    }
+
+    /// The library a dotted path is from, as `library_domains` names it:
+    /// `prisma.user` → `prisma`, `@prisma/client.X` → `@prisma/client`,
+    /// Go's `github.com/jmoiron/sqlx.DB` → `github.com/jmoiron/sqlx`.
+    fn library_root(&self, p: &str) -> String {
+        match self.m.lang {
+            Lang::Go => {
+                let pkg = crate::go::resolve::package_of(p);
+                if crate::go::resolve::is_std(pkg) { pkg.to_string() } else { crate::go::resolve::module_path(pkg) }
+            }
+            Lang::Rust | Lang::Python => p.split('.').next().unwrap_or(p).to_string(),
+            _ => crate::js::resolve::package_name(p.split('.').next().unwrap_or(p)).0.to_string(),
         }
     }
 
@@ -3058,7 +3259,12 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     /// Whether a call is passed a project function by name (`router.get("/", listUsers)`).
     fn passes_project_function(&self, c: &ast::ExprCall) -> bool {
-        c.arguments.args.iter().any(|a| matches!(a, Expr::Name(n) if matches!(self.peek(&n.id), Some(Bind::Src(_, Style::Def))) || matches!(self.cx.ix.sym(self.mi, &n.id), Some(Sym::Func(_)))))
+        c.arguments.args.iter().any(|a| match a {
+            Expr::Name(n) => matches!(self.peek(&n.id), Some(Bind::Src(_, Style::Def))) || matches!(self.cx.ix.sym(self.mi, &n.id), Some(Sym::Func(_))),
+            // A method value: `r.GET("/", s.list)`.
+            Expr::Attribute(_) => matches!(self.ty(a), Ty::Func(_)),
+            _ => false,
+        })
     }
 
     /// A call that registers a handler, named by what it handles: an HTTP
@@ -3071,6 +3277,28 @@ impl<'c, 'p> Fb<'c, 'p> {
             None => ("", func_text),
         };
         let key = c.arguments.args.first().and_then(string_literal)?;
+        // Go routers: `r.GET("/x", h)` (gin, echo), `r.Get(…)` (chi, fiber),
+        // `mux.HandleFunc("GET /items/{id}", h)` (net/http), each path already
+        // under its group's.
+        if self.m.lang == Lang::Go && handler && !recv.is_empty() && (key.starts_with('/') || key.contains(" /") || key.is_empty()) {
+            let prefix = self.fid.and_then(|f| self.cx.routes.prefixes.get(&f)).cloned().unwrap_or_default();
+            let full = |p: &str| {
+                let f = frameworks::join_path(&prefix, p);
+                if f.is_empty() { "/".to_string() } else { f }
+            };
+            let label = match key.split_once(' ') {
+                Some((v, p)) if v.chars().all(|c| c.is_ascii_uppercase()) => Some(format!("{v} {}", full(p))),
+                _ if is_http_verb(&method.to_ascii_lowercase()) => Some(format!("{} {}", method.to_ascii_uppercase(), full(key))),
+                _ if matches!(method, "Any" | "Handle" | "HandleFunc" | "Method" | "MethodFunc") => Some(full(key)),
+                _ => None,
+            };
+            if let Some(label) = label {
+                if !self.cx.handlers[self.mi].contains(&Handler::Route) {
+                    self.cx.handlers[self.mi].push(Handler::Route);
+                }
+                return Some((label, recv.to_string(), Some("endpoint")));
+            }
+        }
         let verb = is_http_verb(method) || method == "del";
         let path_like = key.starts_with('/') || key == "*";
         if verb && path_like && handler && !recv.is_empty() {
@@ -3352,7 +3580,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     return vec![];
                 }
                 if let Expr::Attribute(a) = &*c.func {
-                    if self.is_database(a) {
+                    if !matches!(callee, Callee::Instance { .. } | Callee::Func(_) | Callee::Ctor(_)) && self.is_database(a) {
                         g.effects.insert("database".into());
                     }
                 }
@@ -3665,7 +3893,17 @@ impl<'c, 'p> Fb<'c, 'p> {
                     }
                 }
                 let sub = if sub.chars().count() <= 28 { sub } else if sub.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') { naming::qualifier(&sub, 28) } else { naming::shorten(&sub, 28) };
-                (last, sub, cat, None)
+                // A command-line command built by a library (cobra's and
+                // urfave/cli's `Command{Use: "serve", …}`) is named by its name.
+                let named = (last == "Command").then(|| c.arguments.keywords.iter().find(|k| matches!(k.arg.as_deref(), Some("Use" | "Name"))).and_then(|k| string_literal(&k.value))).flatten();
+                if let Some(cmd) = named.and_then(|u| u.split_whitespace().next()).map(str::to_string) {
+                    if !self.cx.handlers[self.mi].contains(&Handler::Command) {
+                        self.cx.handlers[self.mi].push(Handler::Command);
+                    }
+                    (cmd, "command".to_string(), "endpoint", None)
+                } else {
+                    (last, sub, cat, None)
+                }
             }
             // `open(path, mode)`: the arguments tell two calls of a builtin apart.
             Callee::Builtin(b) => (b.clone(), Namer::plain(src).args(c, 34), if b == "open" || b == "input" { "io" } else { "op" }, None),
@@ -3746,7 +3984,9 @@ impl<'c, 'p> Fb<'c, 'p> {
                 node_effects.insert(e.into());
             }
         }
-        let database = matches!(&*c.func, Expr::Attribute(a) if self.is_database(a));
+        // A call into a project method is drawn as that call, whatever the receiver is named.
+        let project = matches!(callee, Callee::Instance { .. } | Callee::Func(_) | Callee::Ctor(_));
+        let database = !project && matches!(&*c.func, Expr::Attribute(a) if self.is_database(a));
         let last = func_text.rsplit('.').next().unwrap_or(&func_text);
         if matches!(last, "render_template" | "render" | "TemplateResponse" | "render_to_response" | "render_to_string" | "get_template" | "select_template" | "render_template_string") {
             for a in c.arguments.args.iter().chain(c.arguments.keywords.iter().map(|k| &k.value)) {
@@ -4027,6 +4267,10 @@ impl<'c, 'p> Fb<'c, 'p> {
     /// (see `crate::naming`).
     fn fused(&mut self, e: &'p Expr, vals: Vec<Val>, dest: &Dest) -> Id {
         let src = self.src();
+        // In Go an `err` only reports how a call went (`err := row.Scan(…)`):
+        // the call names the step.
+        let reports = self.m.lang == Lang::Go && matches!(dest, Dest::Names(ns) if ns.iter().all(|n| naming::is_error_name(n)));
+        let dest = if reports { &Dest::None } else { dest };
         let name = {
             let namer = self.namer();
             naming::name(&namer.step(e), dest, &namer.code(e, naming::CAPTION_MAX))
@@ -4243,6 +4487,62 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
             sub.push(e.clone());
         }
         n.subtitle = sub.join(", ");
+        // A Go type satisfies the project's interfaces whose methods it has,
+        // without saying so: it lists them, as a Rust type lists its traits.
+        if modules[mi].lang == Lang::Go && def.kind == ast::ClassKind::Class {
+            // Methods by name and signature: parameter and result types as
+            // written, without package qualifiers or pointers.
+            let signature = |name: &str, args: &[ast::Param], returns: Option<&Expr>, module: usize| -> String {
+                let src = &modules[module].src;
+                let norm = |e: &Expr| {
+                    let t = squash(src.of(e));
+                    t.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '[' || c == ']')).filter(|w| !w.is_empty()).map(|w| w.rsplit('.').next().unwrap_or(w).to_string()).collect::<Vec<_>>().join(" ")
+                };
+                let params: Vec<String> = args.iter().map(|a| a.annotation.as_ref().map(norm).unwrap_or_default()).collect();
+                format!("{name}({})->{}", params.join(", "), returns.map(norm).unwrap_or_default())
+            };
+            // An interface's methods are the signatures in its body.
+            let contract = |k: usize| -> Vec<String> {
+                let c = &cx.ix.classes[k];
+                c.def.body.iter().filter_map(|s| if let Stmt::FunctionDef(f) = s { Some(signature(&f.name, &f.params, f.returns.as_deref(), c.module)) } else { None }).collect()
+            };
+            let mut have: Vec<String> = vec![];
+            let mut stack = vec![cid];
+            while let Some(k) = stack.pop() {
+                let c = &cx.ix.classes[k];
+                if c.def.kind == ast::ClassKind::Interface {
+                    have.extend(contract(k));
+                } else {
+                    have.extend(c.methods.iter().chain(&c.extra).map(|(_, f)| {
+                        let info = &cx.ix.funcs[*f];
+                        signature(&info.name, info.def.args.get(1..).unwrap_or(&[]), info.def.returns, info.module)
+                    }));
+                }
+                stack.extend(c.bases.iter().filter_map(|b| if let Ty::Class(p) = b { Some(*p) } else { None }).filter(|p| *p != k).take(4));
+                if stack.len() > 16 {
+                    break;
+                }
+            }
+            let mut satisfied: Vec<String> = (0..cx.ix.classes.len())
+                .filter(|&k| cx.ix.classes[k].def.kind == ast::ClassKind::Interface && modules[cx.ix.classes[k].module].lang == Lang::Go)
+                .filter(|&k| {
+                    let need = contract(k);
+                    !need.is_empty() && need.iter().all(|m| have.contains(m))
+                })
+                .map(|k| cx.ix.classes[k].name.clone())
+                .collect();
+            satisfied.sort();
+            satisfied.dedup();
+            if !satisfied.is_empty() {
+                let mut sub: Vec<String> = n.subtitle.split(", ").filter(|s| !s.is_empty()).map(str::to_string).collect();
+                for i in satisfied {
+                    if !sub.contains(&i) {
+                        sub.push(i);
+                    }
+                }
+                n.subtitle = naming::list(&sub, 36);
+            }
+        }
         // A Rust type lists the traits it implements: `Display, Error, From`.
         if modules[mi].lang == Lang::Rust {
             let mut traits: Vec<String> = vec![];
@@ -4262,7 +4562,7 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
             ast::ClassKind::Trait => n.subtitle = if n.subtitle.is_empty() { "trait".into() } else { format!("trait: {}", n.subtitle) },
             // `impl Display for Frame`: the title says it all.
             ast::ClassKind::Extension => {
-                n.subtitle.clear();
+                n.subtitle = if modules[mi].lang == Lang::Go { "methods".into() } else { String::new() };
                 n.link = extends;
             }
             _ => {}
@@ -4306,6 +4606,12 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
                 Stmt::Assign(a) => rows.push(Row { key: Namer::plain(src).code(&a.targets[0], 30), value: Namer::plain(src).code(&a.value, 34), note: String::new(), heading: false }),
                 // An enum member without a value: `enum Color { Red, Green }`.
                 Stmt::Expr(e) if matches!(&*e.value, Expr::Name(_)) => rows.push(Row { key: Namer::plain(src).code(&e.value, 30), value: String::new(), note: String::new(), heading: false }),
+                // A Go interface's method: its signature as written.
+                Stmt::FunctionDef(f) if f.body.is_empty() => {
+                    let text = squash(src.of(f));
+                    let sig = text.strip_prefix(f.name.as_str()).unwrap_or(&text).trim().to_string();
+                    rows.push(Row { key: f.name.clone(), value: naming::shorten(&sig, 40), note: String::new(), heading: false });
+                }
                 _ => {}
             }
         }
@@ -4415,7 +4721,7 @@ fn is_component(t: &Ty) -> bool {
         // A `Map` or `Date` held by an object is state, not a component, as
         // is a `PathBuf` or `Duration` from Rust's standard library, or a
         // channel or lock that only coordinates tasks.
-        Ty::ExtInst(p) => !["globals.", "std.", "core.", "alloc.", "tokio.sync.", "parking_lot.", "crossbeam", "flume.", "async_channel.", "futures.channel.", "bytes."].iter().any(|s| p.starts_with(s)),
+        Ty::ExtInst(p) => !["globals.", "std.", "core.", "alloc.", "tokio.sync.", "parking_lot.", "crossbeam", "flume.", "async_channel.", "futures.channel.", "bytes.", "sync.", "sync/atomic.", "context.", "time.", "strings.", "math/", "regexp.", "container/"].iter().any(|s| p.starts_with(s)),
         Ty::Inst(_) => true,
         Ty::Ext(p) => p == "buffer",
         Ty::Dict(f) => f.iter().any(|(_, t)| is_component(t)),

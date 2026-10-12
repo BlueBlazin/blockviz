@@ -228,6 +228,11 @@ pub fn calls(names: &[String]) -> String {
 
 /// Names a step. `code` is its source shortened to about `CAPTION_MAX`
 /// characters by eliding whole sub-expressions as `…`.
+/// Names that hold an error: `err`, `error`, `err2`, `cerr`, `saveErr`.
+pub fn is_error_name(n: &str) -> bool {
+    n == "err" || n == "error" || n.strip_prefix("err").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) || (n.len() == 4 && n.ends_with("err")) || (n.len() > 3 && n.ends_with("Err"))
+}
+
 pub fn name(step: &Step, dest: &Dest, code: &str) -> Name {
     let whole = !code.contains('…');
     // A short value reads as part of the exit: `return None`, `return value`.

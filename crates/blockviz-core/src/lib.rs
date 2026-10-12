@@ -6,6 +6,7 @@
 
 pub mod code;
 pub mod compose;
+pub mod go;
 pub mod highlight;
 pub mod invocations;
 pub mod js;

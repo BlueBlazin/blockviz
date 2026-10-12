@@ -1,0 +1,303 @@
+ok
+File 169 1978 package=169 doc=1
+  CommentGroup 95 168
+    Comment 95 168 // Package comments is the package doc: the group right above the clause.
+  Ident 177 185 comments
+  GenDecl 290 303 type lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 260 289
+      Comment 260 289 /*\nDoc in a block comment.\n*/
+    TypeSpec 295 303 tparams=0 assign=-1 doc=0 comment=0
+      Ident 295 299 Kind
+      Ident 300 303 int
+  FuncDecl 353 371 recv=0 body=1 doc=0
+    Ident 358 366 detached
+    FuncType 353 368 func=353 tparams=0 results=0
+      FieldList 366 368 open=366 close=367
+    BlockStmt 369 371 rbrace=370
+  FuncDecl 420 446 recv=0 body=1 doc=1
+    CommentGroup 373 419
+      Comment 373 379 // Doc
+      Comment 380 382 //
+      Comment 383 419 // with a blank comment line inside.
+    Ident 425 441 withBlankDocLine
+    FuncType 420 443 func=420 tparams=0 results=0
+      FieldList 441 443 open=441 close=442
+    BlockStmt 444 446 rbrace=445
+  FuncDecl 468 494 recv=0 body=1 doc=1
+    CommentGroup 448 467
+      Comment 448 457 /* one */
+      Comment 458 467 /* two */
+    Ident 473 489 twoBlocksOnALine
+    FuncType 468 491 func=468 tparams=0 results=0
+      FieldList 489 491 open=489 close=490
+    BlockStmt 492 494 rbrace=493
+  FuncDecl 496 622 recv=0 body=1 doc=0
+    Ident 501 513 lineComments
+    FuncType 496 515 func=496 tparams=0 results=0
+      FieldList 513 515 open=513 close=514
+    BlockStmt 516 622 rbrace=621
+      AssignStmt 519 525 := tok=521 lhs=1 rhs=1
+        Ident 519 520 x
+        BasicLit 524 525 INT 1
+      IncDecStmt 548 551 ++ tok=549
+        Ident 548 549 x
+      AssignStmt 574 596 = tok=576 lhs=1 rhs=1
+        Ident 574 575 x
+        BinaryExpr 578 596 + op=580
+          Ident 578 579 x
+          BasicLit 595 596 INT 1
+      ReturnStmt 598 604 results=0
+  FuncDecl 624 731 recv=0 body=1 doc=0
+    Ident 629 647 blockSpanningLines
+    FuncType 624 653 func=624 tparams=0 results=1
+      FieldList 647 649 open=647 close=648
+      FieldList 650 653 open=-1 close=-1
+        Field 650 653 names=0 tag=0 doc=0 comment=0
+          Ident 650 653 int
+    BlockStmt 654 731 rbrace=730
+      ReturnStmt 657 665 results=1
+        BasicLit 664 665 INT 1
+  FuncDecl 733 801 recv=0 body=1 doc=0
+    Ident 738 756 commentBeforeBrace
+    FuncType 733 758 func=733 tparams=0 results=0
+      FieldList 756 758 open=756 close=757
+    BlockStmt 759 801 rbrace=800
+      AssignStmt 762 767 = tok=764 lhs=1 rhs=1
+        Ident 762 763 _
+        BasicLit 766 767 INT 1
+  GenDecl 803 1056 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 808 1056 tparams=0 assign=-1 doc=0 comment=0
+      Ident 808 809 S
+      StructType 810 1056
+        FieldList 817 1056 open=817 close=1055
+          Field 840 845 names=1 tag=0 doc=1 comment=1
+            CommentGroup 820 838
+              Comment 820 838 // Doc on a field.
+            Ident 840 841 A
+            Ident 842 845 int
+            CommentGroup 846 864
+              Comment 846 864 // line on a field
+          Field 866 871 names=1 tag=0 doc=0 comment=1
+            Ident 866 867 B
+            Ident 868 871 int
+            CommentGroup 872 899
+              Comment 872 899 /* block line on a field */
+          Field 932 940 names=0 tag=0 doc=1 comment=1
+            CommentGroup 902 930
+              Comment 902 930 // Doc on an embedded field.
+            Ident 932 940 Embedded
+            CommentGroup 941 969
+              Comment 941 969 // line on an embedded field
+          Field 971 996 names=2 tag=1 doc=0 comment=1
+            Ident 971 972 C
+            Ident 974 975 D
+            Ident 980 986 string
+            BasicLit 987 996 STRING `tag:"x"`
+            CommentGroup 997 1011
+              Comment 997 1011 // after a tag
+  GenDecl 1058 1206 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 1063 1206 tparams=0 assign=-1 doc=0 comment=0
+      Ident 1063 1064 I
+      InterfaceType 1065 1206
+        FieldList 1075 1206 open=1075 close=1205
+          Field 1099 1102 names=1 tag=0 doc=1 comment=1
+            CommentGroup 1078 1097
+              Comment 1078 1097 // Doc on a method.
+            Ident 1099 1100 M
+            FuncType 1100 1102 func=-1 tparams=0 results=0
+              FieldList 1100 1102 open=1100 close=1101
+            CommentGroup 1103 1122
+              Comment 1103 1122 // line on a method
+          Field 1158 1166 names=0 tag=0 doc=1 comment=0
+            CommentGroup 1124 1156
+              Comment 1124 1156 // Doc on an embedded interface.
+            Ident 1158 1166 Embedded
+          Field 1168 1182 names=0 tag=0 doc=0 comment=1
+            BinaryExpr 1168 1182 | op=1173
+              UnaryExpr 1168 1172 ~
+                Ident 1169 1172 int
+              UnaryExpr 1175 1182 ~
+                Ident 1176 1182 string
+            CommentGroup 1183 1204
+              Comment 1183 1204 // line on a type set
+  GenDecl 1208 1233 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 1213 1233 tparams=0 assign=-1 doc=0 comment=0
+      Ident 1213 1221 Embedded
+      InterfaceType 1222 1233
+        FieldList 1231 1233 open=1231 close=1232
+  GenDecl 1235 1358 var lparen=1239 rparen=1357 specs=3 doc=0
+    ValueSpec 1265 1270 names=1 type=0 values=1 doc=1 comment=1
+      CommentGroup 1242 1263
+        Comment 1242 1263 // Doc on a var spec.
+      Ident 1265 1266 a
+      BasicLit 1269 1270 INT 1
+      CommentGroup 1271 1292
+        Comment 1271 1292 // line on a var spec
+    ValueSpec 1294 1299 names=1 type=0 values=1 doc=0 comment=1
+      Ident 1294 1295 b
+      BasicLit 1298 1299 INT 2
+      CommentGroup 1300 1311
+        Comment 1300 1311 // b's line
+    ValueSpec 1351 1356 names=1 type=0 values=1 doc=0 comment=0
+      Ident 1351 1352 d
+      BasicLit 1355 1356 INT 3
+  GenDecl 1360 1427 const lparen=1366 rparen=1426 specs=1 doc=0
+    ValueSpec 1393 1401 names=1 type=0 values=1 doc=0 comment=1
+      Ident 1393 1394 c
+      Ident 1397 1401 iota
+      CommentGroup 1402 1425
+        Comment 1402 1413 /* block */
+        Comment 1414 1425 // and line
+  FuncDecl 1429 1532 recv=0 body=1 doc=0
+    Ident 1434 1440 params
+    FuncType 1429 1528 func=1429 tparams=0 results=0
+      FieldList 1440 1528 open=1440 close=1527
+        Field 1488 1493 names=1 tag=0 doc=0 comment=0
+          Ident 1488 1489 a
+          Ident 1490 1493 int
+        Field 1517 1525 names=1 tag=0 doc=0 comment=0
+          Ident 1517 1518 b
+          Ident 1519 1525 string
+    BlockStmt 1529 1532 rbrace=1531
+  FuncDecl 1554 1574 recv=0 body=1 doc=0
+    Ident 1559 1569 renumbered
+    FuncType 1554 1571 func=1554 tparams=0 results=0
+      FieldList 1569 1571 open=1569 close=1570
+    BlockStmt 1572 1574 rbrace=1573
+  FuncDecl 1722 1746 recv=0 body=1 doc=1
+    CommentGroup 1576 1721
+      Comment 1576 1646 // After a //line directive the next line is 100: this comment ends on
+      Comment 1647 1721 // line 101 in go/token's numbering and is still a doc for the func below.
+    Ident 1727 1741 afterDirective
+    FuncType 1722 1743 func=1722 tparams=0 results=0
+      FieldList 1741 1743 open=1741 close=1742
+    BlockStmt 1744 1746 rbrace=1745
+  FuncDecl 1771 1795 recv=0 body=1 doc=0
+    Ident 1776 1790 blockDirective
+    FuncType 1771 1792 func=1771 tparams=0 results=0
+      FieldList 1790 1792 open=1790 close=1791
+    BlockStmt 1793 1795 rbrace=1794
+  FuncDecl 1824 1844 recv=0 body=1 doc=1
+    CommentGroup 1797 1823
+      Comment 1797 1810 //go:noinline
+      Comment 1811 1823 //go:nosplit
+    Ident 1829 1839 directives
+    FuncType 1824 1841 func=1824 tparams=0 results=0
+      FieldList 1839 1841 open=1839 close=1840
+    BlockStmt 1842 1844 rbrace=1843
+  FuncDecl 1846 1978 recv=0 body=1 doc=0
+    Ident 1851 1869 semicolonAtComment
+    FuncType 1846 1871 func=1846 tparams=0 results=0
+      FieldList 1869 1871 open=1869 close=1870
+    BlockStmt 1872 1978 rbrace=1977
+      AssignStmt 1875 1903 := tok=1877 lhs=1 rhs=1
+        Ident 1875 1876 x
+        BinaryExpr 1880 1903 + op=1900
+          BasicLit 1880 1881 INT 1
+          BasicLit 1902 1903 INT 2
+      AssignStmt 1916 1921 = tok=1918 lhs=1 rhs=1
+        Ident 1916 1917 _
+        Ident 1920 1921 x
+      AssignStmt 1923 1969 := tok=1925 lhs=1 rhs=1
+        Ident 1923 1924 y
+        CompositeLit 1928 1969 type=1 lbrace=1933 rbrace=1968 elts=2
+          ArrayType 1928 1933 len=0
+            Ident 1930 1933 int
+          BasicLit 1937 1938 INT 1
+          BasicLit 1951 1952 INT 2
+      AssignStmt 1971 1976 = tok=1973 lhs=1 rhs=1
+        Ident 1971 1972 _
+        Ident 1975 1976 y
+comments
+  CommentGroup 0 93
+    Comment 0 47 /* A block comment first,\n   spanning lines. */
+    Comment 48 93 // And a line comment right after: one group.
+  CommentGroup 95 168
+    Comment 95 168 // Package comments is the package doc: the group right above the clause.
+  CommentGroup 186 223
+    Comment 186 223 // line comment on the package clause
+  CommentGroup 225 258
+    Comment 225 258 //go:generate stringer -type=Kind
+  CommentGroup 260 289
+    Comment 260 289 /*\nDoc in a block comment.\n*/
+  CommentGroup 305 351
+    Comment 305 351 // Doc separated by a blank line is not a doc.
+  CommentGroup 373 419
+    Comment 373 379 // Doc
+    Comment 380 382 //
+    Comment 383 419 // with a blank comment line inside.
+  CommentGroup 448 467
+    Comment 448 457 /* one */
+    Comment 458 467 /* two */
+  CommentGroup 526 546
+    Comment 526 546 // after a statement
+  CommentGroup 555 572
+    Comment 555 572 /* block after */
+  CommentGroup 582 594
+    Comment 582 594 /* inside */
+  CommentGroup 605 620
+    Comment 605 620 // after return
+  CommentGroup 666 729
+    Comment 666 729 /* this comment\n\tspans lines, so a semicolon comes before it */
+  CommentGroup 769 799
+    Comment 769 799 // trailing comment in a block
+  CommentGroup 820 838
+    Comment 820 838 // Doc on a field.
+  CommentGroup 846 864
+    Comment 846 864 // line on a field
+  CommentGroup 872 899
+    Comment 872 899 /* block line on a field */
+  CommentGroup 902 930
+    Comment 902 930 // Doc on an embedded field.
+  CommentGroup 941 969
+    Comment 941 969 // line on an embedded field
+  CommentGroup 997 1011
+    Comment 997 1011 // after a tag
+  CommentGroup 1013 1054
+    Comment 1013 1054 // Lone comment before the closing brace.
+  CommentGroup 1078 1097
+    Comment 1078 1097 // Doc on a method.
+  CommentGroup 1103 1122
+    Comment 1103 1122 // line on a method
+  CommentGroup 1124 1156
+    Comment 1124 1156 // Doc on an embedded interface.
+  CommentGroup 1183 1204
+    Comment 1183 1204 // line on a type set
+  CommentGroup 1242 1263
+    Comment 1242 1263 // Doc on a var spec.
+  CommentGroup 1271 1292
+    Comment 1271 1292 // line on a var spec
+  CommentGroup 1300 1311
+    Comment 1300 1311 // b's line
+  CommentGroup 1314 1348
+    Comment 1314 1348 // A group closed by a blank line.
+  CommentGroup 1368 1391
+    Comment 1368 1391 // line after the paren
+  CommentGroup 1402 1425
+    Comment 1402 1413 /* block */
+    Comment 1414 1425 // and line
+  CommentGroup 1443 1486
+    Comment 1443 1486 // comments in parameter lists are not docs
+  CommentGroup 1495 1515
+    Comment 1495 1515 // nor line comments
+  CommentGroup 1534 1553
+    Comment 1534 1553 //line other.go:100
+  CommentGroup 1576 1721
+    Comment 1576 1646 // After a //line directive the next line is 100: this comment ends on
+    Comment 1647 1721 // line 101 in go/token's numbering and is still a doc for the func below.
+  CommentGroup 1748 1770
+    Comment 1748 1770 /*line other.go:10:5*/
+  CommentGroup 1797 1823
+    Comment 1797 1810 //go:noinline
+    Comment 1811 1823 //go:nosplit
+  CommentGroup 1882 1899
+    Comment 1882 1899 /* not the end */
+  CommentGroup 1904 1914
+    Comment 1904 1914 // the end
+  CommentGroup 1940 1948
+    Comment 1940 1948 // first
+  CommentGroup 1954 1966
+    Comment 1954 1966 /* second */
+  CommentGroup 1980 2054
+    Comment 1980 2026 // The last comment, with no newline after it.
+    Comment 2027 2054 // It is a line on its own.

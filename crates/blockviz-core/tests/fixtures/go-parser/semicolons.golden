@@ -1,0 +1,225 @@
+ok
+File 0 822 package=0 doc=0
+  Ident 8 18 semicolons
+  GenDecl 20 32 import lparen=-1 rparen=-1 specs=1 doc=0
+    ImportSpec 27 32 name=0 doc=0 comment=0
+      BasicLit 27 32 STRING "fmt"
+  FuncDecl 34 59 recv=0 body=1 doc=0
+    Ident 39 40 f
+    FuncType 34 46 func=34 tparams=0 results=1
+      FieldList 40 42 open=40 close=41
+      FieldList 43 46 open=-1 close=-1
+        Field 43 46 names=0 tag=0 doc=0 comment=0
+          Ident 43 46 int
+    BlockStmt 47 59 rbrace=58
+      ReturnStmt 49 57 results=1
+        BasicLit 56 57 INT 1
+  GenDecl 61 70 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 65 70 names=1 type=0 values=1 doc=0 comment=0
+      Ident 65 66 x
+      BasicLit 69 70 INT 1
+  GenDecl 72 82 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 77 82 tparams=0 assign=-1 doc=0 comment=0
+      Ident 77 78 T
+      Ident 79 82 int
+  FuncDecl 84 397 recv=0 body=1 doc=0
+    Ident 89 94 lines
+    FuncType 84 134 func=84 tparams=0 results=1
+      FieldList 94 122 open=94 close=121
+        Field 95 100 names=1 tag=0 doc=0 comment=0
+          Ident 95 96 a
+          Ident 97 100 int
+        Field 102 109 names=1 tag=0 doc=0 comment=0
+          Ident 102 103 s
+          ArrayType 104 109 len=0
+            Ident 106 109 int
+        Field 111 121 names=1 tag=0 doc=0 comment=0
+          Ident 111 112 c
+          ChanType 113 121 both arrow=-1
+            Ident 118 121 int
+      FieldList 123 134 open=123 close=133
+        Field 124 127 names=0 tag=0 doc=0 comment=0
+          Ident 124 127 int
+        Field 129 133 names=0 tag=0 doc=0 comment=0
+          Ident 129 133 bool
+    BlockStmt 135 397 rbrace=396
+      IncDecStmt 138 141 ++ tok=139
+        Ident 138 139 a
+      IncDecStmt 143 146 -- tok=144
+        Ident 143 144 a
+      IncDecStmt 148 154 ++ tok=152
+        IndexExpr 148 152 lbrack=149 rbrack=151
+          Ident 148 149 s
+          BasicLit 150 151 INT 0
+      AssignStmt 156 164 = tok=158 lhs=1 rhs=1
+        Ident 156 157 _
+        IndexExpr 160 164 lbrack=161 rbrack=163
+          Ident 160 161 s
+          BasicLit 162 163 INT 0
+      AssignStmt 166 173 = tok=168 lhs=1 rhs=1
+        Ident 166 167 _
+        ParenExpr 170 173 lparen=170 rparen=172
+          Ident 171 172 a
+      AssignStmt 175 183 = tok=177 lhs=1 rhs=1
+        Ident 175 176 _
+        SliceExpr 179 183 lbrack=180 rbrack=182 low=0 high=0 max=0 slice3=0
+          Ident 179 180 s
+      AssignStmt 185 198 = tok=187 lhs=1 rhs=1
+        Ident 185 186 _
+        FuncLit 189 198
+          FuncType 189 195 func=189 tparams=0 results=0
+            FieldList 193 195 open=193 close=194
+          BlockStmt 196 198 rbrace=197
+      ExprStmt 200 214
+        CallExpr 200 214 lparen=211 ellipsis=-1 rparen=213 args=1
+          SelectorExpr 200 211
+            Ident 200 203 fmt
+            Ident 204 211 Println
+          Ident 212 213 a
+      ExprStmt 216 230
+        CallExpr 216 230 lparen=227 ellipsis=-1 rparen=229 args=1
+          SelectorExpr 216 227
+            Ident 216 219 fmt
+            Ident 220 227 Println
+          Ident 228 229 a
+      ForStmt 232 245 init=0 cond=0 post=0
+        BlockStmt 236 245 rbrace=244
+          BranchStmt 238 243 break label=0
+      ForStmt 247 266 init=0 cond=0 post=0
+        BlockStmt 251 266 rbrace=265
+          BranchStmt 255 263 continue label=0
+      LabeledStmt 267 297 colon=268
+        Ident 267 268 L
+        RangeStmt 271 297 key=0 value=0 none tok=-1
+          Ident 281 282 s
+          BlockStmt 283 297 rbrace=296
+            BranchStmt 287 294 break label=1
+              Ident 293 294 L
+      SwitchStmt 299 341 init=0 tag=1
+        Ident 306 307 a
+        BlockStmt 308 341 rbrace=340
+          CaseClause 310 329 list=1 colon=316
+            BasicLit 315 316 INT 1
+            BranchStmt 318 329 fallthrough label=0
+          CaseClause 331 339 default colon=338
+      IfStmt 343 395 init=0 else=1
+        BinaryExpr 346 351 > op=348
+          Ident 346 347 a
+          BasicLit 350 351 INT 0
+        BlockStmt 352 370 rbrace=369
+          ReturnStmt 354 368 results=2
+            Ident 361 362 a
+            Ident 364 368 true
+        BlockStmt 376 395 rbrace=394
+          ReturnStmt 378 393 results=2
+            BasicLit 385 386 INT 0
+            Ident 388 393 false
+  FuncDecl 399 450 recv=0 body=1 doc=0
+    Ident 404 409 empty
+    FuncType 399 411 func=399 tparams=0 results=0
+      FieldList 409 411 open=409 close=410
+    BlockStmt 412 450 rbrace=449
+      EmptyStmt 415 416 implicit=0
+      EmptyStmt 416 417 implicit=0
+      BlockStmt 419 424 rbrace=423
+        EmptyStmt 421 422 implicit=0
+      IfStmt 426 436 init=0 else=0
+        Ident 429 433 true
+        BlockStmt 434 436 rbrace=435
+      LabeledStmt 438 443 colon=440
+        Ident 438 440 L1
+        EmptyStmt 442 443 implicit=0
+      LabeledStmt 445 449 colon=447
+        Ident 445 447 L2
+        EmptyStmt 449 449 implicit=1
+  FuncDecl 452 491 recv=0 body=1 doc=0
+    Ident 457 463 labels
+    FuncType 452 465 func=452 tparams=0 results=0
+      FieldList 463 465 open=463 close=464
+    BlockStmt 466 491 rbrace=490
+      LabeledStmt 468 481 colon=469
+        Ident 468 469 A
+        LabeledStmt 471 481 colon=472
+          Ident 471 472 B
+          BranchStmt 475 481 goto label=1
+            Ident 480 481 A
+      BranchStmt 483 489 goto label=1
+        Ident 488 489 B
+  FuncDecl 493 600 recv=0 body=1 doc=0
+    Ident 498 504 breaks
+    FuncType 493 506 func=493 tparams=0 results=0
+      FieldList 504 506 open=504 close=505
+    BlockStmt 507 600 rbrace=599
+      ForStmt 510 526 init=0 cond=0 post=0
+        BlockStmt 514 526 rbrace=525
+          BranchStmt 518 523 break label=0
+      ForStmt 528 598 init=0 cond=0 post=0
+        BlockStmt 532 598 rbrace=597
+          SwitchStmt 536 587 init=0 tag=0
+            BlockStmt 543 587 rbrace=586
+              CaseClause 547 572 list=1 colon=556
+                Ident 552 556 true
+                BranchStmt 561 572 fallthrough label=0
+              CaseClause 575 583 default colon=582
+          BranchStmt 590 595 break label=0
+  FuncDecl 602 638 recv=0 body=1 doc=0
+    Ident 607 614 returns
+    FuncType 602 627 func=602 tparams=0 results=1
+      FieldList 614 616 open=614 close=615
+      FieldList 617 627 open=617 close=626
+        Field 618 626 names=2 tag=0 doc=0 comment=0
+          Ident 618 619 a
+          Ident 621 622 b
+          Ident 623 626 int
+    BlockStmt 628 638 rbrace=637
+      ReturnStmt 630 636 results=0
+  FuncDecl 640 732 recv=0 body=1 doc=0
+    Ident 645 653 trailing
+    FuncType 640 690 func=640 tparams=0 results=1
+      FieldList 653 672 open=653 close=671
+        Field 656 661 names=1 tag=0 doc=0 comment=0
+          Ident 656 657 a
+          Ident 658 661 int
+        Field 664 669 names=1 tag=0 doc=0 comment=0
+          Ident 664 665 b
+          Ident 666 669 int
+      FieldList 673 690 open=673 close=689
+        Field 676 679 names=0 tag=0 doc=0 comment=0
+          Ident 676 679 int
+        Field 682 687 names=0 tag=0 doc=0 comment=0
+          Ident 682 687 error
+    BlockStmt 691 732 rbrace=731
+      ReturnStmt 694 730 results=2
+        CallExpr 701 707 lparen=702 ellipsis=-1 rparen=706 args=0
+          Ident 701 702 f
+        CallExpr 709 730 lparen=719 ellipsis=-1 rparen=729 args=1
+          SelectorExpr 709 719
+            Ident 709 712 fmt
+            Ident 713 719 Errorf
+          BasicLit 723 726 STRING "x"
+  GenDecl 734 766 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 738 766 names=1 type=0 values=1 doc=0 comment=0
+      Ident 738 747 composite
+      CompositeLit 750 766 type=1 lbrace=755 rbrace=765 elts=2
+        ArrayType 750 755 len=0
+          Ident 752 755 int
+        BasicLit 758 759 INT 1
+        BasicLit 762 763 INT 2
+  GenDecl 768 800 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 772 800 names=1 type=0 values=1 doc=0 comment=0
+      Ident 772 776 call
+      CallExpr 779 800 lparen=789 ellipsis=-1 rparen=799 args=2
+        SelectorExpr 779 789
+          Ident 779 782 fmt
+          Ident 783 789 Sprint
+        BasicLit 792 793 INT 1
+        BasicLit 796 797 INT 2
+  FuncDecl 802 822 recv=0 body=1 doc=0
+    Ident 807 810 eof
+    FuncType 802 812 func=802 tparams=0 results=0
+      FieldList 810 812 open=810 close=811
+    BlockStmt 813 822 rbrace=821
+      AssignStmt 815 820 = tok=817 lhs=1 rhs=1
+        Ident 815 816 _
+        BasicLit 819 820 INT 1
+comments

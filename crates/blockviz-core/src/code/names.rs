@@ -391,6 +391,7 @@ impl<'a> Namer<'a> {
             },
             // Rust awaits after the value: `read_buf(…).await`.
             Expr::Await(a) if self.src.lang == ast::Lang::Rust => format!("{}.await", self.code(&a.value, max.saturating_sub(6))),
+            Expr::Await(a) if self.src.lang == ast::Lang::Go => format!("<-{}", self.code(&a.value, max.saturating_sub(2))),
             Expr::Await(a) => format!("await {}", self.code(&a.value, max.saturating_sub(6))),
             Expr::Dict(_) => self.brief(e),
             Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) => {
@@ -583,6 +584,11 @@ impl<'a> Namer<'a> {
             }
         };
         names.reverse();
+        // A Go query built by chained calls (gorm's `db.Preload(…).Where(…).Find(&xs)`)
+        // is named by the call that runs it.
+        if self.src.lang == ast::Lang::Go && names.len() > 1 && names.last().is_some_and(|n| crate::vocabulary::is_query_run(n)) {
+            names = names.split_off(names.len() - 1);
+        }
         let receiver = receiver.map(|r| self.path(r).unwrap_or_else(|| self.code(r, 20))).unwrap_or_default();
         Step::Calls { names, receiver, reads: super::walk::loads(e), path }
     }

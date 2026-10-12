@@ -1,0 +1,735 @@
+ok
+File 0 2381 package=0 doc=0
+  Ident 8 16 generics
+  GenDecl 18 55 import lparen=-1 rparen=-1 specs=1 doc=0
+    ImportSpec 25 55 name=0 doc=0 comment=0
+      BasicLit 25 55 STRING "golang.org/x/exp/constraints"
+  GenDecl 57 108 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 62 108 tparams=0 assign=-1 doc=0 comment=0
+      Ident 62 68 Number
+      InterfaceType 69 108
+        FieldList 79 108 open=79 close=107
+          Field 82 106 names=0 tag=0 doc=0 comment=0
+            BinaryExpr 82 106 | op=96
+              BinaryExpr 82 95 | op=87
+                UnaryExpr 82 86 ~
+                  Ident 83 86 int
+                UnaryExpr 89 95 ~
+                  Ident 90 95 int64
+              UnaryExpr 98 106 ~
+                Ident 99 106 float64
+  GenDecl 110 187 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 115 187 tparams=0 assign=-1 doc=0 comment=0
+      Ident 115 122 Ordered
+      InterfaceType 123 187
+        FieldList 133 187 open=133 close=186
+          Field 136 185 names=0 tag=0 doc=0 comment=0
+            BinaryExpr 136 185 | op=176
+              BinaryExpr 136 175 | op=156
+                SelectorExpr 136 155
+                  Ident 136 147 constraints
+                  Ident 148 155 Integer
+                SelectorExpr 158 175
+                  Ident 158 169 constraints
+                  Ident 170 175 Float
+              UnaryExpr 178 185 ~
+                Ident 179 185 string
+  GenDecl 189 243 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 194 243 tparams=0 assign=-1 doc=0 comment=0
+      Ident 194 203 Stringish
+      InterfaceType 204 243
+        FieldList 214 243 open=214 close=242
+          Field 217 224 names=0 tag=0 doc=0 comment=0
+            UnaryExpr 217 224 ~
+              Ident 218 224 string
+          Field 226 241 names=1 tag=0 doc=0 comment=0
+            Ident 226 232 String
+            FuncType 232 241 func=-1 tparams=0 results=1
+              FieldList 232 234 open=232 close=233
+              FieldList 235 241 open=-1 close=-1
+                Field 235 241 names=0 tag=0 doc=0 comment=0
+                  Ident 235 241 string
+  GenDecl 245 281 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 250 281 tparams=0 assign=-1 doc=0 comment=0
+      Ident 250 255 Union
+      InterfaceType 256 281
+        FieldList 265 281 open=265 close=280
+          Field 267 279 names=0 tag=0 doc=0 comment=0
+            BinaryExpr 267 279 | op=271
+              Ident 267 270 int
+              Ident 273 279 string
+  GenDecl 283 324 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 288 324 tparams=0 assign=-1 doc=0 comment=0
+      Ident 288 298 Comparable
+      InterfaceType 299 324
+        FieldList 309 324 open=309 close=323
+          Field 312 322 names=0 tag=0 doc=0 comment=0
+            Ident 312 322 comparable
+  GenDecl 326 378 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 331 378 tparams=1 assign=-1 doc=0 comment=0
+      Ident 331 335 List
+      FieldList 335 342 open=335 close=341
+        Field 336 341 names=1 tag=0 doc=0 comment=0
+          Ident 336 337 T
+          Ident 338 341 any
+      StructType 343 378
+        FieldList 350 378 open=350 close=377
+          Field 353 366 names=1 tag=0 doc=0 comment=0
+            Ident 353 357 head
+            StarExpr 358 366
+              IndexExpr 359 366 lbrack=363 rbrack=365
+                Ident 359 363 node
+                Ident 364 365 T
+          Field 368 376 names=1 tag=0 doc=0 comment=0
+            Ident 368 372 size
+            Ident 373 376 int
+  GenDecl 380 432 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 385 432 tparams=1 assign=-1 doc=0 comment=0
+      Ident 385 389 node
+      FieldList 389 396 open=389 close=395
+        Field 390 395 names=1 tag=0 doc=0 comment=0
+          Ident 390 391 T
+          Ident 392 395 any
+      StructType 397 432
+        FieldList 404 432 open=404 close=431
+          Field 407 414 names=1 tag=0 doc=0 comment=0
+            Ident 407 412 value
+            Ident 413 414 T
+          Field 416 430 names=1 tag=0 doc=0 comment=0
+            Ident 416 420 next
+            StarExpr 422 430
+              IndexExpr 423 430 lbrack=427 rbrack=429
+                Ident 423 427 node
+                Ident 428 429 T
+  GenDecl 434 493 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 439 493 tparams=1 assign=-1 doc=0 comment=0
+      Ident 439 443 Pair
+      FieldList 443 464 open=443 close=463
+        Field 444 456 names=1 tag=0 doc=0 comment=0
+          Ident 444 445 K
+          Ident 446 456 comparable
+        Field 458 463 names=1 tag=0 doc=0 comment=0
+          Ident 458 459 V
+          Ident 460 463 any
+      StructType 465 493
+        FieldList 472 493 open=472 close=492
+          Field 475 482 names=1 tag=0 doc=0 comment=0
+            Ident 475 478 Key
+            Ident 481 482 K
+          Field 484 491 names=1 tag=0 doc=0 comment=0
+            Ident 484 489 Value
+            Ident 490 491 V
+  GenDecl 495 566 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 500 566 tparams=1 assign=-1 doc=0 comment=0
+      Ident 500 504 Tree
+      FieldList 504 533 open=504 close=532
+        Field 505 532 names=1 tag=0 doc=0 comment=0
+          Ident 505 506 T
+          InterfaceType 507 532
+            FieldList 516 532 open=516 close=531
+              Field 518 530 names=1 tag=0 doc=0 comment=0
+                Ident 518 522 Less
+                FuncType 522 530 func=-1 tparams=0 results=1
+                  FieldList 522 525 open=522 close=524
+                    Field 523 524 names=0 tag=0 doc=0 comment=0
+                      Ident 523 524 T
+                  FieldList 526 530 open=-1 close=-1
+                    Field 526 530 names=0 tag=0 doc=0 comment=0
+                      Ident 526 530 bool
+      StructType 534 566
+        FieldList 541 566 open=541 close=565
+          Field 544 564 names=2 tag=0 doc=0 comment=0
+            Ident 544 548 left
+            Ident 550 555 right
+            StarExpr 556 564
+              IndexExpr 557 564 lbrack=561 rbrack=563
+                Ident 557 561 Tree
+                Ident 562 563 T
+  GenDecl 568 603 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 573 603 tparams=1 assign=-1 doc=0 comment=0
+      Ident 573 579 Matrix
+      FieldList 579 597 open=579 close=596
+        Field 580 588 names=1 tag=0 doc=0 comment=0
+          Ident 580 581 T
+          Ident 582 588 Number
+        Field 590 596 names=1 tag=0 doc=0 comment=0
+          Ident 590 591 U
+          UnaryExpr 592 596 ~
+            ArrayType 593 596 len=0
+              Ident 595 596 T
+      ArrayType 598 603 len=0
+        ArrayType 600 603 len=0
+          Ident 602 603 T
+  GenDecl 668 1139 type lparen=673 rparen=1138 specs=15 doc=1
+    CommentGroup 605 667
+      Comment 605 667 // Ambiguities between array lengths and type parameter lists.
+    TypeSpec 676 692 tparams=0 assign=-1 doc=0 comment=0
+      Ident 676 682 ArrayN
+      ArrayType 686 692 len=1
+        Ident 687 688 N
+        Ident 689 692 int
+    TypeSpec 694 714 tparams=0 assign=-1 doc=0 comment=0
+      Ident 694 703 ArrayExpr
+      ArrayType 704 714 len=1
+        BinaryExpr 705 710 * op=707
+          Ident 705 706 N
+          BasicLit 709 710 INT 2
+        Ident 711 714 int
+    TypeSpec 716 741 tparams=1 assign=-1 doc=0 comment=0
+      Ident 716 725 PtrConstr
+      FieldList 725 732 open=725 close=731
+        Field 726 730 names=1 tag=0 doc=0 comment=0
+          Ident 726 727 P
+          StarExpr 728 730
+            Ident 729 730 Q
+      StructType 733 741
+        FieldList 739 741 open=739 close=740
+    TypeSpec 743 768 tparams=1 assign=-1 doc=0 comment=0
+      Ident 743 749 PtrLit
+      FieldList 749 759 open=749 close=758
+        Field 750 758 names=1 tag=0 doc=0 comment=0
+          Ident 750 751 P
+          StarExpr 752 758
+            ArrayType 753 758 len=0
+              Ident 755 758 int
+      StructType 760 768
+        FieldList 766 768 open=766 close=767
+    TypeSpec 770 796 tparams=1 assign=-1 doc=0 comment=0
+      Ident 770 779 PtrStruct
+      FieldList 779 792 open=779 close=791
+        Field 780 791 names=1 tag=0 doc=0 comment=0
+          Ident 780 781 P
+          StarExpr 782 791
+            StructType 783 791
+              FieldList 789 791 open=789 close=790
+      ArrayType 793 796 len=0
+        Ident 795 796 P
+    TypeSpec 798 826 tparams=1 assign=-1 doc=0 comment=0
+      Ident 798 806 ParenLit
+      FieldList 806 817 open=806 close=816
+        Field 807 815 names=1 tag=0 doc=0 comment=0
+          Ident 807 808 P
+          ArrayType 810 815 len=0
+            Ident 812 815 int
+      StructType 818 826
+        FieldList 824 826 open=824 close=825
+    TypeSpec 828 857 tparams=1 assign=-1 doc=0 comment=0
+      Ident 828 839 SliceConstr
+      FieldList 839 848 open=839 close=847
+        Field 840 847 names=1 tag=0 doc=0 comment=0
+          Ident 840 841 P
+          ArrayType 842 847 len=0
+            Ident 844 847 int
+      StructType 849 857
+        FieldList 855 857 open=855 close=856
+    TypeSpec 859 895 tparams=1 assign=-1 doc=0 comment=0
+      Ident 859 868 MapConstr
+      FieldList 868 886 open=868 close=885
+        Field 869 885 names=1 tag=0 doc=0 comment=0
+          Ident 869 870 P
+          MapType 871 885
+            Ident 875 881 string
+            Ident 882 885 int
+      StructType 887 895
+        FieldList 893 895 open=893 close=894
+    TypeSpec 897 938 tparams=1 assign=-1 doc=0 comment=0
+      Ident 897 904 Several
+      FieldList 904 929 open=904 close=928
+        Field 905 913 names=2 tag=0 doc=0 comment=0
+          Ident 905 906 P
+          Ident 908 909 Q
+          Ident 910 913 any
+        Field 915 928 names=1 tag=0 doc=0 comment=0
+          Ident 915 916 R
+          InterfaceType 917 928
+            FieldList 926 928 open=926 close=927
+      StructType 930 938
+        FieldList 936 938 open=936 close=937
+    TypeSpec 940 962 tparams=1 assign=-1 doc=0 comment=0
+      Ident 940 945 Tilde
+      FieldList 945 953 open=945 close=952
+        Field 946 952 names=1 tag=0 doc=0 comment=0
+          Ident 946 947 P
+          UnaryExpr 948 952 ~
+            Ident 949 952 int
+      StructType 954 962
+        FieldList 960 962 open=960 close=961
+    TypeSpec 964 1001 tparams=1 assign=-1 doc=0 comment=0
+      Ident 964 974 TildeUnion
+      FieldList 974 992 open=974 close=991
+        Field 975 991 names=1 tag=0 doc=0 comment=0
+          Ident 975 976 P
+          BinaryExpr 977 991 | op=982
+            UnaryExpr 977 981 ~
+              Ident 978 981 int
+            UnaryExpr 984 991 ~
+              Ident 985 991 string
+      StructType 993 1001
+        FieldList 999 1001 open=999 close=1000
+    TypeSpec 1003 1037 tparams=1 assign=-1 doc=0 comment=0
+      Ident 1003 1012 NameUnion
+      FieldList 1012 1028 open=1012 close=1027
+        Field 1013 1027 names=1 tag=0 doc=0 comment=0
+          Ident 1013 1014 P
+          BinaryExpr 1015 1027 | op=1019
+            Ident 1015 1018 int
+            Ident 1021 1027 string
+      StructType 1029 1037
+        FieldList 1035 1037 open=1035 close=1036
+    TypeSpec 1039 1068 tparams=1 assign=-1 doc=0 comment=0
+      Ident 1039 1049 FuncConstr
+      FieldList 1049 1059 open=1049 close=1058
+        Field 1050 1058 names=1 tag=0 doc=0 comment=0
+          Ident 1050 1051 P
+          FuncType 1052 1058 func=1052 tparams=0 results=0
+            FieldList 1056 1058 open=1056 close=1057
+      StructType 1060 1068
+        FieldList 1066 1068 open=1066 close=1067
+    TypeSpec 1070 1101 tparams=1 assign=-1 doc=0 comment=0
+      Ident 1070 1080 ChanConstr
+      FieldList 1080 1092 open=1080 close=1091
+        Field 1081 1091 names=1 tag=0 doc=0 comment=0
+          Ident 1081 1082 P
+          ChanType 1083 1091 both arrow=-1
+            Ident 1088 1091 int
+      StructType 1093 1101
+        FieldList 1099 1101 open=1099 close=1100
+    TypeSpec 1103 1137 tparams=1 assign=-1 doc=0 comment=0
+      Ident 1103 1107 Inst
+      FieldList 1107 1128 open=1107 close=1127
+        Field 1108 1127 names=1 tag=0 doc=0 comment=0
+          Ident 1108 1109 P
+          IndexListExpr 1110 1127 lbrack=1114 rbrack=1126 indices=2
+            Ident 1110 1114 Pair
+            Ident 1115 1118 int
+            Ident 1120 1126 string
+      StructType 1129 1137
+        FieldList 1135 1137 open=1135 close=1136
+  GenDecl 1141 1152 const lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 1147 1152 names=1 type=0 values=1 doc=0 comment=0
+      Ident 1147 1148 N
+      BasicLit 1151 1152 INT 2
+  GenDecl 1154 1164 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 1159 1164 tparams=0 assign=-1 doc=0 comment=0
+      Ident 1159 1160 Q
+      Ident 1161 1164 int
+  GenDecl 1201 1228 type lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 1166 1200
+      Comment 1166 1200 // Generic type aliases (Go 1.24).
+    TypeSpec 1206 1228 tparams=1 assign=1219 doc=0 comment=0
+      Ident 1206 1211 Alias
+      FieldList 1211 1218 open=1211 close=1217
+        Field 1212 1217 names=1 tag=0 doc=0 comment=0
+          Ident 1212 1213 T
+          Ident 1214 1217 any
+      IndexExpr 1221 1228 lbrack=1225 rbrack=1227
+        Ident 1221 1225 List
+        Ident 1226 1227 T
+  GenDecl 1230 1278 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 1235 1278 tparams=1 assign=1266 doc=0 comment=0
+      Ident 1235 1244 AliasPair
+      FieldList 1244 1265 open=1244 close=1264
+        Field 1245 1257 names=1 tag=0 doc=0 comment=0
+          Ident 1245 1246 K
+          Ident 1247 1257 comparable
+        Field 1259 1264 names=1 tag=0 doc=0 comment=0
+          Ident 1259 1260 V
+          Ident 1261 1264 any
+      IndexListExpr 1268 1278 lbrack=1272 rbrack=1277 indices=2
+        Ident 1268 1272 Pair
+        Ident 1273 1274 K
+        Ident 1276 1277 V
+  GenDecl 1280 1368 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 1285 1368 tparams=1 assign=-1 doc=0 comment=0
+      Ident 1285 1291 Embeds
+      FieldList 1291 1298 open=1291 close=1297
+        Field 1292 1297 names=1 tag=0 doc=0 comment=0
+          Ident 1292 1293 T
+          Ident 1294 1297 any
+      StructType 1299 1368
+        FieldList 1306 1368 open=1306 close=1367
+          Field 1309 1316 names=0 tag=0 doc=0 comment=0
+            IndexExpr 1309 1316 lbrack=1313 rbrack=1315
+              Ident 1309 1313 List
+              Ident 1314 1315 T
+          Field 1318 1326 names=0 tag=0 doc=0 comment=0
+            StarExpr 1318 1326
+              IndexExpr 1319 1326 lbrack=1323 rbrack=1325
+                Ident 1319 1323 node
+                Ident 1324 1325 T
+          Field 1328 1343 names=0 tag=0 doc=0 comment=0
+            IndexListExpr 1328 1343 lbrack=1332 rbrack=1342 indices=2
+              Ident 1328 1332 Pair
+              Ident 1333 1339 string
+              Ident 1341 1342 T
+          Field 1345 1366 names=0 tag=0 doc=0 comment=0
+            IndexListExpr 1345 1366 lbrack=1358 rbrack=1365 indices=2
+              SelectorExpr 1345 1358
+                Ident 1345 1353 generics
+                Ident 1354 1358 Pair
+              Ident 1359 1362 int
+              Ident 1364 1365 T
+  GenDecl 1370 1455 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 1375 1455 tparams=0 assign=-1 doc=0 comment=0
+      Ident 1375 1386 EmbedsIface
+      InterfaceType 1387 1455
+        FieldList 1397 1455 open=1397 close=1454
+          Field 1400 1417 names=0 tag=0 doc=0 comment=0
+            IndexListExpr 1400 1417 lbrack=1404 rbrack=1416 indices=2
+              Ident 1400 1404 Pair
+              Ident 1405 1408 int
+              Ident 1410 1416 string
+          Field 1419 1445 names=0 tag=0 doc=0 comment=0
+            IndexListExpr 1419 1445 lbrack=1432 rbrack=1444 indices=2
+              SelectorExpr 1419 1432
+                Ident 1419 1427 generics
+                Ident 1428 1432 Pair
+              Ident 1433 1436 int
+              Ident 1438 1444 string
+          Field 1447 1453 names=0 tag=0 doc=0 comment=0
+            Ident 1447 1453 Number
+  FuncDecl 1457 1541 recv=1 body=1 doc=0
+    FieldList 1462 1474 open=1462 close=1473
+      Field 1463 1473 names=1 tag=0 doc=0 comment=0
+        Ident 1463 1464 l
+        StarExpr 1465 1473
+          IndexExpr 1466 1473 lbrack=1470 rbrack=1472
+            Ident 1466 1470 List
+            Ident 1471 1472 T
+    Ident 1475 1479 Push
+    FuncType 1457 1484 func=1457 tparams=0 results=0
+      FieldList 1479 1484 open=1479 close=1483
+        Field 1480 1483 names=1 tag=0 doc=0 comment=0
+          Ident 1480 1481 v
+          Ident 1482 1483 T
+    BlockStmt 1485 1541 rbrace=1540
+      AssignStmt 1488 1529 = tok=1495 lhs=1 rhs=1
+        SelectorExpr 1488 1494
+          Ident 1488 1489 l
+          Ident 1490 1494 head
+        UnaryExpr 1497 1529 &
+          CompositeLit 1498 1529 type=1 lbrace=1505 rbrace=1528 elts=2
+            IndexExpr 1498 1505 lbrack=1502 rbrack=1504
+              Ident 1498 1502 node
+              Ident 1503 1504 T
+            KeyValueExpr 1506 1514 colon=1511
+              Ident 1506 1511 value
+              Ident 1513 1514 v
+            KeyValueExpr 1516 1528 colon=1520
+              Ident 1516 1520 next
+              SelectorExpr 1522 1528
+                Ident 1522 1523 l
+                Ident 1524 1528 head
+      IncDecStmt 1531 1539 ++ tok=1537
+        SelectorExpr 1531 1537
+          Ident 1531 1532 l
+          Ident 1533 1537 size
+  FuncDecl 1543 1588 recv=1 body=1 doc=0
+    FieldList 1548 1560 open=1548 close=1559
+      Field 1549 1559 names=1 tag=0 doc=0 comment=0
+        Ident 1549 1550 l
+        StarExpr 1551 1559
+          IndexExpr 1552 1559 lbrack=1556 rbrack=1558
+            Ident 1552 1556 List
+            Ident 1557 1558 _
+    Ident 1561 1564 Len
+    FuncType 1543 1570 func=1543 tparams=0 results=1
+      FieldList 1564 1566 open=1564 close=1565
+      FieldList 1567 1570 open=-1 close=-1
+        Field 1567 1570 names=0 tag=0 doc=0 comment=0
+          Ident 1567 1570 int
+    BlockStmt 1571 1588 rbrace=1587
+      ReturnStmt 1573 1586 results=1
+        SelectorExpr 1580 1586
+          Ident 1580 1581 l
+          Ident 1582 1586 size
+  FuncDecl 1590 1665 recv=1 body=1 doc=0
+    FieldList 1595 1609 open=1595 close=1608
+      Field 1596 1608 names=1 tag=0 doc=0 comment=0
+        Ident 1596 1597 p
+        IndexListExpr 1598 1608 lbrack=1602 rbrack=1607 indices=2
+          Ident 1598 1602 Pair
+          Ident 1603 1604 K
+          Ident 1606 1607 V
+    Ident 1610 1614 Swap
+    FuncType 1590 1627 func=1590 tparams=0 results=1
+      FieldList 1614 1616 open=1614 close=1615
+      FieldList 1617 1627 open=-1 close=-1
+        Field 1617 1627 names=0 tag=0 doc=0 comment=0
+          IndexListExpr 1617 1627 lbrack=1621 rbrack=1626 indices=2
+            Ident 1617 1621 Pair
+            Ident 1622 1623 V
+            Ident 1625 1626 K
+    BlockStmt 1628 1665 rbrace=1664
+      ReturnStmt 1630 1663 results=1
+        CompositeLit 1637 1663 type=1 lbrace=1647 rbrace=1662 elts=2
+          IndexListExpr 1637 1647 lbrack=1641 rbrack=1646 indices=2
+            Ident 1637 1641 Pair
+            Ident 1642 1643 V
+            Ident 1645 1646 K
+          SelectorExpr 1648 1655
+            Ident 1648 1649 p
+            Ident 1650 1655 Value
+          SelectorExpr 1657 1662
+            Ident 1657 1658 p
+            Ident 1659 1662 Key
+  FuncDecl 1667 1812 recv=0 body=1 doc=0
+    Ident 1672 1675 Map
+    FuncType 1667 1715 func=1667 tparams=1 results=1
+      FieldList 1675 1693 open=1675 close=1692
+        Field 1676 1682 names=1 tag=0 doc=0 comment=0
+          Ident 1676 1677 S
+          UnaryExpr 1678 1682 ~
+            ArrayType 1679 1682 len=0
+              Ident 1681 1682 E
+        Field 1684 1692 names=2 tag=0 doc=0 comment=0
+          Ident 1684 1685 E
+          Ident 1687 1688 R
+          Ident 1689 1692 any
+      FieldList 1693 1711 open=1693 close=1710
+        Field 1694 1697 names=1 tag=0 doc=0 comment=0
+          Ident 1694 1695 s
+          Ident 1696 1697 S
+        Field 1699 1710 names=1 tag=0 doc=0 comment=0
+          Ident 1699 1700 f
+          FuncType 1701 1710 func=1701 tparams=0 results=1
+            FieldList 1705 1708 open=1705 close=1707
+              Field 1706 1707 names=0 tag=0 doc=0 comment=0
+                Ident 1706 1707 E
+            FieldList 1709 1710 open=-1 close=-1
+              Field 1709 1710 names=0 tag=0 doc=0 comment=0
+                Ident 1709 1710 R
+      FieldList 1712 1715 open=-1 close=-1
+        Field 1712 1715 names=0 tag=0 doc=0 comment=0
+          ArrayType 1712 1715 len=0
+            Ident 1714 1715 R
+    BlockStmt 1716 1812 rbrace=1811
+      AssignStmt 1719 1746 := tok=1723 lhs=1 rhs=1
+        Ident 1719 1722 out
+        CallExpr 1726 1746 lparen=1730 ellipsis=-1 rparen=1745 args=3
+          Ident 1726 1730 make
+          ArrayType 1731 1734 len=0
+            Ident 1733 1734 R
+          BasicLit 1736 1737 INT 0
+          CallExpr 1739 1745 lparen=1742 ellipsis=-1 rparen=1744 args=1
+            Ident 1739 1742 len
+            Ident 1743 1744 s
+      RangeStmt 1748 1798 key=1 value=1 := tok=1757
+        Ident 1752 1753 _
+        Ident 1755 1756 v
+        Ident 1766 1767 s
+        BlockStmt 1768 1798 rbrace=1797
+          AssignStmt 1772 1795 = tok=1776 lhs=1 rhs=1
+            Ident 1772 1775 out
+            CallExpr 1778 1795 lparen=1784 ellipsis=-1 rparen=1794 args=2
+              Ident 1778 1784 append
+              Ident 1785 1788 out
+              CallExpr 1790 1794 lparen=1791 ellipsis=-1 rparen=1793 args=1
+                Ident 1790 1791 f
+                Ident 1792 1793 v
+      ReturnStmt 1800 1810 results=1
+        Ident 1807 1810 out
+  FuncDecl 1814 1895 recv=0 body=1 doc=0
+    Ident 1819 1822 Max
+    FuncType 1814 1855 func=1814 tparams=1 results=1
+      FieldList 1822 1845 open=1822 close=1844
+        Field 1823 1844 names=1 tag=0 doc=0 comment=0
+          Ident 1823 1824 T
+          SelectorExpr 1825 1844
+            Ident 1825 1836 constraints
+            Ident 1837 1844 Ordered
+      FieldList 1845 1853 open=1845 close=1852
+        Field 1846 1852 names=2 tag=0 doc=0 comment=0
+          Ident 1846 1847 a
+          Ident 1849 1850 b
+          Ident 1851 1852 T
+      FieldList 1854 1855 open=-1 close=-1
+        Field 1854 1855 names=0 tag=0 doc=0 comment=0
+          Ident 1854 1855 T
+    BlockStmt 1856 1895 rbrace=1894
+      IfStmt 1859 1883 init=0 else=0
+        BinaryExpr 1862 1867 > op=1864
+          Ident 1862 1863 a
+          Ident 1866 1867 b
+        BlockStmt 1868 1883 rbrace=1882
+          ReturnStmt 1872 1880 results=1
+            Ident 1879 1880 a
+      ReturnStmt 1885 1893 results=1
+        Ident 1892 1893 b
+  FuncDecl 1897 1935 recv=0 body=1 doc=0
+    Ident 1902 1906 Zero
+    FuncType 1897 1924 func=1897 tparams=1 results=1
+      FieldList 1906 1913 open=1906 close=1912
+        Field 1907 1912 names=1 tag=0 doc=0 comment=0
+          Ident 1907 1908 T
+          Ident 1909 1912 any
+      FieldList 1913 1915 open=1913 close=1914
+      FieldList 1916 1924 open=1916 close=1923
+        Field 1917 1923 names=1 tag=0 doc=0 comment=0
+          Ident 1917 1921 zero
+          Ident 1922 1923 T
+    BlockStmt 1925 1935 rbrace=1934
+      ReturnStmt 1927 1933 results=0
+  FuncDecl 1937 2003 recv=0 body=1 doc=0
+    Ident 1942 1946 Keys
+    FuncType 1937 1988 func=1937 tparams=1 results=1
+      FieldList 1946 1979 open=1946 close=1978
+        Field 1947 1957 names=1 tag=0 doc=0 comment=0
+          Ident 1947 1948 M
+          UnaryExpr 1949 1957 ~
+            MapType 1950 1957
+              Ident 1954 1955 K
+              Ident 1956 1957 V
+        Field 1959 1971 names=1 tag=0 doc=0 comment=0
+          Ident 1959 1960 K
+          Ident 1961 1971 comparable
+        Field 1973 1978 names=1 tag=0 doc=0 comment=0
+          Ident 1973 1974 V
+          Ident 1975 1978 any
+      FieldList 1979 1984 open=1979 close=1983
+        Field 1980 1983 names=1 tag=0 doc=0 comment=0
+          Ident 1980 1981 m
+          Ident 1982 1983 M
+      FieldList 1985 1988 open=-1 close=-1
+        Field 1985 1988 names=0 tag=0 doc=0 comment=0
+          ArrayType 1985 1988 len=0
+            Ident 1987 1988 K
+    BlockStmt 1989 2003 rbrace=2002
+      ReturnStmt 1991 2001 results=1
+        Ident 1998 2001 nil
+  FuncDecl 2005 2381 recv=0 body=1 doc=0
+    Ident 2010 2013 use
+    FuncType 2005 2015 func=2005 tparams=0 results=0
+      FieldList 2013 2015 open=2013 close=2014
+    BlockStmt 2016 2381 rbrace=2380
+      AssignStmt 2019 2037 = tok=2021 lhs=1 rhs=1
+        Ident 2019 2020 _
+        CallExpr 2023 2037 lparen=2031 ellipsis=-1 rparen=2036 args=2
+          IndexExpr 2023 2031 lbrack=2026 rbrack=2030
+            Ident 2023 2026 Max
+            Ident 2027 2030 int
+          BasicLit 2032 2033 INT 1
+          BasicLit 2035 2036 INT 2
+      AssignStmt 2039 2056 = tok=2041 lhs=1 rhs=1
+        Ident 2039 2040 _
+        CallExpr 2043 2056 lparen=2046 ellipsis=-1 rparen=2055 args=2
+          Ident 2043 2046 Max
+          BasicLit 2047 2050 FLOAT 1.5
+          BasicLit 2052 2055 FLOAT 2.5
+      AssignStmt 2058 2095 = tok=2060 lhs=1 rhs=1
+        Ident 2058 2059 _
+        CallExpr 2062 2095 lparen=2085 ellipsis=-1 rparen=2094 args=2
+          IndexListExpr 2062 2085 lbrack=2065 rbrack=2084 indices=3
+            Ident 2062 2065 Map
+            ArrayType 2066 2071 len=0
+              Ident 2068 2071 int
+            Ident 2073 2076 int
+            Ident 2078 2084 string
+          Ident 2086 2089 nil
+          Ident 2091 2094 nil
+      AssignStmt 2097 2126 = tok=2099 lhs=1 rhs=1
+        Ident 2097 2098 _
+        CompositeLit 2101 2126 type=1 lbrace=2118 rbrace=2125 elts=2
+          IndexListExpr 2101 2118 lbrack=2105 rbrack=2117 indices=2
+            Ident 2101 2105 Pair
+            Ident 2106 2109 int
+            Ident 2111 2117 string
+          BasicLit 2119 2120 INT 1
+          BasicLit 2122 2125 STRING "a"
+      AssignStmt 2128 2144 = tok=2130 lhs=1 rhs=1
+        Ident 2128 2129 _
+        UnaryExpr 2132 2144 &
+          CompositeLit 2133 2144 type=1 lbrace=2142 rbrace=2143 elts=0
+            IndexExpr 2133 2142 lbrack=2137 rbrack=2141
+              Ident 2133 2137 List
+              Ident 2138 2141 int
+      DeclStmt 2146 2171
+        GenDecl 2146 2171 var lparen=-1 rparen=-1 specs=1 doc=0
+          ValueSpec 2150 2171 names=1 type=1 values=0 doc=0 comment=0
+            Ident 2150 2151 p
+            IndexListExpr 2152 2171 lbrack=2156 rbrack=2170 indices=2
+              Ident 2152 2156 Pair
+              Ident 2157 2163 string
+              ArrayType 2165 2170 len=0
+                Ident 2167 2170 int
+      AssignStmt 2173 2178 = tok=2175 lhs=1 rhs=1
+        Ident 2173 2174 _
+        Ident 2177 2178 p
+      AssignStmt 2180 2198 := tok=2182 lhs=1 rhs=1
+        Ident 2180 2181 f
+        IndexExpr 2185 2198 lbrack=2189 rbrack=2197
+          Ident 2185 2189 Zero
+          Ident 2190 2197 float64
+      AssignStmt 2200 2205 = tok=2202 lhs=1 rhs=1
+        Ident 2200 2201 _
+        Ident 2204 2205 f
+      AssignStmt 2207 2232 := tok=2209 lhs=1 rhs=1
+        Ident 2207 2208 g
+        IndexListExpr 2212 2232 lbrack=2215 rbrack=2231 indices=3
+          Ident 2212 2215 Map
+          ArrayType 2216 2221 len=0
+            Ident 2218 2221 int
+          Ident 2223 2226 int
+          Ident 2228 2231 int
+      AssignStmt 2234 2239 = tok=2236 lhs=1 rhs=1
+        Ident 2234 2235 _
+        Ident 2238 2239 g
+      DeclStmt 2241 2252
+        GenDecl 2241 2252 var lparen=-1 rparen=-1 specs=1 doc=0
+          ValueSpec 2245 2252 names=1 type=1 values=0 doc=0 comment=0
+            Ident 2245 2246 a
+            ArrayType 2247 2252 len=0
+              Ident 2249 2252 int
+      DeclStmt 2254 2265
+        GenDecl 2254 2265 var lparen=-1 rparen=-1 specs=1 doc=0
+          ValueSpec 2258 2265 names=1 type=1 values=0 doc=0 comment=0
+            Ident 2258 2259 b
+            ArrayType 2260 2265 len=0
+              Ident 2262 2265 int
+      AssignStmt 2267 2281 = tok=2269 lhs=1 rhs=1
+        Ident 2267 2268 _
+        CallExpr 2271 2281 lparen=2278 ellipsis=-1 rparen=2280 args=1
+          IndexExpr 2271 2278 lbrack=2272 rbrack=2277
+            Ident 2271 2272 a
+            IndexExpr 2273 2277 lbrack=2274 rbrack=2276
+              Ident 2273 2274 b
+              BasicLit 2275 2276 INT 0
+          BasicLit 2279 2280 INT 0
+      AssignStmt 2283 2312 = tok=2285 lhs=1 rhs=1
+        Ident 2283 2284 _
+        CompositeLit 2287 2312 type=1 lbrace=2310 rbrace=2311 elts=0
+          IndexListExpr 2287 2310 lbrack=2300 rbrack=2309 indices=2
+            SelectorExpr 2287 2300
+              Ident 2287 2295 generics
+              Ident 2296 2300 Pair
+            Ident 2301 2304 int
+            Ident 2306 2309 int
+      AssignStmt 2314 2338 = tok=2316 lhs=1 rhs=1
+        Ident 2314 2315 _
+        IndexExpr 2318 2338 lbrack=2322 rbrack=2337
+          Ident 2318 2322 Keys
+          MapType 2323 2337
+            Ident 2327 2333 string
+            Ident 2334 2337 int
+      DeclStmt 2340 2361
+        GenDecl 2340 2361 type lparen=-1 rparen=-1 specs=1 doc=0
+          TypeSpec 2345 2361 tparams=1 assign=-1 doc=0 comment=0
+            Ident 2345 2350 local
+            FieldList 2350 2357 open=2350 close=2356
+              Field 2351 2356 names=1 tag=0 doc=0 comment=0
+                Ident 2351 2352 T
+                Ident 2353 2356 any
+            ArrayType 2358 2361 len=0
+              Ident 2360 2361 T
+      DeclStmt 2363 2379
+        GenDecl 2363 2379 var lparen=-1 rparen=-1 specs=1 doc=0
+          ValueSpec 2367 2379 names=1 type=1 values=0 doc=0 comment=0
+            Ident 2367 2368 _
+            IndexExpr 2369 2379 lbrack=2374 rbrack=2378
+              Ident 2369 2374 local
+              Ident 2375 2378 int
+comments
+  CommentGroup 605 667
+    Comment 605 667 // Ambiguities between array lengths and type parameter lists.
+  CommentGroup 1166 1200
+    Comment 1166 1200 // Generic type aliases (Go 1.24).

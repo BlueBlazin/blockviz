@@ -28,6 +28,7 @@ pub fn is_test_path(path: &str) -> bool {
     path.split('/').rev().skip(1).any(|d| matches!(d, "tests" | "test" | "testing" | "__tests__" | "spec" | "specs" | "e2e" | "__mocks__" | "test-d"))
         || base.starts_with("test_")
         || base.ends_with("_test.py")
+        || base.ends_with("_test.go")
         || base == "conftest.py"
         || base.contains(".test.")
         || base.contains(".spec.")
@@ -110,6 +111,16 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             .collect();
         crate::rust::Resolver::new(&listing)
     };
+    // Go packages are placed by `go.mod` modules.
+    let go_resolver = {
+        let listing: Vec<(&str, Option<&str>)> = files
+            .iter()
+            .filter(|f| f.path.ends_with(".go") || matches!(f.path.rsplit('/').next(), Some("go.mod" | "go.work")))
+            .map(|f| (f.path.as_str(), if f.path.ends_with(".go") { None } else { f.text.as_deref() }))
+            .collect();
+        crate::go::Resolver::new(&listing)
+    };
+    let mut go_inputs = vec![];
     for (i, f) in files.into_iter().enumerate() {
         let (class, language) = outline::classify(&f.path);
         let text = f.text.filter(|t| t.len() <= MAX_TEXT && !t.contains('\0'));
@@ -122,6 +133,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             (Class::Python, Some(t)) => py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: t.clone(), notebook: false }),
             (Class::Code, Some(t)) if crate::js::lang_of(&f.path).is_some() && !minified => js_inputs.push(crate::js::JsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
             (Class::Code, Some(t)) if f.path.ends_with(".rs") => rs_inputs.push(crate::rust::RsInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
+            (Class::Code, Some(t)) if f.path.ends_with(".go") && !crate::go::resolve::ignored(&f.path) => go_inputs.push(crate::go::GoInput { file: i as u32, path: f.path.clone(), text: t.clone() }),
             (Class::Notebook, Some(t)) => match crate::notebook::to_python(t) {
                 Some(py) => {
                     source = Some(py.clone());
@@ -156,6 +168,10 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
     modules.extend(rs_modules);
     headers.extend(rs_headers);
     failed.extend(rs_failed);
+    let (go_modules, go_headers, go_failed) = crate::go::front_end(&mut b, go_inputs, &go_resolver, &mut diagnostics);
+    modules.extend(go_modules);
+    headers.extend(go_headers);
+    failed.extend(go_failed);
     let (b2, py) = code::analyze(b, modules, headers, failed);
     let mut b = b2;
     let mut py_by_file: HashMap<u32, &code::CodeFile> = HashMap::new();
@@ -291,7 +307,9 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         let krate = (pf.lang == code::syntax::Lang::Rust).then(|| rs_resolver.module(path)).flatten().map(|(c, _)| c.clone());
         let rust_root = krate.as_ref().filter(|c| c.root == path).map(|c| c.kind);
         use crate::rust::resolve::CrateKind;
-        let runs = runs || matches!(rust_root, Some(CrateKind::Bin | CrateKind::Example));
+        // A Go `package main` with `func main` is a program.
+        let go_main = pf.lang == code::syntax::Lang::Go && entries[pf.file as usize].text.as_deref().is_some_and(go_program);
+        let runs = runs || matches!(rust_root, Some(CrateKind::Bin | CrateKind::Example)) || go_main && !test;
         let file_role = file_role.or_else(|| {
             Some(match rust_root? {
                 CrateKind::Lib => "library",
@@ -303,6 +321,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
             })
             .map(str::to_string)
         });
+        let file_role = file_role.or_else(|| (go_main && !test).then(|| "binary".to_string()));
         let role = if pf.error.is_some() {
             pf.lang.name()
         } else if notebook {
@@ -344,6 +363,27 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
 
     // Directory tree.
     let mut dirs: BTreeMap<String, Id> = BTreeMap::new();
+    // What generated files define is not drawn, so nothing leads into it.
+    let mut hidden_defs: HashSet<Id> = HashSet::new();
+    for e in entries.iter().filter(|e| e.generated && !e.hidden) {
+        let mut stack: Vec<Id> = b.get(e.node).children.clone();
+        while let Some(id) = stack.pop() {
+            if hidden_defs.insert(id) {
+                stack.extend(b.get(id).children.iter().copied());
+            }
+        }
+    }
+    if !hidden_defs.is_empty() {
+        for i in 0..b.len() {
+            let n = b.get_mut(i as Id);
+            if n.reference.is_some_and(|r| hidden_defs.contains(&r)) {
+                n.reference = None;
+            }
+            if n.link.is_some_and(|r| hidden_defs.contains(&r)) {
+                n.link = None;
+            }
+        }
+    }
     for e in &entries {
         if e.hidden {
             continue;
@@ -915,6 +955,24 @@ fn resolve_run(runner: &str, run: &crate::invocations::Run, paths: &HashMap<&str
     None
 }
 
+/// A Go file of the `main` package that defines `main`.
+fn go_program(text: &str) -> bool {
+    let mut package_main = false;
+    for line in text.lines() {
+        let l = line.trim_start();
+        if let Some(rest) = l.strip_prefix("package ") {
+            package_main = rest.split_whitespace().next() == Some("main");
+            if !package_main {
+                return false;
+            }
+        }
+        if package_main && l.starts_with("func main()") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Code written by a tool rather than a person: migrations, protobuf stubs,
 /// generated API clients. Judged by name and by a header comment saying so.
 fn is_generated(path: &str, text: &str) -> bool {
@@ -1200,7 +1258,9 @@ const STDLIB: &[&str] = &[
 ];
 
 fn is_stdlib(name: &str) -> bool {
-    STDLIB.contains(&name) || NODE_BUILTINS.contains(&name)
+    // Go's standard library: a path whose first element has no dot (`database/sql`).
+    let go_std = name.contains('/') && !name.starts_with('@') && !name.split('/').next().unwrap_or("").contains('.');
+    STDLIB.contains(&name) || NODE_BUILTINS.contains(&name) || go_std
 }
 
 /// Node.js built-in modules (`node:fs` is reported as `fs`).

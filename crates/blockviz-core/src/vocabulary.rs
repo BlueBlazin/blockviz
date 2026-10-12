@@ -29,6 +29,7 @@ const ML: &[&str] = &[
 ];
 const DATABASE: &[&str] = &[
     "sqlalchemy", "sqlmodel", "sqlite3", "psycopg", "psycopg2", "asyncpg", "aiosqlite", "aiomysql", "pymysql", "mysql", "MySQLdb", "pymongo", "motor", "mongoengine", "beanie", "odmantic", "peewee", "pony", "tortoise", "django", "databases", "duckdb", "redis", "aioredis", "cassandra", "neo4j", "edgedb", "prisma", "supabase", "sqlite_utils", "records", "dataset", "pg", "mysql2", "better-sqlite3", "mongoose", "mongodb", "@prisma/client", "typeorm", "sequelize", "knex", "drizzle-orm", "kysely", "ioredis", "@supabase/supabase-js",
+    "database/sql", "github.com/jmoiron/sqlx", "gorm.io/gorm", "github.com/jackc/pgx", "github.com/lib/pq", "github.com/mattn/go-sqlite3", "modernc.org/sqlite", "github.com/go-sql-driver/mysql", "go.mongodb.org/mongo-driver", "github.com/redis/go-redis", "github.com/go-redis/redis", "github.com/gomodule/redigo", "go.etcd.io/bbolt", "github.com/boltdb/bolt", "github.com/dgraph-io/badger", "github.com/syndtr/goleveldb", "github.com/cockroachdb/pebble", "github.com/uptrace/bun", "entgo.io/ent", "github.com/Masterminds/squirrel", "github.com/doug-martin/goqu", "go.etcd.io/etcd",
     "sqlx", "diesel", "diesel_async", "sea_orm", "rusqlite", "tokio_rusqlite", "tokio_postgres", "postgres", "mysql_async", "deadpool_postgres", "deadpool_redis", "bb8", "r2d2", "sled", "rocksdb", "surrealdb", "scylla", "tiberius", "libsql", "fred", "rbatis", "lancedb", "qdrant_client",
 ];
 
@@ -131,9 +132,20 @@ const DB_VERBS: &[&str] = &[
     "fetch_one", "fetch_all", "fetch_optional", "fetch", "query_row", "query_map", "execute_batch", "get_result", "get_results", "load", "one",
 ];
 
+/// Go's `database/sql`, sqlx, gorm, the Mongo and Redis clients, bbolt.
+const GO_DB_VERBS: &[&str] = &[
+    "Exec", "ExecContext", "Query", "QueryContext", "QueryRow", "QueryRowContext", "Prepare", "PrepareContext", "Begin", "BeginTx", "Commit", "Rollback", "Get", "GetContext", "Select", "SelectContext", "NamedExec", "NamedExecContext", "NamedQuery", "MustExec", "Queryx", "QueryRowx", "Create", "Find", "First", "Last", "Take", "Save", "Delete", "Updates", "Update", "UpdateColumn", "Where", "Raw", "Pluck", "Count", "FirstOrCreate", "Association", "Transaction", "AutoMigrate", "InsertOne", "InsertMany", "FindOne", "UpdateOne", "UpdateMany", "DeleteOne", "DeleteMany", "ReplaceOne", "Aggregate", "CountDocuments", "Set", "SetNX", "SetEx", "Del", "HGet", "HSet", "HGetAll", "HDel", "LPush", "RPush", "LPop", "RPop", "LRange", "SAdd", "SMembers", "ZAdd", "ZRange", "Incr", "Decr", "Expire", "Publish", "Subscribe", "Put", "View", "Batch", "CreateBucket", "CreateBucketIfNotExists", "Bucket",
+];
+
+/// The call that runs a query a chain of calls built (`.Find(&xs)` after
+/// `.Where(…).Order(…)`), in Go's query builders.
+pub fn is_query_run(method: &str) -> bool {
+    matches!(method, "Find" | "First" | "Last" | "Take" | "Scan" | "Count" | "Pluck" | "Exec" | "Create" | "Save" | "Delete" | "Update" | "Updates" | "UpdateColumn" | "FirstOrCreate" | "FirstOrInit" | "Rows" | "Row" | "Get" | "Select" | "ToSQL" | "QueryRow" | "Query" | "All" | "One" | "Iter" | "Decode")
+}
+
 /// Methods that query or change a database (or an ORM model).
 pub fn is_database_verb(method: &str) -> bool {
-    DB_VERBS.contains(&method) || matches!(method, "save" | "remove" | "deleteOne" | "deleteMany" | "updateOne" | "updateMany" | "findOne" | "findById" | "findByIdAndUpdate" | "findByIdAndDelete" | "findOneAndUpdate" | "findOneAndDelete" | "countDocuments" | "insertMany" | "paginate" | "populate" | "findUnique" | "findFirst" | "findMany" | "createMany" | "upsert" | "transaction" | "raw" | "aggregate" | "bulkWrite")
+    DB_VERBS.contains(&method) || GO_DB_VERBS.contains(&method) || matches!(method, "save" | "remove" | "deleteOne" | "deleteMany" | "updateOne" | "updateMany" | "findOne" | "findById" | "findByIdAndUpdate" | "findByIdAndDelete" | "findOneAndUpdate" | "findOneAndDelete" | "countDocuments" | "insertMany" | "paginate" | "populate" | "findUnique" | "findFirst" | "findMany" | "createMany" | "upsert" | "transaction" | "raw" | "aggregate" | "bulkWrite")
 }
 
 /// A database call by the shape of its receiver (`session.commit()`,

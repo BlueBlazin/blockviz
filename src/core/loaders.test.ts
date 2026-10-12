@@ -16,6 +16,10 @@ describe('pasted code', () => {
     expect(guessFilename('type Props = { title: string };\nexport const Card = ({ title }: Props) => <h1>{title}</h1>;\n')).toBe('main.tsx');
     expect(guessFilename('use std::collections::HashMap;\n\npub struct Db {\n    map: HashMap<String, u32>,\n}\n')).toBe('lib.rs');
     expect(guessFilename('#[tokio::main]\nasync fn main() {\n    let mut x = 1;\n}\n')).toBe('main.rs');
+    expect(guessFilename('package main\n\nfunc main() {\n\tx := 1\n}\n')).toBe('main.go');
+    expect(guessFilename('package store\n\ntype DB struct {\n\tconn *sql.DB\n}\n')).toBe('store.go');
+    expect(guessFilename('func (s *Server) Run(ctx context.Context) error {\n\treturn nil\n}\n')).toBe('main.go');
+    expect(guessFilename('import "./styles.css"\nexport const x = 1;\n')).toBe('main.js');
     expect(guessFilename('impl Display for Frame {\n    fn fmt(&self, f: &mut Formatter) -> fmt::Result { Ok(()) }\n}\n')).toBe('lib.rs');
   });
 

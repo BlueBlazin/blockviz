@@ -1,5 +1,5 @@
 //! A report of the abstractions most likely to read badly, over the Python,
-//! JavaScript and Rust corpora.
+//! JavaScript, Rust and Go corpora.
 //! Run with `cargo test --test audit -- --ignored --nocapture`.
 
 use blockviz_core::ir::{EdgeKind, Kind, Scene};
@@ -22,7 +22,7 @@ fn load(dir: &Path, root: &Path, out: &mut Vec<blockviz_core::project::InFile>) 
 
 fn scene(name: &str) -> (Scene, Vec<blockviz_core::project::InFile>) {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let root = ["corpus", "corpus-js", "corpus-rs"].iter().map(|c| fixtures.join(c).join(name)).find(|p| p.exists()).unwrap();
+    let root = ["corpus", "corpus-js", "corpus-rs", "corpus-go"].iter().map(|c| fixtures.join(c).join(name)).find(|p| p.exists()).unwrap();
     let mut files = vec![];
     load(&root, &root, &mut files);
     let s = blockviz_core::analyze(name, files);
@@ -52,7 +52,8 @@ fn audit() {
     let python = ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"];
     let javascript = ["express-api", "nextjs-app", "nestjs-cats", "react-vite", "ky", "serve", "turborepo-basic"];
     let rust = ["mini-redis", "fd", "ripgrep-core", "axum-examples", "llama2-rs"];
-    for name in python.into_iter().chain(javascript).chain(rust) {
+    let go = ["groupcache", "realworld", "redcon", "chi", "glow", "example"];
+    for name in python.into_iter().chain(javascript).chain(rust).chain(go) {
         if only.as_deref().is_some_and(|o| o != name) {
             continue;
         }

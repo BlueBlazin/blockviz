@@ -129,10 +129,16 @@ export function pastedProject(filename: string, text: string): Project {
   return { name: name.replace(/\.[^./]+$/, ''), files: [{ path: name, text, bytes: text.length }], source: 'pasted code' };
 }
 
-/** A file name for pasted code, by what the code looks like: Python unless it
- *  uses JavaScript's syntax, TypeScript if it has type annotations, JSX if it
+/** A file name for pasted code, by what the code looks like: Go or Rust by
+ *  their keywords, else Python unless it uses JavaScript's syntax, TypeScript if it has type annotations, JSX if it
  *  returns elements. */
 export function guessFilename(text: string): string {
+  // Go: a package clause, `func` declarations, an import block, `type T struct {`.
+  const go = /^\s*package\s+\w+\s*$|^\s*func\s+(\([^)]*\)\s*)?\w+(\[[^\]]*\])?\s*\(|^\s*import\s*\(\s*$|^\s*type\s+\w+(\[[^\]]*\])?\s+(struct|interface)\s*\{/m.test(text);
+  if (go) {
+    const pkg = /^\s*package\s+(\w+)/m.exec(text)?.[1];
+    return !pkg || pkg === 'main' || /^\s*func\s+main\s*\(/m.test(text) ? 'main.go' : `${pkg}.go`;
+  }
   // Rust: items with Rust's keywords (`fn`, `impl`, `use x::y`, `pub struct`, `let mut`).
   const rust = /^\s*(pub(\([\w:]+\))?\s+)?(async\s+)?(fn\s+\w+\s*[<(]|impl(<[^>]*>)?\s+\w|mod\s+\w+\s*[;{]|use\s+[\w:{}*, ]+::|(struct|enum|trait)\s+\w+)|\blet\s+mut\s|#\[derive\(|^\s*#!\[/m.test(text);
   if (rust) return /^\s*(pub\s+)?(async\s+)?fn\s+main\s*\(/m.test(text) ? 'main.rs' : 'lib.rs';

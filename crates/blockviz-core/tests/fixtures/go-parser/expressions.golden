@@ -1,0 +1,1033 @@
+ok
+File 0 3055 package=0 doc=0
+  Ident 8 19 expressions
+  GenDecl 21 49 import lparen=28 rparen=48 specs=2 doc=0
+    ImportSpec 31 36 name=0 doc=0 comment=0
+      BasicLit 31 36 STRING "fmt"
+    ImportSpec 38 47 name=0 doc=0 comment=0
+      BasicLit 38 47 STRING "strings"
+  GenDecl 51 76 type lparen=-1 rparen=-1 specs=1 doc=0
+    TypeSpec 56 76 tparams=0 assign=-1 doc=0 comment=0
+      Ident 56 57 T
+      StructType 58 76
+        FieldList 64 76 open=64 close=75
+          Field 66 74 names=2 tag=0 doc=0 comment=0
+            Ident 66 67 a
+            Ident 69 70 b
+            Ident 71 74 int
+  FuncDecl 78 113 recv=1 body=1 doc=0
+    FieldList 83 86 open=83 close=85
+      Field 84 85 names=0 tag=0 doc=0 comment=0
+        Ident 84 85 T
+    Ident 87 88 M
+    FuncType 78 97 func=78 tparams=0 results=1
+      FieldList 88 93 open=88 close=92
+        Field 89 92 names=0 tag=0 doc=0 comment=0
+          Ident 89 92 int
+      FieldList 94 97 open=-1 close=-1
+        Field 94 97 names=0 tag=0 doc=0 comment=0
+          Ident 94 97 int
+    BlockStmt 101 113 rbrace=112
+      ReturnStmt 103 111 results=1
+        BasicLit 110 111 INT 0
+  FuncDecl 114 149 recv=1 body=1 doc=0
+    FieldList 119 123 open=119 close=122
+      Field 120 122 names=0 tag=0 doc=0 comment=0
+        StarExpr 120 122
+          Ident 121 122 T
+    Ident 124 126 PM
+    FuncType 114 135 func=114 tparams=0 results=1
+      FieldList 126 131 open=126 close=130
+        Field 127 130 names=0 tag=0 doc=0 comment=0
+          Ident 127 130 int
+      FieldList 132 135 open=-1 close=-1
+        Field 132 135 names=0 tag=0 doc=0 comment=0
+          Ident 132 135 int
+    BlockStmt 137 149 rbrace=148
+      ReturnStmt 139 147 results=1
+        BasicLit 146 147 INT 0
+  FuncDecl 150 194 recv=0 body=1 doc=0
+    Ident 155 156 f
+    FuncType 150 173 func=150 tparams=0 results=1
+      FieldList 156 169 open=156 close=168
+        Field 157 168 names=1 tag=0 doc=0 comment=0
+          Ident 157 161 args
+          Ellipsis 162 168 elt=1
+            Ident 165 168 int
+      FieldList 170 173 open=-1 close=-1
+        Field 170 173 names=0 tag=0 doc=0 comment=0
+          Ident 170 173 int
+    BlockStmt 174 194 rbrace=193
+      ReturnStmt 176 192 results=1
+        CallExpr 183 192 lparen=186 ellipsis=-1 rparen=191 args=1
+          Ident 183 186 len
+          Ident 187 191 args
+  FuncDecl 196 596 recv=0 body=1 doc=0
+    Ident 201 210 operators
+    FuncType 196 251 func=196 tparams=0 results=0
+      FieldList 210 251 open=210 close=250
+        Field 211 219 names=2 tag=0 doc=0 comment=0
+          Ident 211 212 a
+          Ident 214 215 b
+          Ident 216 219 int
+        Field 221 230 names=2 tag=0 doc=0 comment=0
+          Ident 221 222 x
+          Ident 224 225 y
+          Ident 226 230 bool
+        Field 232 242 names=1 tag=0 doc=0 comment=0
+          Ident 232 233 c
+          ChanType 234 242 both arrow=-1
+            Ident 239 242 int
+        Field 244 250 names=1 tag=0 doc=0 comment=0
+          Ident 244 245 p
+          StarExpr 246 250
+            Ident 247 250 int
+    BlockStmt 252 596 rbrace=595
+      AssignStmt 255 274 = tok=257 lhs=1 rhs=1
+        Ident 255 256 _
+        BinaryExpr 259 274 - op=267
+          BinaryExpr 259 266 + op=261
+            Ident 259 260 a
+            BinaryExpr 263 266 * op=264
+              Ident 263 264 b
+              BasicLit 265 266 INT 2
+          BinaryExpr 269 274 % op=272
+            BinaryExpr 269 272 / op=270
+              Ident 269 270 a
+              Ident 271 272 b
+            BasicLit 273 274 INT 3
+      AssignStmt 276 302 = tok=278 lhs=1 rhs=1
+        Ident 276 277 _
+        BinaryExpr 280 302 ^ op=292
+          BinaryExpr 280 291 | op=285
+            BinaryExpr 280 284 << op=281
+              Ident 280 281 a
+              BasicLit 283 284 INT 2
+            BinaryExpr 287 291 >> op=288
+              Ident 287 288 b
+              BasicLit 290 291 INT 1
+          BinaryExpr 294 302 &^ op=298
+            BinaryExpr 294 297 & op=295
+              Ident 294 295 a
+              Ident 296 297 b
+            BasicLit 301 302 INT 7
+      AssignStmt 304 320 = tok=306 lhs=1 rhs=1
+        Ident 304 305 _
+        BinaryExpr 308 320 - op=316
+          BinaryExpr 308 315 + op=311
+            UnaryExpr 308 310 -
+              Ident 309 310 a
+            UnaryExpr 313 315 +
+              Ident 314 315 b
+          UnaryExpr 318 320 ^
+            Ident 319 320 a
+      AssignStmt 322 339 = tok=324 lhs=1 rhs=1
+        Ident 322 323 _
+        BinaryExpr 326 339 || op=334
+          BinaryExpr 326 333 && op=329
+            UnaryExpr 326 328 !
+              Ident 327 328 x
+            Ident 332 333 y
+          UnaryExpr 337 339 !
+            Ident 338 339 y
+      AssignStmt 341 399 = tok=343 lhs=1 rhs=1
+        Ident 341 342 _
+        BinaryExpr 345 399 || op=390
+          BinaryExpr 345 389 || op=381
+            BinaryExpr 345 380 || op=371
+              BinaryExpr 345 370 || op=352
+                BinaryExpr 345 351 == op=347
+                  Ident 345 346 a
+                  Ident 350 351 b
+                BinaryExpr 355 370 && op=362
+                  BinaryExpr 355 361 != op=357
+                    Ident 355 356 a
+                    Ident 360 361 b
+                  BinaryExpr 365 370 < op=367
+                    Ident 365 366 a
+                    Ident 369 370 b
+              BinaryExpr 374 380 <= op=376
+                Ident 374 375 a
+                Ident 379 380 b
+            BinaryExpr 384 389 > op=386
+              Ident 384 385 a
+              Ident 388 389 b
+          BinaryExpr 393 399 >= op=395
+            Ident 393 394 a
+            Ident 398 399 b
+      AssignStmt 401 422 = tok=403 lhs=1 rhs=1
+        Ident 401 402 _
+        BinaryExpr 405 422 * op=413
+          ParenExpr 405 412 lparen=405 rparen=411
+            BinaryExpr 406 411 + op=408
+              Ident 406 407 a
+              Ident 410 411 b
+          ParenExpr 415 422 lparen=415 rparen=421
+            BinaryExpr 416 421 - op=418
+              Ident 416 417 a
+              Ident 420 421 b
+      AssignStmt 424 433 = tok=426 lhs=1 rhs=1
+        Ident 424 425 _
+        ParenExpr 428 433 lparen=428 rparen=432
+          ParenExpr 429 432 lparen=429 rparen=431
+            Ident 430 431 a
+      AssignStmt 435 447 = tok=437 lhs=1 rhs=1
+        Ident 435 436 _
+        BinaryExpr 439 447 + op=442
+          StarExpr 439 441
+            Ident 440 441 p
+          StarExpr 444 447
+            UnaryExpr 445 447 &
+              Ident 446 447 a
+      AssignStmt 449 456 = tok=451 lhs=1 rhs=1
+        Ident 449 450 _
+        UnaryExpr 453 456 <-
+          Ident 455 456 c
+      AssignStmt 458 471 = tok=460 lhs=1 rhs=1
+        Ident 458 459 _
+        BinaryExpr 462 471 + op=466
+          UnaryExpr 462 465 <-
+            Ident 464 465 c
+          UnaryExpr 468 471 <-
+            Ident 470 471 c
+      AssignStmt 473 485 := tok=479 lhs=2 rhs=1
+        Ident 473 474 v
+        Ident 476 478 ok
+        UnaryExpr 482 485 <-
+          Ident 484 485 c
+      AssignStmt 487 499 = tok=492 lhs=2 rhs=2
+        Ident 487 488 _
+        Ident 490 491 _
+        Ident 494 495 v
+        Ident 497 499 ok
+      AssignStmt 501 513 = tok=503 lhs=1 rhs=1
+        Ident 501 502 _
+        UnaryExpr 505 513 &
+          CompositeLit 506 513 type=1 lbrace=507 rbrace=512 elts=2
+            Ident 506 507 T
+            BasicLit 508 509 INT 1
+            BasicLit 511 512 INT 2
+      AssignStmt 515 528 = tok=517 lhs=1 rhs=1
+        Ident 515 516 _
+        UnaryExpr 519 528 &
+          CompositeLit 520 528 type=1 lbrace=525 rbrace=527 elts=1
+            ArrayType 520 525 len=0
+              Ident 522 525 int
+            BasicLit 526 527 INT 1
+      AssignStmt 530 539 = tok=532 lhs=1 rhs=1
+        Ident 530 531 _
+        UnaryExpr 534 539 -
+          ParenExpr 535 539 lparen=535 rparen=538
+            UnaryExpr 536 538 -
+              Ident 537 538 a
+      AssignStmt 541 562 = tok=543 lhs=1 rhs=1
+        Ident 541 542 _
+        BinaryExpr 545 562 + op=559
+          BinaryExpr 545 558 + op=555
+            BinaryExpr 545 554 + op=551
+              BinaryExpr 545 550 + op=547
+                Ident 545 546 a
+                Ident 549 550 b
+              Ident 553 554 a
+            Ident 557 558 b
+          Ident 561 562 a
+      AssignStmt 564 577 = tok=566 lhs=1 rhs=1
+        Ident 564 565 _
+        BinaryExpr 568 577 + op=572
+          BinaryExpr 568 571 * op=569
+            Ident 568 569 a
+            Ident 570 571 b
+          BinaryExpr 574 577 * op=575
+            Ident 574 575 a
+            Ident 576 577 b
+      AssignStmt 579 594 = tok=581 lhs=1 rhs=1
+        Ident 579 580 _
+        BinaryExpr 583 594 || op=585
+          Ident 583 584 a
+          BinaryExpr 588 594 && op=590
+            Ident 588 589 b
+            Ident 593 594 x
+  FuncDecl 598 1401 recv=0 body=1 doc=0
+    Ident 603 612 primaries
+    FuncType 598 682 func=598 tparams=0 results=0
+      FieldList 612 682 open=612 close=681
+        Field 613 620 names=1 tag=0 doc=0 comment=0
+          Ident 613 614 s
+          ArrayType 615 620 len=0
+            Ident 617 620 int
+        Field 622 638 names=1 tag=0 doc=0 comment=0
+          Ident 622 623 m
+          MapType 624 638
+            Ident 628 634 string
+            Ident 635 638 int
+        Field 640 643 names=1 tag=0 doc=0 comment=0
+          Ident 640 641 t
+          Ident 642 643 T
+        Field 645 658 names=1 tag=0 doc=0 comment=0
+          Ident 645 646 i
+          InterfaceType 647 658
+            FieldList 656 658 open=656 close=657
+        Field 660 669 names=1 tag=0 doc=0 comment=0
+          Ident 660 662 ps
+          StarExpr 663 669
+            ArrayType 664 669 len=0
+              Ident 666 669 int
+        Field 671 681 names=1 tag=0 doc=0 comment=0
+          Ident 671 674 str
+          Ident 675 681 string
+    BlockStmt 683 1401 rbrace=1400
+      AssignStmt 686 694 = tok=688 lhs=1 rhs=1
+        Ident 686 687 _
+        IndexExpr 690 694 lbrack=691 rbrack=693
+          Ident 690 691 s
+          BasicLit 692 693 INT 0
+      AssignStmt 696 705 = tok=698 lhs=1 rhs=1
+        Ident 696 697 _
+        SliceExpr 700 705 lbrack=701 rbrack=704 low=1 high=0 max=0 slice3=0
+          Ident 700 701 s
+          BasicLit 702 703 INT 1
+      AssignStmt 707 716 = tok=709 lhs=1 rhs=1
+        Ident 707 708 _
+        SliceExpr 711 716 lbrack=712 rbrack=715 low=0 high=1 max=0 slice3=0
+          Ident 711 712 s
+          BasicLit 714 715 INT 2
+      AssignStmt 718 728 = tok=720 lhs=1 rhs=1
+        Ident 718 719 _
+        SliceExpr 722 728 lbrack=723 rbrack=727 low=1 high=1 max=0 slice3=0
+          Ident 722 723 s
+          BasicLit 724 725 INT 1
+          BasicLit 726 727 INT 2
+      AssignStmt 730 738 = tok=732 lhs=1 rhs=1
+        Ident 730 731 _
+        SliceExpr 734 738 lbrack=735 rbrack=737 low=0 high=0 max=0 slice3=0
+          Ident 734 735 s
+      AssignStmt 740 752 = tok=742 lhs=1 rhs=1
+        Ident 740 741 _
+        SliceExpr 744 752 lbrack=745 rbrack=751 low=1 high=1 max=1 slice3=1
+          Ident 744 745 s
+          BasicLit 746 747 INT 1
+          BasicLit 748 749 INT 2
+          BasicLit 750 751 INT 3
+      AssignStmt 754 765 = tok=756 lhs=1 rhs=1
+        Ident 754 755 _
+        SliceExpr 758 765 lbrack=759 rbrack=764 low=0 high=1 max=1 slice3=1
+          Ident 758 759 s
+          BasicLit 761 762 INT 2
+          BasicLit 763 764 INT 3
+      AssignStmt 767 779 = tok=769 lhs=1 rhs=1
+        Ident 767 768 _
+        IndexExpr 771 779 lbrack=776 rbrack=778
+          ParenExpr 771 776 lparen=771 rparen=775
+            StarExpr 772 775
+              Ident 773 775 ps
+          BasicLit 777 778 INT 0
+      AssignStmt 781 800 = tok=783 lhs=1 rhs=1
+        Ident 781 782 _
+        IndexExpr 785 800 lbrack=788 rbrack=799
+          Ident 785 788 str
+          BinaryExpr 789 799 - op=797
+            CallExpr 789 797 lparen=792 ellipsis=-1 rparen=796 args=1
+              Ident 789 792 len
+              Ident 793 796 str
+            BasicLit 798 799 INT 1
+      AssignStmt 802 812 = tok=804 lhs=1 rhs=1
+        Ident 802 803 _
+        IndexExpr 806 812 lbrack=807 rbrack=811
+          Ident 806 807 m
+          BasicLit 808 811 STRING "k"
+      AssignStmt 814 821 = tok=816 lhs=1 rhs=1
+        Ident 814 815 _
+        SelectorExpr 818 821
+          Ident 818 819 t
+          Ident 820 821 a
+      AssignStmt 823 830 = tok=825 lhs=1 rhs=1
+        Ident 823 824 _
+        SelectorExpr 827 830
+          Ident 827 828 T
+          Ident 829 830 M
+      AssignStmt 832 843 = tok=834 lhs=1 rhs=1
+        Ident 832 833 _
+        SelectorExpr 836 843
+          ParenExpr 836 840 lparen=836 rparen=839
+            StarExpr 837 839
+              Ident 838 839 T
+          Ident 841 843 PM
+      AssignStmt 845 858 = tok=847 lhs=1 rhs=1
+        Ident 845 846 _
+        CallExpr 849 858 lparen=855 ellipsis=-1 rparen=857 args=1
+          SelectorExpr 849 855
+            ParenExpr 849 853 lparen=849 rparen=852
+              UnaryExpr 850 852 &
+                Ident 851 852 t
+            Ident 854 855 M
+          BasicLit 856 857 INT 1
+      AssignStmt 860 869 = tok=862 lhs=1 rhs=1
+        Ident 860 861 _
+        TypeAssertExpr 864 869 lparen=866 rparen=868 type=1
+          Ident 864 865 i
+          Ident 867 868 T
+      AssignStmt 871 881 = tok=873 lhs=1 rhs=1
+        Ident 871 872 _
+        TypeAssertExpr 875 881 lparen=877 rparen=880 type=1
+          Ident 875 876 i
+          StarExpr 878 880
+            Ident 879 880 T
+      AssignStmt 883 914 = tok=885 lhs=1 rhs=1
+        Ident 883 884 _
+        TypeAssertExpr 887 914 lparen=889 rparen=913 type=1
+          Ident 887 888 i
+          InterfaceType 890 913
+            FieldList 899 913 open=899 close=912
+              Field 901 911 names=1 tag=0 doc=0 comment=0
+                Ident 901 902 M
+                FuncType 902 911 func=-1 tparams=0 results=1
+                  FieldList 902 907 open=902 close=906
+                    Field 903 906 names=0 tag=0 doc=0 comment=0
+                      Ident 903 906 int
+                  FieldList 908 911 open=-1 close=-1
+                    Field 908 911 names=0 tag=0 doc=0 comment=0
+                      Ident 908 911 int
+      AssignStmt 916 945 = tok=918 lhs=1 rhs=1
+        Ident 916 917 _
+        CallExpr 920 945 lparen=943 ellipsis=-1 rparen=944 args=0
+          SelectorExpr 920 943
+            TypeAssertExpr 920 936 lparen=922 rparen=935 type=1
+              Ident 920 921 i
+              SelectorExpr 923 935
+                Ident 923 926 fmt
+                Ident 927 935 Stringer
+            Ident 937 943 String
+      AssignStmt 947 954 = tok=949 lhs=1 rhs=1
+        Ident 947 948 _
+        CallExpr 951 954 lparen=952 ellipsis=-1 rparen=953 args=0
+          Ident 951 952 f
+      AssignStmt 956 970 = tok=958 lhs=1 rhs=1
+        Ident 956 957 _
+        CallExpr 960 970 lparen=961 ellipsis=-1 rparen=969 args=3
+          Ident 960 961 f
+          BasicLit 962 963 INT 1
+          BasicLit 965 966 INT 2
+          BasicLit 968 969 INT 3
+      AssignStmt 972 983 = tok=974 lhs=1 rhs=1
+        Ident 972 973 _
+        CallExpr 976 983 lparen=977 ellipsis=979 rparen=982 args=1
+          Ident 976 977 f
+          Ident 978 979 s
+      AssignStmt 985 1006 = tok=987 lhs=1 rhs=1
+        Ident 985 986 _
+        CallExpr 989 1006 lparen=990 ellipsis=1002 rparen=1005 args=2
+          Ident 989 990 f
+          IndexExpr 991 995 lbrack=992 rbrack=994
+            Ident 991 992 s
+            BasicLit 993 994 INT 0
+          SliceExpr 997 1002 lbrack=998 rbrack=1001 low=1 high=0 max=0 slice3=0
+            Ident 997 998 s
+            BasicLit 999 1000 INT 1
+      AssignStmt 1008 1040 = tok=1010 lhs=1 rhs=1
+        Ident 1008 1009 _
+        CallExpr 1012 1040 lparen=1023 ellipsis=-1 rparen=1039 args=3
+          SelectorExpr 1012 1023
+            Ident 1012 1015 fmt
+            Ident 1016 1023 Sprintf
+          BasicLit 1024 1031 STRING "%d %s"
+          BasicLit 1033 1034 INT 1
+          BasicLit 1036 1039 STRING "x"
+      AssignStmt 1042 1090 = tok=1044 lhs=1 rhs=1
+        Ident 1042 1043 _
+        CallExpr 1046 1090 lparen=1083 ellipsis=-1 rparen=1089 args=1
+          SelectorExpr 1046 1083
+            CallExpr 1046 1075 lparen=1065 ellipsis=-1 rparen=1074 args=2
+              SelectorExpr 1046 1065
+                Ident 1046 1053 strings
+                Ident 1054 1065 NewReplacer
+              BasicLit 1066 1069 STRING "a"
+              BasicLit 1071 1074 STRING "b"
+            Ident 1076 1083 Replace
+          BasicLit 1084 1089 STRING "abc"
+      AssignStmt 1092 1111 = tok=1094 lhs=1 rhs=1
+        Ident 1092 1093 _
+        CallExpr 1096 1111 lparen=1102 ellipsis=-1 rparen=1110 args=1
+          ArrayType 1096 1102 len=0
+            Ident 1098 1102 byte
+          BasicLit 1103 1110 STRING "bytes"
+      AssignStmt 1113 1133 = tok=1115 lhs=1 rhs=1
+        Ident 1113 1114 _
+        CallExpr 1117 1133 lparen=1123 ellipsis=-1 rparen=1132 args=1
+          Ident 1117 1123 string
+          CallExpr 1124 1132 lparen=1128 ellipsis=-1 rparen=1131 args=1
+            Ident 1124 1128 rune
+            BasicLit 1129 1131 INT 65
+      AssignStmt 1135 1150 = tok=1137 lhs=1 rhs=1
+        Ident 1135 1136 _
+        CallExpr 1139 1150 lparen=1145 ellipsis=-1 rparen=1149 args=1
+          ParenExpr 1139 1145 lparen=1139 rparen=1144
+            StarExpr 1140 1144
+              Ident 1141 1144 int
+          Ident 1146 1149 nil
+      AssignStmt 1152 1169 = tok=1154 lhs=1 rhs=1
+        Ident 1152 1153 _
+        CallExpr 1156 1169 lparen=1164 ellipsis=-1 rparen=1168 args=1
+          ParenExpr 1156 1164 lparen=1156 rparen=1163
+            FuncType 1157 1163 func=1157 tparams=0 results=0
+              FieldList 1161 1163 open=1161 close=1162
+          Ident 1165 1168 nil
+      AssignStmt 1171 1192 = tok=1173 lhs=1 rhs=1
+        Ident 1171 1172 _
+        CallExpr 1175 1192 lparen=1187 ellipsis=-1 rparen=1191 args=1
+          ParenExpr 1175 1187 lparen=1175 rparen=1186
+            ChanType 1176 1186 recv arrow=1176
+              Ident 1183 1186 int
+          Ident 1188 1191 nil
+      AssignStmt 1194 1217 = tok=1196 lhs=1 rhs=1
+        Ident 1194 1195 _
+        CallExpr 1198 1217 lparen=1212 ellipsis=-1 rparen=1216 args=1
+          MapType 1198 1212
+            Ident 1202 1208 string
+            Ident 1209 1212 int
+          Ident 1213 1216 nil
+      AssignStmt 1219 1239 = tok=1221 lhs=1 rhs=1
+        Ident 1219 1220 _
+        CallExpr 1223 1239 lparen=1234 ellipsis=-1 rparen=1238 args=1
+          InterfaceType 1223 1234
+            FieldList 1232 1234 open=1232 close=1233
+          Ident 1235 1238 nil
+      AssignStmt 1241 1255 = tok=1243 lhs=1 rhs=1
+        Ident 1241 1242 _
+        CompositeLit 1245 1255 type=1 lbrace=1253 rbrace=1254 elts=0
+          StructType 1245 1253
+            FieldList 1251 1253 open=1251 close=1252
+      AssignStmt 1257 1296 = tok=1259 lhs=1 rhs=1
+        Ident 1257 1258 _
+        CallExpr 1261 1296 lparen=1293 ellipsis=-1 rparen=1295 args=1
+          FuncLit 1261 1293
+            FuncType 1261 1276 func=1261 tparams=0 results=1
+              FieldList 1265 1272 open=1265 close=1271
+                Field 1266 1271 names=1 tag=0 doc=0 comment=0
+                  Ident 1266 1267 x
+                  Ident 1268 1271 int
+              FieldList 1273 1276 open=-1 close=-1
+                Field 1273 1276 names=0 tag=0 doc=0 comment=0
+                  Ident 1273 1276 int
+            BlockStmt 1277 1293 rbrace=1292
+              ReturnStmt 1279 1291 results=1
+                BinaryExpr 1286 1291 * op=1288
+                  Ident 1286 1287 x
+                  BasicLit 1290 1291 INT 2
+          BasicLit 1294 1295 INT 3
+      AssignStmt 1298 1320 = tok=1300 lhs=1 rhs=1
+        Ident 1298 1299 _
+        CallExpr 1302 1320 lparen=1306 ellipsis=-1 rparen=1319 args=3
+          Ident 1302 1306 make
+          ArrayType 1307 1312 len=0
+            Ident 1309 1312 int
+          BasicLit 1314 1315 INT 0
+          BasicLit 1317 1319 INT 10
+      AssignStmt 1322 1332 = tok=1324 lhs=1 rhs=1
+        Ident 1322 1323 _
+        CallExpr 1326 1332 lparen=1329 ellipsis=-1 rparen=1331 args=1
+          Ident 1326 1329 new
+          Ident 1330 1331 T
+      AssignStmt 1334 1367 = tok=1336 lhs=1 rhs=1
+        Ident 1334 1335 _
+        CallExpr 1338 1367 lparen=1342 ellipsis=-1 rparen=1366 args=1
+          Ident 1338 1342 make
+          MapType 1343 1366
+            Ident 1347 1353 string
+            ArrayType 1354 1366 len=0
+              ChanType 1356 1366 send arrow=1360
+                Ident 1363 1366 int
+      AssignStmt 1369 1381 = tok=1371 lhs=1 rhs=1
+        Ident 1369 1370 _
+        CallExpr 1373 1381 lparen=1376 ellipsis=-1 rparen=1380 args=1
+          Ident 1373 1376 len
+          BasicLit 1377 1380 STRING "x"
+      AssignStmt 1383 1399 = tok=1385 lhs=1 rhs=1
+        Ident 1383 1384 _
+        SliceExpr 1387 1399 lbrack=1388 rbrack=1398 low=1 high=1 max=0 slice3=0
+          Ident 1387 1388 s
+          CallExpr 1389 1393 lparen=1390 ellipsis=-1 rparen=1392 args=1
+            Ident 1389 1390 f
+            BasicLit 1391 1392 INT 1
+          CallExpr 1394 1398 lparen=1395 ellipsis=-1 rparen=1397 args=1
+            Ident 1394 1395 f
+            BasicLit 1396 1397 INT 2
+  FuncDecl 1403 1891 recv=0 body=1 doc=0
+    Ident 1408 1418 composites
+    FuncType 1403 1420 func=1403 tparams=0 results=0
+      FieldList 1418 1420 open=1418 close=1419
+    BlockStmt 1421 1891 rbrace=1890
+      AssignStmt 1424 1431 = tok=1426 lhs=1 rhs=1
+        Ident 1424 1425 _
+        CompositeLit 1428 1431 type=1 lbrace=1429 rbrace=1430 elts=0
+          Ident 1428 1429 T
+      AssignStmt 1433 1444 = tok=1435 lhs=1 rhs=1
+        Ident 1433 1434 _
+        CompositeLit 1437 1444 type=1 lbrace=1438 rbrace=1443 elts=2
+          Ident 1437 1438 T
+          BasicLit 1439 1440 INT 1
+          BasicLit 1442 1443 INT 2
+      AssignStmt 1446 1463 = tok=1448 lhs=1 rhs=1
+        Ident 1446 1447 _
+        CompositeLit 1450 1463 type=1 lbrace=1451 rbrace=1462 elts=2
+          Ident 1450 1451 T
+          KeyValueExpr 1452 1456 colon=1453
+            Ident 1452 1453 a
+            BasicLit 1455 1456 INT 1
+          KeyValueExpr 1458 1462 colon=1459
+            Ident 1458 1459 b
+            BasicLit 1461 1462 INT 2
+      AssignStmt 1465 1490 = tok=1467 lhs=1 rhs=1
+        Ident 1465 1466 _
+        CompositeLit 1469 1490 type=1 lbrace=1470 rbrace=1489 elts=2
+          Ident 1469 1470 T
+          KeyValueExpr 1474 1478 colon=1475
+            Ident 1474 1475 a
+            BasicLit 1477 1478 INT 1
+          KeyValueExpr 1482 1486 colon=1483
+            Ident 1482 1483 b
+            BasicLit 1485 1486 INT 2
+      AssignStmt 1492 1519 = tok=1494 lhs=1 rhs=1
+        Ident 1492 1493 _
+        CompositeLit 1496 1519 type=1 lbrace=1499 rbrace=1518 elts=3
+          ArrayType 1496 1499 len=0
+            Ident 1498 1499 T
+          CompositeLit 1500 1506 type=0 lbrace=1500 rbrace=1505 elts=2
+            BasicLit 1501 1502 INT 1
+            BasicLit 1504 1505 INT 2
+          CompositeLit 1508 1514 type=0 lbrace=1508 rbrace=1513 elts=1
+            KeyValueExpr 1509 1513 colon=1510
+              Ident 1509 1510 a
+              BasicLit 1512 1513 INT 3
+          CompositeLit 1516 1518 type=0 lbrace=1516 rbrace=1517 elts=0
+      AssignStmt 1521 1547 = tok=1523 lhs=1 rhs=1
+        Ident 1521 1522 _
+        CompositeLit 1525 1547 type=1 lbrace=1529 rbrace=1546 elts=2
+          ArrayType 1525 1529 len=0
+            StarExpr 1527 1529
+              Ident 1528 1529 T
+          CompositeLit 1530 1536 type=0 lbrace=1530 rbrace=1535 elts=2
+            BasicLit 1531 1532 INT 1
+            BasicLit 1534 1535 INT 2
+          UnaryExpr 1538 1546 &
+            CompositeLit 1539 1546 type=1 lbrace=1540 rbrace=1545 elts=2
+              Ident 1539 1540 T
+              BasicLit 1541 1542 INT 3
+              BasicLit 1544 1545 INT 4
+      AssignStmt 1549 1570 = tok=1551 lhs=1 rhs=1
+        Ident 1549 1550 _
+        CompositeLit 1553 1570 type=1 lbrace=1561 rbrace=1569 elts=3
+          ArrayType 1553 1561 len=1
+            Ellipsis 1554 1557 elt=0
+            Ident 1558 1561 int
+          BasicLit 1562 1563 INT 1
+          BasicLit 1565 1566 INT 2
+          BasicLit 1568 1569 INT 3
+      AssignStmt 1572 1601 = tok=1574 lhs=1 rhs=1
+        Ident 1572 1573 _
+        CompositeLit 1576 1601 type=1 lbrace=1585 rbrace=1600 elts=2
+          ArrayType 1576 1585 len=1
+            BasicLit 1577 1578 INT 2
+            ArrayType 1579 1585 len=1
+              BasicLit 1580 1581 INT 2
+              Ident 1582 1585 int
+          CompositeLit 1586 1592 type=0 lbrace=1586 rbrace=1591 elts=2
+            BasicLit 1587 1588 INT 1
+            BasicLit 1590 1591 INT 2
+          CompositeLit 1594 1600 type=0 lbrace=1594 rbrace=1599 elts=2
+            BasicLit 1595 1596 INT 3
+            BasicLit 1598 1599 INT 4
+      AssignStmt 1603 1632 = tok=1605 lhs=1 rhs=1
+        Ident 1603 1604 _
+        CompositeLit 1607 1632 type=1 lbrace=1619 rbrace=1631 elts=1
+          MapType 1607 1619
+            Ident 1611 1617 string
+            Ident 1618 1619 T
+          KeyValueExpr 1620 1631 colon=1623
+            BasicLit 1620 1623 STRING "x"
+            CompositeLit 1625 1631 type=0 lbrace=1625 rbrace=1630 elts=2
+              BasicLit 1626 1627 INT 1
+              BasicLit 1629 1630 INT 2
+      AssignStmt 1634 1663 = tok=1636 lhs=1 rhs=1
+        Ident 1634 1635 _
+        CompositeLit 1638 1663 type=1 lbrace=1650 rbrace=1662 elts=1
+          MapType 1638 1650
+            Ident 1642 1643 T
+            Ident 1644 1650 string
+          KeyValueExpr 1651 1662 colon=1657
+            CompositeLit 1651 1657 type=0 lbrace=1651 rbrace=1656 elts=2
+              BasicLit 1652 1653 INT 1
+              BasicLit 1655 1656 INT 2
+            BasicLit 1659 1662 STRING "x"
+      AssignStmt 1665 1708 = tok=1667 lhs=1 rhs=1
+        Ident 1665 1666 _
+        CompositeLit 1669 1708 type=1 lbrace=1688 rbrace=1707 elts=1
+          MapType 1669 1688
+            ArrayType 1673 1679 len=1
+              BasicLit 1674 1675 INT 2
+              Ident 1676 1679 int
+            ArrayType 1680 1688 len=0
+              Ident 1682 1688 string
+          KeyValueExpr 1689 1707 colon=1695
+            CompositeLit 1689 1695 type=0 lbrace=1689 rbrace=1694 elts=2
+              BasicLit 1690 1691 INT 1
+              BasicLit 1693 1694 INT 2
+            CompositeLit 1697 1707 type=0 lbrace=1697 rbrace=1706 elts=2
+              BasicLit 1698 1701 STRING "a"
+              BasicLit 1703 1706 STRING "b"
+      AssignStmt 1710 1731 = tok=1712 lhs=1 rhs=1
+        Ident 1710 1711 _
+        CompositeLit 1714 1731 type=1 lbrace=1719 rbrace=1730 elts=2
+          ArrayType 1714 1719 len=0
+            Ident 1716 1719 int
+          KeyValueExpr 1720 1724 colon=1721
+            BasicLit 1720 1721 INT 0
+            BasicLit 1723 1724 INT 1
+          KeyValueExpr 1726 1730 colon=1727
+            BasicLit 1726 1727 INT 5
+            BasicLit 1729 1730 INT 2
+      AssignStmt 1733 1775 = tok=1735 lhs=1 rhs=1
+        Ident 1733 1734 _
+        CompositeLit 1737 1775 type=1 lbrace=1767 rbrace=1774 elts=2
+          StructType 1737 1767
+            FieldList 1744 1767 open=1744 close=1766
+              Field 1748 1753 names=1 tag=0 doc=0 comment=0
+                Ident 1748 1749 x
+                Ident 1750 1753 int
+              Field 1756 1764 names=1 tag=0 doc=0 comment=0
+                Ident 1756 1757 y
+                Ident 1758 1764 string
+          BasicLit 1768 1769 INT 1
+          BasicLit 1771 1774 STRING "a"
+      AssignStmt 1777 1818 = tok=1779 lhs=1 rhs=1
+        Ident 1777 1778 _
+        CompositeLit 1781 1818 type=1 lbrace=1793 rbrace=1817 elts=1
+          ArrayType 1781 1793 len=0
+            FuncType 1783 1793 func=1783 tparams=0 results=1
+              FieldList 1787 1789 open=1787 close=1788
+              FieldList 1790 1793 open=-1 close=-1
+                Field 1790 1793 names=0 tag=0 doc=0 comment=0
+                  Ident 1790 1793 int
+          FuncLit 1794 1817
+            FuncType 1794 1804 func=1794 tparams=0 results=1
+              FieldList 1798 1800 open=1798 close=1799
+              FieldList 1801 1804 open=-1 close=-1
+                Field 1801 1804 names=0 tag=0 doc=0 comment=0
+                  Ident 1801 1804 int
+            BlockStmt 1805 1817 rbrace=1816
+              ReturnStmt 1807 1815 results=1
+                BasicLit 1814 1815 INT 1
+      AssignStmt 1820 1855 = tok=1822 lhs=1 rhs=1
+        Ident 1820 1821 _
+        CompositeLit 1824 1855 type=1 lbrace=1837 rbrace=1854 elts=4
+          ArrayType 1824 1837 len=0
+            InterfaceType 1826 1837
+              FieldList 1835 1837 open=1835 close=1836
+          BasicLit 1838 1839 INT 1
+          BasicLit 1841 1844 STRING "a"
+          Ident 1846 1849 nil
+          CompositeLit 1851 1854 type=1 lbrace=1852 rbrace=1853 elts=0
+            Ident 1851 1852 T
+      AssignStmt 1857 1889 = tok=1859 lhs=1 rhs=1
+        Ident 1857 1858 _
+        CompositeLit 1861 1889 type=1 lbrace=1868 rbrace=1888 elts=2
+          ArrayType 1861 1868 len=0
+            ArrayType 1863 1868 len=0
+              Ident 1865 1868 int
+          CompositeLit 1872 1878 type=0 lbrace=1872 rbrace=1877 elts=2
+            BasicLit 1873 1874 INT 1
+            BasicLit 1876 1877 INT 2
+          CompositeLit 1882 1885 type=0 lbrace=1882 rbrace=1884 elts=1
+            BasicLit 1883 1884 INT 3
+  FuncDecl 1893 2805 recv=0 body=1 doc=0
+    Ident 1898 1906 literals
+    FuncType 1893 1908 func=1893 tparams=0 results=0
+      FieldList 1906 1908 open=1906 close=1907
+    BlockStmt 1909 2805 rbrace=2804
+      AssignStmt 1912 1917 = tok=1914 lhs=1 rhs=1
+        Ident 1912 1913 _
+        BasicLit 1916 1917 INT 0
+      AssignStmt 1919 1925 = tok=1921 lhs=1 rhs=1
+        Ident 1919 1920 _
+        BasicLit 1923 1925 INT 42
+      AssignStmt 1927 1934 = tok=1929 lhs=1 rhs=1
+        Ident 1927 1928 _
+        BasicLit 1931 1934 INT 4_2
+      AssignStmt 1936 1944 = tok=1938 lhs=1 rhs=1
+        Ident 1936 1937 _
+        BasicLit 1940 1944 INT 0600
+      AssignStmt 1946 1955 = tok=1948 lhs=1 rhs=1
+        Ident 1946 1947 _
+        BasicLit 1950 1955 INT 0_600
+      AssignStmt 1957 1966 = tok=1959 lhs=1 rhs=1
+        Ident 1957 1958 _
+        BasicLit 1961 1966 INT 0o600
+      AssignStmt 1968 1977 = tok=1970 lhs=1 rhs=1
+        Ident 1968 1969 _
+        BasicLit 1972 1977 INT 0O600
+      AssignStmt 1979 2003 = tok=1981 lhs=1 rhs=1
+        Ident 1979 1980 _
+        BasicLit 1983 2003 INT 0x_67_7a_2f_cc_40_c6
+      AssignStmt 2005 2018 = tok=2007 lhs=1 rhs=1
+        Ident 2005 2006 _
+        BasicLit 2009 2018 INT 0XBadFace
+      AssignStmt 2020 2030 = tok=2022 lhs=1 rhs=1
+        Ident 2020 2021 _
+        BasicLit 2024 2030 INT 0b1011
+      AssignStmt 2032 2042 = tok=2034 lhs=1 rhs=1
+        Ident 2032 2033 _
+        BasicLit 2036 2042 INT 0B_1_0
+      AssignStmt 2044 2087 = tok=2046 lhs=1 rhs=1
+        Ident 2044 2045 _
+        BasicLit 2048 2087 INT 170141183460469231731687303715884105727
+      AssignStmt 2089 2095 = tok=2091 lhs=1 rhs=1
+        Ident 2089 2090 _
+        BasicLit 2093 2095 FLOAT 0.
+      AssignStmt 2097 2106 = tok=2099 lhs=1 rhs=1
+        Ident 2097 2098 _
+        BasicLit 2101 2106 FLOAT 72.40
+      AssignStmt 2108 2118 = tok=2110 lhs=1 rhs=1
+        Ident 2108 2109 _
+        BasicLit 2112 2118 FLOAT 072.40
+      AssignStmt 2120 2131 = tok=2122 lhs=1 rhs=1
+        Ident 2120 2121 _
+        BasicLit 2124 2131 FLOAT 2.71828
+      AssignStmt 2133 2142 = tok=2135 lhs=1 rhs=1
+        Ident 2133 2134 _
+        BasicLit 2137 2142 FLOAT 1.e+0
+      AssignStmt 2144 2159 = tok=2146 lhs=1 rhs=1
+        Ident 2144 2145 _
+        BasicLit 2148 2159 FLOAT 6.67428e-11
+      AssignStmt 2161 2168 = tok=2163 lhs=1 rhs=1
+        Ident 2161 2162 _
+        BasicLit 2165 2168 FLOAT 1E6
+      AssignStmt 2170 2177 = tok=2172 lhs=1 rhs=1
+        Ident 2170 2171 _
+        BasicLit 2174 2177 FLOAT .25
+      AssignStmt 2179 2192 = tok=2181 lhs=1 rhs=1
+        Ident 2179 2180 _
+        BasicLit 2183 2192 FLOAT .12345E+5
+      AssignStmt 2194 2202 = tok=2196 lhs=1 rhs=1
+        Ident 2194 2195 _
+        BasicLit 2198 2202 FLOAT 1_5.
+      AssignStmt 2204 2217 = tok=2206 lhs=1 rhs=1
+        Ident 2204 2205 _
+        BasicLit 2208 2217 FLOAT 0.15e+0_2
+      AssignStmt 2219 2229 = tok=2221 lhs=1 rhs=1
+        Ident 2219 2220 _
+        BasicLit 2223 2229 FLOAT 0x1p-2
+      AssignStmt 2231 2242 = tok=2233 lhs=1 rhs=1
+        Ident 2231 2232 _
+        BasicLit 2235 2242 FLOAT 0x2.p10
+      AssignStmt 2244 2256 = tok=2246 lhs=1 rhs=1
+        Ident 2244 2245 _
+        BasicLit 2248 2256 FLOAT 0x1.Fp+0
+      AssignStmt 2258 2269 = tok=2260 lhs=1 rhs=1
+        Ident 2258 2259 _
+        BasicLit 2262 2269 FLOAT 0X.8p-0
+      AssignStmt 2271 2286 = tok=2273 lhs=1 rhs=1
+        Ident 2271 2272 _
+        BasicLit 2275 2286 FLOAT 0X_1FFFP-16
+      AssignStmt 2288 2294 = tok=2290 lhs=1 rhs=1
+        Ident 2288 2289 _
+        BasicLit 2292 2294 IMAG 0i
+      AssignStmt 2296 2305 = tok=2298 lhs=1 rhs=1
+        Ident 2296 2297 _
+        BasicLit 2300 2305 IMAG 0123i
+      AssignStmt 2307 2317 = tok=2309 lhs=1 rhs=1
+        Ident 2307 2308 _
+        BasicLit 2311 2317 IMAG 0o123i
+      AssignStmt 2319 2329 = tok=2321 lhs=1 rhs=1
+        Ident 2319 2320 _
+        BasicLit 2323 2329 IMAG 0xabci
+      AssignStmt 2331 2338 = tok=2333 lhs=1 rhs=1
+        Ident 2331 2332 _
+        BasicLit 2335 2338 IMAG 0.i
+      AssignStmt 2340 2352 = tok=2342 lhs=1 rhs=1
+        Ident 2340 2341 _
+        BasicLit 2344 2352 IMAG 2.71828i
+      AssignStmt 2354 2364 = tok=2356 lhs=1 rhs=1
+        Ident 2354 2355 _
+        BasicLit 2358 2364 IMAG 1.e+0i
+      AssignStmt 2366 2382 = tok=2368 lhs=1 rhs=1
+        Ident 2366 2367 _
+        BasicLit 2370 2382 IMAG 6.67428e-11i
+      AssignStmt 2384 2392 = tok=2386 lhs=1 rhs=1
+        Ident 2384 2385 _
+        BasicLit 2388 2392 IMAG 1E6i
+      AssignStmt 2394 2402 = tok=2396 lhs=1 rhs=1
+        Ident 2394 2395 _
+        BasicLit 2398 2402 IMAG .25i
+      AssignStmt 2404 2418 = tok=2406 lhs=1 rhs=1
+        Ident 2404 2405 _
+        BasicLit 2408 2418 IMAG .12345E+5i
+      AssignStmt 2420 2431 = tok=2422 lhs=1 rhs=1
+        Ident 2420 2421 _
+        BasicLit 2424 2431 IMAG 0x1p-2i
+      AssignStmt 2433 2440 = tok=2435 lhs=1 rhs=1
+        Ident 2433 2434 _
+        BasicLit 2437 2440 CHAR 'a'
+      AssignStmt 2442 2450 = tok=2444 lhs=1 rhs=1
+        Ident 2442 2443 _
+        BasicLit 2446 2450 CHAR 'ä'
+      AssignStmt 2452 2461 = tok=2454 lhs=1 rhs=1
+        Ident 2452 2453 _
+        BasicLit 2456 2461 CHAR '本'
+      AssignStmt 2463 2471 = tok=2465 lhs=1 rhs=1
+        Ident 2463 2464 _
+        BasicLit 2467 2471 CHAR '\\t'
+      AssignStmt 2473 2483 = tok=2475 lhs=1 rhs=1
+        Ident 2473 2474 _
+        BasicLit 2477 2483 CHAR '\\000'
+      AssignStmt 2485 2495 = tok=2487 lhs=1 rhs=1
+        Ident 2485 2486 _
+        BasicLit 2489 2495 CHAR '\\007'
+      AssignStmt 2497 2507 = tok=2499 lhs=1 rhs=1
+        Ident 2497 2498 _
+        BasicLit 2501 2507 CHAR '\\377'
+      AssignStmt 2509 2519 = tok=2511 lhs=1 rhs=1
+        Ident 2509 2510 _
+        BasicLit 2513 2519 CHAR '\\x07'
+      AssignStmt 2521 2531 = tok=2523 lhs=1 rhs=1
+        Ident 2521 2522 _
+        BasicLit 2525 2531 CHAR '\\xff'
+      AssignStmt 2533 2542 = tok=2535 lhs=1 rhs=1
+        Ident 2533 2534 _
+        BasicLit 2537 2542 CHAR 'ዤ'
+      AssignStmt 2544 2560 = tok=2546 lhs=1 rhs=1
+        Ident 2544 2545 _
+        BasicLit 2548 2560 CHAR '\\U00101234'
+      AssignStmt 2562 2570 = tok=2564 lhs=1 rhs=1
+        Ident 2562 2563 _
+        BasicLit 2566 2570 CHAR '\\''
+      AssignStmt 2572 2579 = tok=2574 lhs=1 rhs=1
+        Ident 2572 2573 _
+        BasicLit 2576 2579 CHAR '"'
+      AssignStmt 2581 2589 = tok=2583 lhs=1 rhs=1
+        Ident 2581 2582 _
+        BasicLit 2585 2589 CHAR '\\\\'
+      AssignStmt 2591 2600 = tok=2593 lhs=1 rhs=1
+        Ident 2591 2592 _
+        BasicLit 2595 2600 STRING "abc"
+      AssignStmt 2602 2610 = tok=2604 lhs=1 rhs=1
+        Ident 2602 2603 _
+        BasicLit 2606 2610 STRING "\\\\"
+      AssignStmt 2612 2620 = tok=2614 lhs=1 rhs=1
+        Ident 2612 2613 _
+        BasicLit 2616 2620 STRING "\\n"
+      AssignStmt 2622 2630 = tok=2624 lhs=1 rhs=1
+        Ident 2622 2623 _
+        BasicLit 2626 2630 STRING "\\""
+      AssignStmt 2632 2653 = tok=2634 lhs=1 rhs=1
+        Ident 2632 2633 _
+        BasicLit 2636 2653 STRING "Hello, world!\\n"
+      AssignStmt 2655 2670 = tok=2657 lhs=1 rhs=1
+        Ident 2655 2656 _
+        BasicLit 2659 2670 STRING "日本語"
+      AssignStmt 2672 2694 = tok=2674 lhs=1 rhs=1
+        Ident 2672 2673 _
+        BasicLit 2676 2694 STRING "日本\\U00008a9e"
+      AssignStmt 2696 2708 = tok=2698 lhs=1 rhs=1
+        Ident 2696 2697 _
+        BasicLit 2700 2708 STRING "\\xffÿ"
+      AssignStmt 2710 2734 = tok=2712 lhs=1 rhs=1
+        Ident 2710 2711 _
+        BasicLit 2714 2734 STRING "\\a\\b\\f\\n\\r\\t\\v\\\\\\""
+      AssignStmt 2736 2742 = tok=2738 lhs=1 rhs=1
+        Ident 2736 2737 _
+        BasicLit 2740 2742 STRING ""
+      AssignStmt 2744 2753 = tok=2746 lhs=1 rhs=1
+        Ident 2744 2745 _
+        BasicLit 2748 2753 STRING `abc`
+      AssignStmt 2755 2766 = tok=2757 lhs=1 rhs=1
+        Ident 2755 2756 _
+        BasicLit 2759 2766 STRING `\\n\n\\n`
+      AssignStmt 2768 2774 = tok=2770 lhs=1 rhs=1
+        Ident 2768 2769 _
+        BasicLit 2772 2774 STRING ``
+      AssignStmt 2776 2803 = tok=2778 lhs=1 rhs=1
+        Ident 2776 2777 _
+        BasicLit 2780 2803 STRING `"quoted" and 'single'`
+  FuncDecl 2807 3055 recv=0 body=1 doc=0
+    Ident 2812 2820 funcLits
+    FuncType 2807 2822 func=2807 tparams=0 results=0
+      FieldList 2820 2822 open=2820 close=2821
+    BlockStmt 2823 3055 rbrace=3054
+      AssignStmt 2826 2868 := tok=2830 lhs=1 rhs=1
+        Ident 2826 2829 add
+        FuncLit 2833 2868
+          FuncType 2833 2851 func=2833 tparams=0 results=1
+            FieldList 2837 2847 open=2837 close=2846
+              Field 2838 2846 names=2 tag=0 doc=0 comment=0
+                Ident 2838 2839 a
+                Ident 2841 2842 b
+                Ident 2843 2846 int
+            FieldList 2848 2851 open=-1 close=-1
+              Field 2848 2851 names=0 tag=0 doc=0 comment=0
+                Ident 2848 2851 int
+          BlockStmt 2852 2868 rbrace=2867
+            ReturnStmt 2854 2866 results=1
+              BinaryExpr 2861 2866 + op=2863
+                Ident 2861 2862 a
+                Ident 2865 2866 b
+      AssignStmt 2870 2877 = tok=2872 lhs=1 rhs=1
+        Ident 2870 2871 _
+        Ident 2874 2877 add
+      DeclStmt 2879 2972
+        GenDecl 2879 2972 var lparen=-1 rparen=-1 specs=1 doc=0
+          ValueSpec 2883 2972 names=1 type=1 values=1 doc=0 comment=0
+            Ident 2883 2890 handler
+            FuncType 2891 2916 func=2891 tparams=0 results=1
+              FieldList 2895 2903 open=2895 close=2902
+                Field 2896 2902 names=0 tag=0 doc=0 comment=0
+                  Ident 2896 2902 string
+              FieldList 2904 2916 open=2904 close=2915
+                Field 2905 2908 names=0 tag=0 doc=0 comment=0
+                  Ident 2905 2908 int
+                Field 2910 2915 names=0 tag=0 doc=0 comment=0
+                  Ident 2910 2915 error
+            FuncLit 2919 2972
+              FuncType 2919 2946 func=2919 tparams=0 results=1
+                FieldList 2923 2933 open=2923 close=2932
+                  Field 2924 2932 names=1 tag=0 doc=0 comment=0
+                    Ident 2924 2925 s
+                    Ident 2926 2932 string
+                FieldList 2934 2946 open=2934 close=2945
+                  Field 2935 2938 names=0 tag=0 doc=0 comment=0
+                    Ident 2935 2938 int
+                  Field 2940 2945 names=0 tag=0 doc=0 comment=0
+                    Ident 2940 2945 error
+              BlockStmt 2947 2972 rbrace=2971
+                ReturnStmt 2951 2969 results=2
+                  CallExpr 2958 2964 lparen=2961 ellipsis=-1 rparen=2963 args=1
+                    Ident 2958 2961 len
+                    Ident 2962 2963 s
+                  Ident 2966 2969 nil
+      AssignStmt 2974 2985 = tok=2976 lhs=1 rhs=1
+        Ident 2974 2975 _
+        Ident 2978 2985 handler
+      DeferStmt 2987 3018
+        CallExpr 2993 3018 lparen=3016 ellipsis=-1 rparen=3017 args=0
+          FuncLit 2993 3016
+            FuncType 2993 2999 func=2993 tparams=0 results=0
+              FieldList 2997 2999 open=2997 close=2998
+            BlockStmt 3000 3016 rbrace=3015
+              ExprStmt 3004 3013
+                CallExpr 3004 3013 lparen=3011 ellipsis=-1 rparen=3012 args=0
+                  Ident 3004 3011 recover
+      GoStmt 3020 3040
+        CallExpr 3023 3040 lparen=3037 ellipsis=-1 rparen=3039 args=1
+          FuncLit 3023 3037
+            FuncType 3023 3034 func=3023 tparams=0 results=0
+              FieldList 3027 3034 open=3027 close=3033
+                Field 3028 3033 names=1 tag=0 doc=0 comment=0
+                  Ident 3028 3029 n
+                  Ident 3030 3033 int
+            BlockStmt 3035 3037 rbrace=3036
+          BasicLit 3038 3039 INT 1
+      ExprStmt 3042 3053
+        CallExpr 3042 3053 lparen=3051 ellipsis=-1 rparen=3052 args=0
+          FuncLit 3042 3051
+            FuncType 3042 3048 func=3042 tparams=0 results=0
+              FieldList 3046 3048 open=3046 close=3047
+            BlockStmt 3049 3051 rbrace=3050
+comments

@@ -323,11 +323,14 @@ impl Builder {
             if kind < e.kind {
                 e.kind = kind;
             }
-            if !label.is_empty() && !e.label.split(", ").any(|l| l == label) {
-                if !e.label.is_empty() {
-                    e.label.push_str(", ");
+            // Names joined once each: `pets` and `users, pets` make `pets, users`.
+            for part in label.split(", ").filter(|p| !p.is_empty()) {
+                if !e.label.split(", ").any(|l| l == part) {
+                    if !e.label.is_empty() {
+                        e.label.push_str(", ");
+                    }
+                    e.label.push_str(part);
                 }
-                e.label.push_str(label);
             }
             return;
         }

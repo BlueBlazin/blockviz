@@ -1,0 +1,12 @@
+ok
+File 64 91 package=64 doc=1
+  CommentGroup 3 63
+    Comment 3 63 // The file starts with a byte-order mark, which is skipped.
+  Ident 72 75 bom
+  GenDecl 77 91 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 81 91 names=1 type=0 values=1 doc=0 comment=0
+      Ident 81 82 s
+      BasicLit 85 91 STRING "text"
+comments
+  CommentGroup 3 63
+    Comment 3 63 // The file starts with a byte-order mark, which is skipped.

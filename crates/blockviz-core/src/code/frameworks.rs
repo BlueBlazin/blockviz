@@ -447,6 +447,58 @@ pub fn routes(modules: &[super::Module], ix: &super::index::Index) -> Routes {
     let mut regs: Vec<(usize, String, String, usize)> = vec![];
     for (fid, f) in ix.funcs.iter().enumerate() {
         let mi = f.module;
+        if modules[mi].lang == ast::Lang::Go {
+            // The receiver and locals built from a type (`s := &Server{…}`) type method values.
+            let mut locals: HashMap<String, Ty> = HashMap::new();
+            if let (Some(c), Some(p)) = (f.class, f.def.params().first()) {
+                locals.insert(p.clone(), Ty::Inst(c));
+            }
+            for s in f.def.body {
+                if let Stmt::Assign(a) = s {
+                    if let [Expr::Name(n)] = &a.targets[..] {
+                        let t = ix.infer(mi, &a.value, &locals);
+                        if t != Ty::Unknown {
+                            locals.insert(n.id.clone(), t);
+                        }
+                    }
+                }
+            }
+            go_routes(f.def.body, &mut |verb, path, handler| {
+                if let Ty::Func(h) = ix.infer(mi, handler, &locals) {
+                    let reg = (fid, verb, path, h);
+                    if !regs.contains(&reg) {
+                        regs.push(reg);
+                    }
+                }
+            });
+            // `articles.Register(v1.Group("/articles"))`: the function registers under that path.
+            let mut exprs = vec![];
+            super::walk::stmt_exprs(f.def.body, true, &mut |e| exprs.push(e));
+            for e in exprs {
+                super::walk::walk(e, &mut |x| {
+                    let Expr::Call(c) = x else { return };
+                    // chi's `r.Mount("/admin", adminRouter())`: that router's routes are under `/admin`.
+                    if let (Expr::Attribute(m), [path, Expr::Call(inner)]) = (&*c.func, &c.arguments.args[..]) {
+                        if m.attr == "Mount" {
+                            if let (Some(p), Ty::Func(callee)) = (string_literal(path), ix.infer(mi, &inner.func, &locals)) {
+                                nests.push((fid, p.to_string(), callee));
+                            }
+                        }
+                    }
+                    for a in &c.arguments.args {
+                        let Expr::Call(g) = a else { continue };
+                        let Expr::Attribute(m) = &*g.func else { continue };
+                        if !matches!(m.attr.as_str(), "Group" | "PathPrefix") {
+                            continue;
+                        }
+                        if let (Some(p), Ty::Func(callee)) = (g.arguments.args.first().and_then(string_literal), ix.infer(mi, &c.func, &locals)) {
+                            nests.push((fid, p.to_string(), callee));
+                        }
+                    }
+                });
+            }
+            continue;
+        }
         if modules[mi].lang != ast::Lang::Rust {
             continue;
         }
@@ -490,10 +542,52 @@ pub fn routes(modules: &[super::Module], ix: &super::index::Index) -> Routes {
     let mut handlers: HashMap<usize, String> = HashMap::new();
     for (fid, verb, path, h) in regs {
         let full = join_path(prefixes.get(&fid).map(String::as_str).unwrap_or(""), &path);
-        let label = format!("{verb} {full}");
-        handlers.entry(h).and_modify(|l| *l = format!("{l}, {label}")).or_insert(label);
+        let label = format!("{verb} {full}").trim_start().to_string();
+        // `/users` and `/users/` registered for one handler are one route.
+        let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
+        handlers.entry(h).and_modify(|l| {
+            if !l.split(", ").any(|x| same(x, &label)) {
+                *l = format!("{l}, {label}");
+            }
+        }).or_insert(label);
     }
     Routes { handlers, prefixes }
+}
+
+/// Go route registrations in a function body: `r.GET("/users/:id", h)`,
+/// `mux.HandleFunc("GET /items/{id}", h)` (paths already under their group's),
+/// as (verb, path, handler). The handler is the last argument (gin takes
+/// middleware before it).
+fn go_routes<'p>(body: &'p [Stmt], found: &mut impl FnMut(String, String, &'p Expr)) {
+    let mut exprs = vec![];
+    super::walk::stmt_exprs(body, true, &mut |e| exprs.push(e));
+    let mut nested: Vec<&'p [Stmt]> = vec![];
+    for e in exprs {
+        super::walk::walk(e, &mut |x| {
+            // chi's `r.Route("/articles", func(r chi.Router) { … })` registers inside.
+            if let Expr::Function(f) = x {
+                nested.push(&f.body);
+            }
+            let Expr::Call(c) = x else { return };
+            let Expr::Attribute(a) = &*c.func else { return };
+            let (Some(key), Some(handler)) = (c.arguments.args.first().and_then(string_literal), c.arguments.args.last()) else { return };
+            if c.arguments.args.len() < 2 {
+                return;
+            }
+            let m = a.attr.as_str();
+            let (verb, path) = match key.split_once(' ') {
+                Some((v, p)) if v.chars().all(|c| c.is_ascii_uppercase()) && p.starts_with('/') => (v.to_string(), p.to_string()),
+                _ if !key.starts_with('/') && !key.is_empty() => return,
+                _ if matches!(m.to_ascii_lowercase().as_str(), "get" | "post" | "put" | "patch" | "delete" | "head" | "options") => (m.to_ascii_uppercase(), key.to_string()),
+                _ if matches!(m, "Any" | "Handle" | "HandleFunc" | "All") => (String::new(), key.to_string()),
+                _ => return,
+            };
+            found(verb, path, handler);
+        });
+    }
+    for b in nested {
+        go_routes(b, found);
+    }
 }
 
 /// A short tag for decorators without a framework role, or `None` for
@@ -505,6 +599,13 @@ pub fn tag(d: &ast::Decorator, lang: ast::Lang, text: impl Fn(&Expr) -> String) 
     };
     if lang == ast::Lang::Rust {
         return rust_tag(d, func);
+    }
+    // Go has no decorators: the front end names what it found (`test`, `serializable`).
+    if lang == ast::Lang::Go {
+        return match &d.expression {
+            Expr::Call(c) if dotted(func).as_deref() == Some("badge") => c.arguments.args.first().and_then(string_literal).map(str::to_string),
+            _ => None,
+        };
     }
     // Any expression is a decorator since 3.9 (`@buttons[0].cache`).
     let name = dotted(func).unwrap_or_else(|| text(func));

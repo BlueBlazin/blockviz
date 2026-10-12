@@ -244,7 +244,7 @@ pub fn parse(b: &mut Builder, inputs: Vec<JsInput>, resolver: &Resolver, diagnos
                 _ => None,
             })
             .collect();
-        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: false, lang, tags, error });
+        modules.push(Module { file: input.file, path: input.path, dotted, package, src, ast: body, notebook: false, lang, tags, error, namespace: None });
     }
     (modules, headers, failed)
 }

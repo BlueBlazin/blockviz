@@ -115,7 +115,7 @@ pub fn heading(comment: &str) -> Option<String> {
 pub fn is_directive(comment: &str) -> bool {
     let t = comment.trim().trim_start_matches('#').trim().to_ascii_lowercase();
     const PREFIXES: &[&str] = &[
-        "noqa", "type:", "noinspection", "pylint:", "pyright:", "mypy:", "fmt:", "isort:", "pragma", "nosec", "ruff:", "flake8", "coding:", "coding=", "-*-", "!", "todo", "fixme", "xxx", "hack", "note:", "nb:", "http://", "https://", "see ", "see:", "cf.", "endregion", "in[", "pyformat:", "yapf:", "black:", "spellchecker:", "cspell:",
+        "noqa", "type:", "noinspection", "pylint:", "pyright:", "mypy:", "fmt:", "isort:", "pragma", "nosec", "ruff:", "flake8", "coding:", "coding=", "-*-", "!", "todo", "fixme", "xxx", "hack", "note:", "nb:", "http://", "https://", "see ", "see:", "cf.", "endregion", "in[", "pyformat:", "yapf:", "black:", "spellchecker:", "cspell:", "+build", "go:",
     ];
     PREFIXES.iter().any(|p| t.starts_with(p))
 }

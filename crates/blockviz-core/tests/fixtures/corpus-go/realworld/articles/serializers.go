@@ -1,0 +1,180 @@
+package articles
+
+import (
+	"sort"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gothinkster/golang-gin-realworld-example-app/users"
+)
+
+type TagSerializer struct {
+	C *gin.Context
+	TagModel
+}
+
+type TagsSerializer struct {
+	C    *gin.Context
+	Tags []TagModel
+}
+
+func (s *TagSerializer) Response() string {
+	return s.TagModel.Tag
+}
+
+func (s *TagsSerializer) Response() []string {
+	response := []string{}
+	for _, tag := range s.Tags {
+		serializer := TagSerializer{C: s.C, TagModel: tag}
+		response = append(response, serializer.Response())
+	}
+	return response
+}
+
+type ArticleUserSerializer struct {
+	C *gin.Context
+	ArticleUserModel
+}
+
+func (s *ArticleUserSerializer) Response() users.ProfileResponse {
+	response := users.ProfileSerializer{C: s.C, UserModel: s.ArticleUserModel.UserModel}
+	return response.Response()
+}
+
+type ArticleSerializer struct {
+	C *gin.Context
+	ArticleModel
+}
+
+type ArticleResponse struct {
+	ID             uint                  `json:"-"`
+	Title          string                `json:"title"`
+	Slug           string                `json:"slug"`
+	Description    string                `json:"description"`
+	Body           string                `json:"body"`
+	CreatedAt      string                `json:"createdAt"`
+	UpdatedAt      string                `json:"updatedAt"`
+	Author         users.ProfileResponse `json:"author"`
+	Tags           []string              `json:"tagList"`
+	Favorite       bool                  `json:"favorited"`
+	FavoritesCount uint                  `json:"favoritesCount"`
+}
+
+type ArticlesSerializer struct {
+	C        *gin.Context
+	Articles []ArticleModel
+}
+
+func (s *ArticleSerializer) Response() ArticleResponse {
+	myUserModel := s.C.MustGet("my_user_model").(users.UserModel)
+	authorSerializer := ArticleUserSerializer{C: s.C, ArticleUserModel: s.Author}
+	response := ArticleResponse{
+		ID:          s.ID,
+		Slug:        s.Slug,
+		Title:       s.Title,
+		Description: s.Description,
+		Body:        s.Body,
+		CreatedAt:   s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999Z"),
+		//UpdatedAt:      s.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:      s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.999Z"),
+		Author:         authorSerializer.Response(),
+		Favorite:       s.isFavoriteBy(GetArticleUserModel(myUserModel)),
+		FavoritesCount: s.favoritesCount(),
+	}
+	response.Tags = make([]string, 0)
+	for _, tag := range s.Tags {
+		serializer := TagSerializer{C: s.C, TagModel: tag}
+		response.Tags = append(response.Tags, serializer.Response())
+	}
+	sort.Strings(response.Tags)
+	return response
+}
+
+// ResponseWithPreloaded creates response using preloaded favorite data to avoid N+1 queries
+func (s *ArticleSerializer) ResponseWithPreloaded(favorited bool, favoritesCount uint) ArticleResponse {
+	authorSerializer := ArticleUserSerializer{C: s.C, ArticleUserModel: s.Author}
+	response := ArticleResponse{
+		ID:             s.ID,
+		Slug:           s.Slug,
+		Title:          s.Title,
+		Description:    s.Description,
+		Body:           s.Body,
+		CreatedAt:      s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999Z"),
+		UpdatedAt:      s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.999Z"),
+		Author:         authorSerializer.Response(),
+		Favorite:       favorited,
+		FavoritesCount: favoritesCount,
+	}
+	response.Tags = make([]string, 0)
+	for _, tag := range s.Tags {
+		serializer := TagSerializer{C: s.C, TagModel: tag}
+		response.Tags = append(response.Tags, serializer.Response())
+	}
+	sort.Strings(response.Tags)
+	return response
+}
+
+func (s *ArticlesSerializer) Response() []ArticleResponse {
+	response := []ArticleResponse{}
+	if len(s.Articles) == 0 {
+		return response
+	}
+
+	// Batch fetch favorite counts and status
+	var articleIDs []uint
+	for _, article := range s.Articles {
+		articleIDs = append(articleIDs, article.ID)
+	}
+
+	favoriteCounts := BatchGetFavoriteCounts(articleIDs)
+
+	myUserModel := s.C.MustGet("my_user_model").(users.UserModel)
+	articleUserModel := GetArticleUserModel(myUserModel)
+	favoriteStatus := BatchGetFavoriteStatus(articleIDs, articleUserModel.ID)
+
+	for _, article := range s.Articles {
+		serializer := ArticleSerializer{C: s.C, ArticleModel: article}
+		favorited := favoriteStatus[article.ID]
+		count := favoriteCounts[article.ID]
+		response = append(response, serializer.ResponseWithPreloaded(favorited, count))
+	}
+	return response
+}
+
+type CommentSerializer struct {
+	C *gin.Context
+	CommentModel
+}
+
+type CommentsSerializer struct {
+	C        *gin.Context
+	Comments []CommentModel
+}
+
+type CommentResponse struct {
+	ID        uint                  `json:"id"`
+	Body      string                `json:"body"`
+	CreatedAt string                `json:"createdAt"`
+	UpdatedAt string                `json:"updatedAt"`
+	Author    users.ProfileResponse `json:"author"`
+}
+
+func (s *CommentSerializer) Response() CommentResponse {
+	authorSerializer := ArticleUserSerializer{C: s.C, ArticleUserModel: s.Author}
+	response := CommentResponse{
+		ID:        s.ID,
+		Body:      s.Body,
+		CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999Z"),
+		UpdatedAt: s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.999Z"),
+		Author:    authorSerializer.Response(),
+	}
+	return response
+}
+
+func (s *CommentsSerializer) Response() []CommentResponse {
+	response := []CommentResponse{}
+	for _, comment := range s.Comments {
+		serializer := CommentSerializer{C: s.C, CommentModel: comment}
+		response = append(response, serializer.Response())
+	}
+	return response
+}

@@ -70,6 +70,24 @@ pub fn open_mode(c: &ast::ExprCall) -> Io {
     }
 }
 
+/// Go's standard library and common clients, by import path and function.
+fn go_io(path: &str) -> Option<Io> {
+    let (pkg, f) = path.rsplit_once('.')?;
+    Some(match (pkg, f) {
+        ("os", "ReadFile" | "Open" | "ReadDir" | "Stat" | "Lstat") | ("io/ioutil", "ReadFile" | "ReadDir") | ("embed", _) => Io::Read,
+        ("os", "WriteFile" | "Create" | "OpenFile" | "Mkdir" | "MkdirAll" | "Remove" | "RemoveAll" | "Rename" | "Truncate" | "Symlink" | "Chmod") | ("io/ioutil", "WriteFile") => Io::Write,
+        ("net", "Dial" | "DialTimeout" | "Listen" | "ListenTCP" | "ListenUDP" | "DialTCP" | "DialUDP" | "ListenPacket") | ("net/http", "Get" | "Post" | "PostForm" | "Head" | "NewRequest" | "NewRequestWithContext" | "ListenAndServe" | "ListenAndServeTLS" | "Serve") | ("crypto/tls", "Dial" | "Listen") | ("net/rpc", _) | ("net/smtp", _) => Io::Network,
+        ("google.golang.org/grpc", "Dial" | "NewClient" | "DialContext") => Io::Network,
+        // Methods of library objects: `client.Do(req)`, `conn.Write(b)`, `f.ReadAt(…)`.
+        ("net/http.Client", "Do" | "Get" | "Post" | "PostForm" | "Head") | ("net/http.Server", "ListenAndServe" | "ListenAndServeTLS" | "Serve") | ("net.Conn" | "net.TCPConn" | "net.UDPConn" | "net.Listener", _) => Io::Network,
+        ("os.File", "Write" | "WriteString" | "WriteAt" | "Truncate" | "Sync") | ("bufio.Writer", "Flush") => Io::Write,
+        ("os.File", "Read" | "ReadAt" | "ReadDir" | "Readdir" | "Readdirnames") => Io::Read,
+        // Web frameworks' servers.
+        ("github.com/gin-gonic/gin.Engine" | "github.com/gin-gonic/gin.Default" | "github.com/gin-gonic/gin.New", "Run" | "RunTLS" | "RunUnix") | ("github.com/labstack/echo.Echo" | "github.com/labstack/echo/v4.Echo", "Start" | "StartTLS") | ("github.com/gofiber/fiber/v2.App" | "github.com/gofiber/fiber/v3.App", "Listen" | "ListenTLS") => Io::Network,
+        _ => return None,
+    })
+}
+
 /// File or network I/O performed by an external function, by dotted path.
 pub fn io_of(path: &str, c: &ast::ExprCall, src: &Source) -> Option<(String, Io)> {
     let last = path.rsplit('.').next().unwrap_or(path);
@@ -78,6 +96,7 @@ pub fn io_of(path: &str, c: &ast::ExprCall, src: &Source) -> Option<(String, Io)
     let io = match src.lang {
         ast::Lang::JavaScript | ast::Lang::TypeScript => js_io(root.strip_prefix("node:").unwrap_or(root), last),
         ast::Lang::Rust => rust_io(path),
+        ast::Lang::Go => go_io(path),
         ast::Lang::Python => None,
     };
     let io = io.or_else(|| match path {

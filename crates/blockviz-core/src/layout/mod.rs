@@ -211,6 +211,8 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
 /// only inline regions keep one line per port.
 fn bundle(b: &Builder, edges: &[Edge]) -> Vec<Edge> {
     let mut out: Vec<Edge> = vec![];
+    // Edges by their ends, so a region with thousands of them bundles in linear time.
+    let mut at: std::collections::HashMap<(Id, Id, Option<Id>, Option<Id>), usize> = std::collections::HashMap::new();
     for e in edges {
         let mut e = e.clone();
         if e.to_port.is_some() && !b.get(e.to).hints.inline {
@@ -219,7 +221,8 @@ fn bundle(b: &Builder, edges: &[Edge]) -> Vec<Edge> {
         if e.from_port.is_some() && !b.get(e.from).hints.inline {
             e.from_port = None;
         }
-        match out.iter_mut().find(|o| o.from == e.from && o.to == e.to && o.to_port == e.to_port && o.from_port == e.from_port) {
+        let key = (e.from, e.to, e.to_port, e.from_port);
+        match at.get(&key).map(|&i| &mut out[i]) {
             Some(o) => {
                 if e.kind < o.kind {
                     o.kind = e.kind;
@@ -233,7 +236,10 @@ fn bundle(b: &Builder, edges: &[Edge]) -> Vec<Edge> {
                     }
                 }
             }
-            None => out.push(e),
+            None => {
+                at.insert(key, out.len());
+                out.push(e);
+            }
         }
     }
     for e in &mut out {

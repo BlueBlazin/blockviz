@@ -1,0 +1,415 @@
+ok
+File 169 1705 package=169 doc=1
+  CommentGroup 67 168
+    Comment 67 137 // Package declarations covers top-level declarations and the comments
+    Comment 138 168 // go/parser attaches to them.
+  Ident 177 189 declarations
+  GenDecl 191 203 import lparen=-1 rparen=-1 specs=1 doc=0
+    ImportSpec 198 203 name=0 doc=0 comment=0
+      BasicLit 198 203 STRING "fmt"
+  GenDecl 205 341 import lparen=212 rparen=340 specs=5 doc=0
+    ImportSpec 215 223 name=0 doc=0 comment=1
+      BasicLit 215 223 STRING "errors"
+      CommentGroup 224 252
+        Comment 224 252 // line comment on an import
+    ImportSpec 285 298 name=1 doc=1 comment=0
+      CommentGroup 255 283
+        Comment 255 283 // Doc comment on an import.
+      Ident 285 288 str
+      BasicLit 289 298 STRING "strings"
+    ImportSpec 300 308 name=1 doc=0 comment=0
+      Ident 300 301 .
+      BasicLit 302 308 STRING "math"
+    ImportSpec 310 319 name=1 doc=0 comment=0
+      Ident 310 311 _
+      BasicLit 312 319 STRING "embed"
+    ImportSpec 321 339 name=1 doc=0 comment=0
+      Ident 321 324 raw
+      BasicLit 325 339 STRING `unicode/utf8`
+  GenDecl 373 391 const lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 343 372
+      Comment 343 372 // Doc for a single constant.
+    ValueSpec 379 391 names=1 type=0 values=1 doc=0 comment=1
+      Ident 379 381 Pi
+      BasicLit 384 391 FLOAT 3.14159
+      CommentGroup 392 418
+        Comment 392 418 // line comment on a const
+  GenDecl 420 541 const lparen=426 rparen=540 specs=6 doc=0
+    ValueSpec 467 475 names=1 type=0 values=1 doc=1 comment=1
+      CommentGroup 429 465
+        Comment 429 465 // Doc on the first spec of a group.
+      Ident 467 468 A
+      Ident 471 475 iota
+      CommentGroup 476 480
+        Comment 476 480 // a
+    ValueSpec 482 483 names=1 type=0 values=0 doc=0 comment=1
+      Ident 482 483 B
+      CommentGroup 491 495
+        Comment 491 495 // b
+    ValueSpec 497 498 names=1 type=0 values=0 doc=0 comment=0
+      Ident 497 498 C
+    ValueSpec 500 501 names=1 type=0 values=0 doc=0 comment=0
+      Ident 500 501 _
+    ValueSpec 503 528 names=2 type=0 values=2 doc=0 comment=0
+      Ident 503 504 D
+      Ident 506 507 E
+      BinaryExpr 510 518 * op=515
+        Ident 510 514 iota
+        BasicLit 517 518 INT 2
+      BinaryExpr 520 528 * op=525
+        Ident 520 524 iota
+        BasicLit 527 528 INT 3
+    ValueSpec 530 539 names=1 type=1 values=1 doc=0 comment=0
+      Ident 530 531 F
+      Ident 532 535 int
+      BasicLit 538 539 INT 7
+  GenDecl 543 578 const lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 549 578 names=2 type=1 values=2 doc=0 comment=0
+      Ident 549 554 typed
+      Ident 556 563 untyped
+      Ident 564 571 float64
+      BasicLit 574 575 INT 1
+      BasicLit 577 578 INT 2
+  GenDecl 580 589 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 584 589 names=1 type=1 values=0 doc=0 comment=0
+      Ident 584 585 x
+      Ident 586 589 int
+  GenDecl 591 681 var lparen=595 rparen=680 specs=3 doc=0
+    ValueSpec 598 616 names=2 type=0 values=2 doc=0 comment=0
+      Ident 598 599 y
+      Ident 601 602 z
+      BasicLit 608 609 INT 1
+      BasicLit 611 616 STRING "two"
+    ValueSpec 618 642 names=1 type=1 values=0 doc=0 comment=0
+      Ident 618 619 w
+      MapType 626 642
+        Ident 630 636 string
+        ArrayType 637 642 len=0
+          Ident 639 642 int
+    ValueSpec 644 679 names=1 type=0 values=1 doc=0 comment=0
+      Ident 644 651 counter
+      CallExpr 654 679 lparen=677 ellipsis=-1 rparen=678 args=0
+        FuncLit 654 677
+          FuncType 654 664 func=654 tparams=0 results=1
+            FieldList 658 660 open=658 close=659
+            FieldList 661 664 open=-1 close=-1
+              Field 661 664 names=0 tag=0 doc=0 comment=0
+                Ident 661 664 int
+          BlockStmt 665 677 rbrace=676
+            ReturnStmt 667 675 results=1
+              BasicLit 674 675 INT 0
+  GenDecl 683 761 var lparen=-1 rparen=-1 specs=1 doc=0
+    ValueSpec 687 761 names=2 type=1 values=2 doc=0 comment=0
+      Ident 687 689 v1
+      Ident 691 693 v2
+      StructType 694 712
+        FieldList 700 712 open=700 close=711
+          Field 702 710 names=2 tag=0 doc=0 comment=0
+            Ident 702 703 a
+            Ident 705 706 b
+            Ident 707 710 int
+      CompositeLit 715 739 type=1 lbrace=733 rbrace=738 elts=2
+        StructType 715 733
+          FieldList 721 733 open=721 close=732
+            Field 723 731 names=2 tag=0 doc=0 comment=0
+              Ident 723 724 a
+              Ident 726 727 b
+              Ident 728 731 int
+        BasicLit 734 735 INT 1
+        BasicLit 737 738 INT 2
+      CompositeLit 741 761 type=1 lbrace=759 rbrace=760 elts=0
+        StructType 741 759
+          FieldList 747 759 open=747 close=758
+            Field 749 757 names=2 tag=0 doc=0 comment=0
+              Ident 749 750 a
+              Ident 752 753 b
+              Ident 754 757 int
+  GenDecl 787 797 type lparen=-1 rparen=-1 specs=1 doc=1
+    CommentGroup 763 786
+      Comment 763 786 // T is a defined type.
+    TypeSpec 792 797 tparams=0 assign=-1 doc=0 comment=0
+      Ident 792 793 T
+      Ident 794 797 int
+  GenDecl 799 942 type lparen=804 rparen=941 specs=4 doc=0
+    TypeSpec 830 839 tparams=0 assign=836 doc=1 comment=0
+      CommentGroup 807 828
+        Comment 807 828 // Alias is an alias.
+      Ident 830 835 Alias
+      Ident 838 839 T
+    TypeSpec 841 888 tparams=0 assign=-1 doc=0 comment=0
+      Ident 841 846 Point
+      StructType 847 888
+        FieldList 854 888 open=854 close=887
+          Field 858 870 names=2 tag=0 doc=0 comment=1
+            Ident 858 859 X
+            Ident 861 862 Y
+            Ident 863 870 float64
+            CommentGroup 871 885
+              Comment 871 885 // coordinates
+    TypeSpec 890 914 tparams=0 assign=-1 doc=0 comment=0
+      Ident 890 892 Fn
+      FuncType 899 914 func=899 tparams=0 results=1
+        FieldList 903 908 open=903 close=907
+          Field 904 907 names=0 tag=0 doc=0 comment=0
+            Ident 904 907 int
+        FieldList 909 914 open=-1 close=-1
+          Field 909 914 names=0 tag=0 doc=0 comment=0
+            Ident 909 914 error
+    TypeSpec 916 940 tparams=0 assign=-1 doc=0 comment=0
+      Ident 916 924 Embedded
+      StructType 925 940
+        FieldList 931 940 open=931 close=939
+          Field 933 938 names=0 tag=0 doc=0 comment=0
+            Ident 933 938 Point
+  FuncDecl 979 1041 recv=1 body=1 doc=1
+    CommentGroup 944 978
+      Comment 944 978 // Method with a pointer receiver.
+    FieldList 984 994 open=984 close=993
+      Field 985 993 names=1 tag=0 doc=0 comment=0
+        Ident 985 986 p
+        StarExpr 987 993
+          Ident 988 993 Point
+    Ident 995 999 Move
+    FuncType 979 1015 func=979 tparams=0 results=0
+      FieldList 999 1015 open=999 close=1014
+        Field 1000 1014 names=2 tag=0 doc=0 comment=0
+          Ident 1000 1002 dx
+          Ident 1004 1006 dy
+          Ident 1007 1014 float64
+    BlockStmt 1016 1041 rbrace=1040
+      AssignStmt 1019 1028 += tok=1023 lhs=1 rhs=1
+        SelectorExpr 1019 1022
+          Ident 1019 1020 p
+          Ident 1021 1022 X
+        Ident 1026 1028 dx
+      AssignStmt 1030 1039 += tok=1034 lhs=1 rhs=1
+        SelectorExpr 1030 1033
+          Ident 1030 1031 p
+          Ident 1032 1033 Y
+        Ident 1037 1039 dy
+  FuncDecl 1071 1115 recv=1 body=1 doc=1
+    CommentGroup 1043 1070
+      Comment 1043 1070 // Value receiver, unnamed.
+    FieldList 1076 1083 open=1076 close=1082
+      Field 1077 1082 names=0 tag=0 doc=0 comment=0
+        Ident 1077 1082 Point
+    Ident 1084 1088 Zero
+    FuncType 1071 1096 func=1071 tparams=0 results=1
+      FieldList 1088 1090 open=1088 close=1089
+      FieldList 1091 1096 open=-1 close=-1
+        Field 1091 1096 names=0 tag=0 doc=0 comment=0
+          Ident 1091 1096 Point
+    BlockStmt 1097 1115 rbrace=1114
+      ReturnStmt 1099 1113 results=1
+        CompositeLit 1106 1113 type=1 lbrace=1111 rbrace=1112 elts=0
+          Ident 1106 1111 Point
+  FuncDecl 1117 1138 recv=1 body=1 doc=0
+    FieldList 1122 1127 open=1122 close=1126
+      Field 1123 1126 names=1 tag=0 doc=0 comment=0
+        Ident 1123 1124 _
+        Ident 1125 1126 T
+    Ident 1128 1133 Blank
+    FuncType 1117 1135 func=1117 tparams=0 results=0
+      FieldList 1133 1135 open=1133 close=1134
+    BlockStmt 1136 1138 rbrace=1137
+  FuncDecl 1140 1162 recv=0 body=0 doc=0
+    Ident 1145 1151 noBody
+    FuncType 1140 1162 func=1140 tparams=0 results=1
+      FieldList 1151 1158 open=1151 close=1157
+        Field 1152 1157 names=1 tag=0 doc=0 comment=0
+          Ident 1152 1153 x
+          Ident 1154 1157 int
+      FieldList 1159 1162 open=-1 close=-1
+        Field 1159 1162 names=0 tag=0 doc=0 comment=0
+          Ident 1159 1162 int
+  FuncDecl 1164 1270 recv=0 body=1 doc=0
+    Ident 1169 1177 variadic
+    FuncType 1164 1232 func=1164 tparams=0 results=1
+      FieldList 1177 1213 open=1177 close=1212
+        Field 1178 1191 names=1 tag=0 doc=0 comment=0
+          Ident 1178 1184 format
+          Ident 1185 1191 string
+        Field 1193 1212 names=1 tag=0 doc=0 comment=0
+          Ident 1193 1197 args
+          Ellipsis 1198 1212 elt=1
+            InterfaceType 1201 1212
+              FieldList 1210 1212 open=1210 close=1211
+      FieldList 1214 1232 open=1214 close=1231
+        Field 1215 1220 names=1 tag=0 doc=0 comment=0
+          Ident 1215 1216 n
+          Ident 1217 1220 int
+        Field 1222 1231 names=1 tag=0 doc=0 comment=0
+          Ident 1222 1225 err
+          Ident 1226 1231 error
+    BlockStmt 1233 1270 rbrace=1269
+      ReturnStmt 1236 1268 results=1
+        CallExpr 1243 1268 lparen=1254 ellipsis=-1 rparen=1267 args=2
+          SelectorExpr 1243 1254
+            Ident 1243 1246 fmt
+            Ident 1247 1254 Println
+          Ident 1255 1261 format
+          Ident 1263 1267 args
+  FuncDecl 1272 1341 recv=0 body=1 doc=0
+    Ident 1277 1284 results
+    FuncType 1272 1307 func=1272 tparams=0 results=1
+      FieldList 1284 1286 open=1284 close=1285
+      FieldList 1287 1307 open=1287 close=1306
+        Field 1288 1291 names=0 tag=0 doc=0 comment=0
+          Ident 1288 1291 int
+        Field 1293 1299 names=0 tag=0 doc=0 comment=0
+          Ident 1293 1299 string
+        Field 1301 1306 names=0 tag=0 doc=0 comment=0
+          Ident 1301 1306 error
+    BlockStmt 1308 1341 rbrace=1340
+      ReturnStmt 1310 1339 results=3
+        BasicLit 1317 1318 INT 0
+        BasicLit 1320 1322 STRING ""
+        CallExpr 1324 1339 lparen=1334 ellipsis=-1 rparen=1338 args=1
+          SelectorExpr 1324 1334
+            Ident 1324 1330 errors
+            Ident 1331 1334 New
+          BasicLit 1335 1338 STRING "e"
+  FuncDecl 1343 1387 recv=0 body=1 doc=0
+    Ident 1348 1353 named
+    FuncType 1343 1376 func=1343 tparams=0 results=1
+      FieldList 1353 1355 open=1353 close=1354
+      FieldList 1356 1376 open=1356 close=1375
+        Field 1357 1365 names=2 tag=0 doc=0 comment=0
+          Ident 1357 1358 a
+          Ident 1360 1361 b
+          Ident 1362 1365 int
+        Field 1367 1375 names=1 tag=0 doc=0 comment=0
+          Ident 1367 1368 c
+          Ident 1369 1375 string
+    BlockStmt 1377 1387 rbrace=1386
+      ReturnStmt 1379 1385 results=0
+  FuncDecl 1389 1435 recv=0 body=1 doc=0
+    Ident 1394 1407 unnamedParams
+    FuncType 1389 1432 func=1389 tparams=0 results=0
+      FieldList 1407 1432 open=1407 close=1431
+        Field 1408 1411 names=0 tag=0 doc=0 comment=0
+          Ident 1408 1411 int
+        Field 1413 1419 names=0 tag=0 doc=0 comment=0
+          Ident 1413 1419 string
+        Field 1421 1431 names=0 tag=0 doc=0 comment=0
+          Ellipsis 1421 1431 elt=1
+            Ident 1424 1431 float64
+    BlockStmt 1433 1435 rbrace=1434
+  FuncDecl 1437 1473 recv=0 body=1 doc=0
+    Ident 1442 1453 blankParams
+    FuncType 1437 1470 func=1437 tparams=0 results=0
+      FieldList 1453 1470 open=1453 close=1469
+        Field 1454 1459 names=1 tag=0 doc=0 comment=0
+          Ident 1454 1455 _
+          Ident 1456 1459 int
+        Field 1461 1469 names=1 tag=0 doc=0 comment=0
+          Ident 1461 1462 _
+          Ident 1463 1469 string
+    BlockStmt 1471 1473 rbrace=1472
+  FuncDecl 1475 1530 recv=0 body=1 doc=0
+    Ident 1480 1491 paramGroups
+    FuncType 1475 1527 func=1475 tparams=0 results=0
+      FieldList 1491 1527 open=1491 close=1526
+        Field 1492 1500 names=2 tag=0 doc=0 comment=0
+          Ident 1492 1493 a
+          Ident 1495 1496 b
+          Ident 1497 1500 int
+        Field 1502 1510 names=1 tag=0 doc=0 comment=0
+          Ident 1502 1503 c
+          Ident 1504 1510 string
+        Field 1512 1526 names=3 tag=0 doc=0 comment=0
+          Ident 1512 1513 d
+          Ident 1515 1516 e
+          Ident 1518 1519 f
+          ArrayType 1520 1526 len=0
+            Ident 1522 1526 byte
+    BlockStmt 1528 1530 rbrace=1529
+  FuncDecl 1532 1629 recv=0 body=1 doc=0
+    Ident 1537 1547 funcParams
+    FuncType 1532 1613 func=1532 tparams=0 results=1
+      FieldList 1547 1606 open=1547 close=1605
+        Field 1548 1563 names=1 tag=0 doc=0 comment=0
+          Ident 1548 1549 f
+          FuncType 1550 1563 func=1550 tparams=0 results=1
+            FieldList 1554 1559 open=1554 close=1558
+              Field 1555 1558 names=0 tag=0 doc=0 comment=0
+                Ident 1555 1558 int
+            FieldList 1560 1563 open=-1 close=-1
+              Field 1560 1563 names=0 tag=0 doc=0 comment=0
+                Ident 1560 1563 int
+        Field 1565 1586 names=1 tag=0 doc=0 comment=0
+          Ident 1565 1566 g
+          FuncType 1567 1586 func=1567 tparams=0 results=1
+            FieldList 1571 1573 open=1571 close=1572
+            FieldList 1574 1586 open=1574 close=1585
+              Field 1575 1578 names=0 tag=0 doc=0 comment=0
+                Ident 1575 1578 int
+              Field 1580 1585 names=0 tag=0 doc=0 comment=0
+                Ident 1580 1585 error
+        Field 1588 1605 names=1 tag=0 doc=0 comment=0
+          Ident 1588 1589 h
+          FuncType 1590 1605 func=1590 tparams=0 results=0
+            FieldList 1594 1605 open=1594 close=1604
+              Field 1595 1604 names=0 tag=0 doc=0 comment=0
+                Ellipsis 1595 1604 elt=1
+                  Ident 1598 1604 string
+      FieldList 1607 1613 open=-1 close=-1
+        Field 1607 1613 names=0 tag=0 doc=0 comment=0
+          FuncType 1607 1613 func=1607 tparams=0 results=0
+            FieldList 1611 1613 open=1611 close=1612
+    BlockStmt 1614 1629 rbrace=1628
+      ReturnStmt 1617 1627 results=1
+        Ident 1624 1627 nil
+  FuncDecl 1631 1645 recv=0 body=1 doc=0
+    Ident 1636 1640 init
+    FuncType 1631 1642 func=1631 tparams=0 results=0
+      FieldList 1640 1642 open=1640 close=1641
+    BlockStmt 1643 1645 rbrace=1644
+  FuncDecl 1647 1689 recv=0 body=1 doc=0
+    Ident 1652 1656 init
+    FuncType 1647 1658 func=1647 tparams=0 results=0
+      FieldList 1656 1658 open=1656 close=1657
+    BlockStmt 1659 1689 rbrace=1688
+      AssignStmt 1662 1677 = tok=1664 lhs=1 rhs=1
+        Ident 1662 1663 _
+        SelectorExpr 1666 1677
+          Ident 1666 1669 str
+          Ident 1670 1677 ToUpper
+      AssignStmt 1679 1687 = tok=1681 lhs=1 rhs=1
+        Ident 1679 1680 _
+        Ident 1683 1687 Sqrt
+  FuncDecl 1691 1705 recv=0 body=1 doc=0
+    Ident 1696 1700 main
+    FuncType 1691 1702 func=1691 tparams=0 results=0
+      FieldList 1700 1702 open=1700 close=1701
+    BlockStmt 1703 1705 rbrace=1704
+comments
+  CommentGroup 0 65
+    Comment 0 65 // Copyright header: a comment group that is not the package doc.
+  CommentGroup 67 168
+    Comment 67 137 // Package declarations covers top-level declarations and the comments
+    Comment 138 168 // go/parser attaches to them.
+  CommentGroup 224 252
+    Comment 224 252 // line comment on an import
+  CommentGroup 255 283
+    Comment 255 283 // Doc comment on an import.
+  CommentGroup 343 372
+    Comment 343 372 // Doc for a single constant.
+  CommentGroup 392 418
+    Comment 392 418 // line comment on a const
+  CommentGroup 429 465
+    Comment 429 465 // Doc on the first spec of a group.
+  CommentGroup 476 480
+    Comment 476 480 // a
+  CommentGroup 491 495
+    Comment 491 495 // b
+  CommentGroup 763 786
+    Comment 763 786 // T is a defined type.
+  CommentGroup 807 828
+    Comment 807 828 // Alias is an alias.
+  CommentGroup 871 885
+    Comment 871 885 // coordinates
+  CommentGroup 944 978
+    Comment 944 978 // Method with a pointer receiver.
+  CommentGroup 1043 1070
+    Comment 1043 1070 // Value receiver, unnamed.
