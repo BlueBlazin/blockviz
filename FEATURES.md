@@ -76,7 +76,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 
 - Calls into project code, calls on sub-modules (`self.attn(x)`), library operations and I/O. Glue such as reshapes, builtins and size arithmetic is folded into the step it feeds.
 - Titles are names, not cut-off code: `view · transpose`, the variable a step produces, or the field a store sets.
-- `a + b` of two computed values is a ⊕.
+- **Operators**: values combined by `+ − × ÷ @ // % **` are a circle (⊕, ×, …) in every language. `a + b + c` is one ⊕ of three. A constant (`T + 1`) or a longer formula stays a formula step.
 - Prints, asserts, imports, docstrings and `super().__init__()` become side-effect marks, not blocks.
 - **Loops and branches** are drawn inline with repeat counts (`× n_layer`). A lone guarded statement gets an `if …` tag; long switches become a table of their arms.
 - **Every way out is visible**: guarded exits (`return None · if value is None`), errors (`returns error`) and every returned value.

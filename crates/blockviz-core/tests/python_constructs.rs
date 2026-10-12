@@ -326,3 +326,40 @@ def main():
     let lookup = calls_in("product", "lookup");
     assert_eq!((lookup[0].subtitle.as_str(), lookup[0].reference), ("MemoryCache or RedisCache", Some(node("Cache", "lookup").id)));
 }
+
+/// The operators a function's dataflow passes through, in source order.
+fn operators(s: &blockviz_core::ir::Scene, f: &str) -> Vec<(String, usize)> {
+    let f = s.nodes.iter().find(|n| n.title == f && n.kind == blockviz_core::ir::Kind::Function).unwrap();
+    let mut out: Vec<_> = descendants(s, f).into_iter().filter(|n| n.kind == blockviz_core::ir::Kind::Glyph).map(|g| {
+        let parent = &s.nodes[g.parent.unwrap() as usize];
+        (g.title.clone(), parent.edges.iter().filter(|e| e.to == g.id).count(), g.span.as_ref().map_or(0, |sp| sp.start))
+    }).collect();
+    out.sort_by_key(|o| o.2);
+    out.into_iter().map(|(t, n, _)| (t, n)).collect()
+}
+
+#[test]
+fn values_combined_by_an_operator_are_the_operator() {
+    let s = analyze(
+        r#"
+from app.io import load
+
+def f(p, q, r, obj):
+    a = load(p)
+    b = load(q)
+    c = load(r)
+    s = a + b
+    t = a + b + c
+    u = a * 2
+    v = a % b
+    w = a + a
+    obj.k = a - b
+    x = a @ (b * c)
+    return s, t, u, v, w, x
+"#,
+    );
+    // Two values (`a + b`, `a % b`), or a chain of them (`a + b + c`, one sum of
+    // three), are an operator; a constant (`a * 2`), a value with itself, a
+    // store into a field and a formula operand (`b * c`) are formula steps.
+    assert_eq!(operators(&s, "f"), vec![("+".into(), 2), ("+".into(), 3), ("%".into(), 2)]);
+}

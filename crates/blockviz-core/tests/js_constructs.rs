@@ -596,3 +596,17 @@ fn type_parameters_are_the_type_they_extend() {
     assert_eq!(calls(cached_find), [Some(pg_find.id)]);
     assert_eq!(calls(find(&s, "lookup")), [Some(pg_find.id)]);
 }
+
+#[test]
+fn values_combined_by_an_operator_are_the_operator() {
+    let s = analyze(&[(
+        "f.js",
+        "import { load } from './io.js';\nexport function f(p, q, r, obj) {\n  const a = load(p);\n  const b = load(q);\n  const c = load(r);\n  const s = a + b;\n  const t = a + b + c;\n  const u = a * 2;\n  const v = a % b;\n  const w = a + a;\n  obj.k = a - b;\n  return [s, t, u, v, w];\n}\n",
+    ), ("io.js", "export function load(p) { return JSON.parse(p); }\n")]);
+    let f = find(&s, "f");
+    let mut ops: Vec<(String, usize)> = descendants(&s, f).into_iter().filter(|n| n.kind == Kind::Glyph).map(|g| (g.title.clone(), s.nodes[g.parent.unwrap() as usize].edges.iter().filter(|e| e.to == g.id).count())).collect();
+    ops.sort();
+    // `a % b`, `a + b`, and `a + b + c` as one sum of three; `a * 2`, `a + a` and
+    // the store into a field are formula steps.
+    assert_eq!(ops, vec![("%".into(), 2), ("+".into(), 2), ("+".into(), 3)]);
+}

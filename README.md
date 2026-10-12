@@ -51,7 +51,7 @@ The goal is blocks a reader would name, not a syntax tree.
 
 * A block is created for calls into project code, calls on sub-modules (`self.attn(x)`), library operations and I/O. Glue (reshapes, builtins, arithmetic on sizes) is folded into the block it feeds, or into one block per statement.
 * A block's title is a name, never cut-off code: the operation for calls (`view · transpose`), the developer's own name for a value it produces (`token`, `allow_env_proxies`), the field a store sets (`Authorization`, captioned `set in request.headers`). The caption says how, as the formula with long parts elided whole (`settings.SENTRY_DSN and …`). Code appears in a title only when it fits whole (`T + 1`).
-* `a + b` of two computed values becomes a ⊕ (residual connections, positional encodings).
+* Values combined by an arithmetic operator are the operator, drawn as a circle (⊕, −, ×, ÷, @, //, %, ^) in every language: residual connections, positional encodings, `loss / steps`. Each operand must be a single value from a different place; `a + b + c` is one ⊕ of three. A constant operand (`T + 1`), a longer formula or a store into a field stays a formula step.
 * `print`, `assert`, imports, docstrings and `super().__init__()` never become blocks; side effects show as a marker and in the inspector.
 * `if __name__ == "__main__"` is an entry-point marker plus a "Main" section, never a box containing `__name__`.
 * Small loops and branches are drawn inline, like the "N×" box of an architecture figure, with repeat counts inferred from the code (`× n_layer` from `ModuleList([... for _ in range(config.n_layer)])`). A lone guarded statement gets an `if …` tag instead of a box.

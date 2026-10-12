@@ -626,3 +626,17 @@ fn inline_modules_hold_their_types() {
     let edges: Vec<(String, String)> = s.nodes.iter().flat_map(|n| n.edges.iter()).map(|e| (s.nodes[e.from as usize].title.clone(), s.nodes[e.to as usize].title.clone())).collect();
     assert!(!edges.iter().any(|(f, t)| f == "report.rs" && t == "main.rs"), "{edges:?}");
 }
+
+#[test]
+fn values_combined_by_an_operator_are_the_operator() {
+    let s = analyze(&[
+        ("Cargo.toml", "[package]\nname = \"ops\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        ("src/lib.rs", "pub struct Obj { pub k: u32 }\n\nfn load(p: u32) -> u32 { p }\n\npub fn f(p: u32, q: u32, r: u32, obj: &mut Obj) -> (u32, u32, u32, u32, u32) {\n    let a = load(p);\n    let b = load(q);\n    let c = load(r);\n    let s = a + b;\n    let t = a + b + c;\n    let u = a * 2;\n    let v = a % b;\n    let w = a + a;\n    obj.k = a - b;\n    (s, t, u, v, w)\n}\n"),
+    ]);
+    let f = find(&s, "f");
+    let mut ops: Vec<(String, usize)> = descendants(&s, f).into_iter().filter(|n| n.kind == Kind::Glyph).map(|g| (g.title.clone(), s.nodes[g.parent.unwrap() as usize].edges.iter().filter(|e| e.to == g.id).count())).collect();
+    ops.sort();
+    // `a % b`, `a + b`, and `a + b + c` as one sum of three; `a * 2`, `a + a` and
+    // the store into a field are formula steps.
+    assert_eq!(ops, vec![("%".into(), 2), ("+".into(), 2), ("+".into(), 3)]);
+}

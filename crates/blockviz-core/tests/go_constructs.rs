@@ -265,3 +265,17 @@ fn every_go_file_is_analyzed_not_outlined() {
     let keys: Vec<&str> = ext.rows.iter().map(|r| r.key.as_str()).collect();
     assert_eq!(keys, ["github.com/gin-gonic/gin", "github.com/jmoiron/sqlx", "github.com/spf13/cobra"]);
 }
+
+#[test]
+fn values_combined_by_an_operator_are_the_operator() {
+    let s = analyze(&[
+        ("go.mod", "module example.com/ops\n"),
+        ("ops.go", "package ops\n\ntype Obj struct{ K int }\n\nfunc load(p int) int { return p }\n\nfunc F(p, q, r int, obj *Obj) (int, int, int, int, int) {\n\ta := load(p)\n\tb := load(q)\n\tc := load(r)\n\ts := a + b\n\tt := a + b + c\n\tu := a * 2\n\tv := a % b\n\tw := a + a\n\tobj.K = a - b\n\treturn s, t, u, v, w\n}\n"),
+    ]);
+    let f = find(&s, "F");
+    let mut ops: Vec<(String, usize)> = descendants(&s, f).into_iter().filter(|n| n.kind == Kind::Glyph).map(|g| (g.title.clone(), s.nodes[g.parent.unwrap() as usize].edges.iter().filter(|e| e.to == g.id).count())).collect();
+    ops.sort();
+    // `a % b`, `a + b`, and `a + b + c` as one sum of three; `a * 2`, `a + a` and
+    // the store into a field are formula steps.
+    assert_eq!(ops, vec![("%".into(), 2), ("+".into(), 2), ("+".into(), 3)]);
+}

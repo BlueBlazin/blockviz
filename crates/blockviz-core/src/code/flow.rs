@@ -1988,12 +1988,12 @@ impl<'c, 'p> Fb<'c, 'p> {
     fn aug_assign(&mut self, s: &'p Stmt, a: &'p ast::StmtAugAssign) {
         let mut g = Gather::default();
         let mut vals = self.collect(&a.target, &mut g, false);
-        let rhs = self.collect(&a.value, &mut g, false);
-
-        let both_rich = vals.iter().any(|v| !v.scalar) && rhs.iter().any(|v| !v.scalar);
+        let mut rhs = self.collect(&a.value, &mut g, false);
+        dedup_vals(&mut rhs);
+        // `x += y`: two values combined, as `x = x + y` is.
+        let glyph = matches!(&*a.target, Expr::Name(_)) && vals.len() == 1 && rhs.len() == 1 && plain_operand(&a.value) && apart(&vals[0], &rhs[0]) && is_arithmetic(a.op);
         vals.extend(rhs);
         dedup_vals(&mut vals);
-        let glyph = both_rich && matches!(a.op, ast::Operator::Add | ast::Operator::Mult | ast::Operator::MatMult);
         let id = if glyph {
             let id = self.add(Kind::Glyph, Shape::Glyph, op_symbol(a.op));
             self.cx.b.get_mut(id).category = "op";
@@ -4247,26 +4247,42 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
         }
         if let Expr::BinOp(b) = e {
-            if matches!(b.op, ast::Operator::Add | ast::Operator::Mult | ast::Operator::MatMult | ast::Operator::Sub) {
-                let mut left = self.collect(&b.left, g, false);
-                let mut right = self.collect(&b.right, g, false);
-                dedup_vals(&mut left);
-                dedup_vals(&mut right);
-                let rich = |v: &Vec<Val>| v.iter().any(|x| !x.scalar && x.style == Style::Data);
-                if rich(&left) && rich(&right) && left.len() == 1 && right.len() == 1 {
+            if is_arithmetic(b.op) {
+                let mut terms = vec![];
+                operands(e, b.op, &mut terms);
+                let parts: Vec<Vec<Val>> = terms
+                    .iter()
+                    .map(|t| {
+                        let mut v = self.collect(t, g, false);
+                        dedup_vals(&mut v);
+                        v
+                    })
+                    .collect();
+                // Values combined by an operator are the operator (⊕, ×, @…), in
+                // every language, decided by the expression's shape alone: each
+                // operand a single value (not a constant or a formula of its own),
+                // all from different places (`a + b + c` is one sum of three), and
+                // the result named or passed on. A constant operand (`T + 1`), a
+                // longer formula or a store into a field (whose name says what it
+                // is) stays a formula step.
+                let combines = matches!(dest, Dest::None | Dest::Names(_))
+                    && terms.iter().all(|t| plain_operand(t))
+                    && parts.iter().all(|p| p.len() == 1)
+                    && (0..parts.len()).all(|i| (0..i).all(|j| apart(&parts[i][0], &parts[j][0])));
+                if combines {
                     let id = self.add(Kind::Glyph, Shape::Glyph, op_symbol(b.op));
                     self.cx.b.get_mut(id).category = "op";
                     self.cx.b.get_mut(id).code = compact(self.src().of(e), 160);
                     let span = self.src().span(e.range());
                     self.cx.b.get_mut(id).span = Some(span);
-                    for v in left.iter().chain(&right) {
+                    for v in parts.iter().flatten() {
                         self.link(v, id);
                     }
                     return Outcome { node: Some(id), ..Outcome::none() };
                 }
-                let scalar = !rich(&left) && !rich(&right);
-                let mut vals = left;
-                vals.extend(right);
+                let rich = |v: &Vec<Val>| v.iter().any(|x| !x.scalar && x.style == Style::Data);
+                let scalar = parts.iter().all(|p| !rich(p));
+                let mut vals: Vec<Val> = parts.into_iter().flatten().collect();
                 dedup_vals(&mut vals);
                 if vals.is_empty() {
                     return Outcome::none();
@@ -4791,6 +4807,37 @@ fn return_label(vals: &[Val]) -> String {
     naming::list(&labels, 32)
 }
 
+/// An operand that is one value as written: not a constant, and not a
+/// formula of its own (`3 * n`, `-x`, `a if c else b`).
+fn plain_operand(e: &Expr) -> bool {
+    !is_constant(e) && !matches!(e, Expr::BinOp(_) | Expr::UnaryOp(_) | Expr::BoolOp(_) | Expr::Compare(_) | Expr::If(_) | Expr::Template(_) | Expr::Lambda(_) | Expr::Dict(_) | Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) | Expr::Comp(_))
+}
+
+/// The operands of `e` under `op`: both sides, and for a sum or product the
+/// whole chain (`a + b + c` is three operands, `a + b * c` two).
+fn operands<'e>(e: &'e Expr, op: ast::Operator, out: &mut Vec<&'e Expr>) {
+    let chain = matches!(op, ast::Operator::Add | ast::Operator::Mult);
+    match e {
+        Expr::BinOp(b) if b.op == op && chain => {
+            operands(&b.left, op, out);
+            operands(&b.right, op, out);
+        }
+        Expr::BinOp(b) if b.op == op && out.is_empty() => out.extend([&*b.left, &*b.right]),
+        _ => out.push(e),
+    }
+}
+
+/// Two values from different places (`x * x` combines one line with itself).
+fn apart(a: &Val, b: &Val) -> bool {
+    !a.srcs.iter().any(|s| b.srcs.contains(s))
+}
+
+/// Operators drawn as a circle when they combine two values.
+fn is_arithmetic(op: ast::Operator) -> bool {
+    use ast::Operator as O;
+    matches!(op, O::Add | O::Sub | O::Mult | O::MatMult | O::Div | O::FloorDiv | O::Mod | O::Pow)
+}
+
 fn op_symbol(op: ast::Operator) -> &'static str {
     match op {
         ast::Operator::Add => "+",
@@ -4798,6 +4845,9 @@ fn op_symbol(op: ast::Operator) -> &'static str {
         ast::Operator::Mult => "×",
         ast::Operator::MatMult => "@",
         ast::Operator::Div => "÷",
+        ast::Operator::FloorDiv => "//",
+        ast::Operator::Mod => "%",
+        ast::Operator::Pow => "^",
         _ => "∘",
     }
 }
