@@ -245,6 +245,83 @@ pub struct Stats {
     pub max_depth: u32,
 }
 
+/// Nodes by id, held in chunks of a fixed size so that the list grows
+/// without moving: a vector doubles by copying every node, holding both
+/// copies for a moment, and can leave half of itself unused.
+#[derive(Default)]
+pub struct Nodes {
+    chunks: Vec<Vec<Node>>,
+}
+
+/// Nodes per chunk: a power of two, so an id splits with a shift and a mask.
+const CHUNK: usize = 1 << 12;
+
+impl Nodes {
+    pub fn push(&mut self, node: Node) {
+        if self.chunks.last().is_none_or(|c| c.len() == CHUNK) {
+            self.chunks.push(Vec::with_capacity(CHUNK));
+        }
+        self.chunks.last_mut().unwrap().push(node);
+    }
+
+    pub fn len(&self) -> usize {
+        self.chunks.last().map_or(0, |c| (self.chunks.len() - 1) * CHUNK + c.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    pub fn iter(&self) -> std::iter::Flatten<std::slice::Iter<'_, Vec<Node>>> {
+        self.chunks.iter().flatten()
+    }
+
+    pub fn iter_mut(&mut self) -> std::iter::Flatten<std::slice::IterMut<'_, Vec<Node>>> {
+        self.chunks.iter_mut().flatten()
+    }
+}
+
+impl std::ops::Index<usize> for Nodes {
+    type Output = Node;
+    fn index(&self, i: usize) -> &Node {
+        &self.chunks[i / CHUNK][i % CHUNK]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Nodes {
+    fn index_mut(&mut self, i: usize) -> &mut Node {
+        &mut self.chunks[i / CHUNK][i % CHUNK]
+    }
+}
+
+impl<'a> IntoIterator for &'a Nodes {
+    type Item = &'a Node;
+    type IntoIter = std::iter::Flatten<std::slice::Iter<'a, Vec<Node>>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Nodes {
+    type Item = &'a mut Node;
+    type IntoIter = std::iter::Flatten<std::slice::IterMut<'a, Vec<Node>>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl Serialize for Nodes {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self)
+    }
+}
+
+impl std::fmt::Debug for Nodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self).finish()
+    }
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Scene {
@@ -253,7 +330,7 @@ pub struct Scene {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
     pub root: Id,
-    pub nodes: Vec<Node>,
+    pub nodes: Nodes,
     pub files: Vec<FileMeta>,
     pub diagnostics: Vec<String>,
     pub stats: Stats,
@@ -262,7 +339,7 @@ pub struct Scene {
 /// Arena used while building a scene.
 #[derive(Default)]
 pub struct Builder {
-    pub nodes: Vec<Node>,
+    pub nodes: Nodes,
 }
 
 impl Builder {
@@ -383,8 +460,8 @@ impl Builder {
         d
     }
 
-    /// Compacts the arena in place to nodes reachable from `root`, renumbering ids.
-    pub fn finish(mut self, root: Id) -> (Vec<Node>, Id) {
+    /// The nodes reachable from `root`, renumbered in order.
+    pub fn finish(self, root: Id) -> (Nodes, Id) {
         let mut keep = vec![false; self.nodes.len()];
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
@@ -412,20 +489,24 @@ impl Builder {
                 *id = map[*id as usize];
             }
         };
-        self.nodes.retain(|n| keep[n.id as usize]);
-        for n in &mut self.nodes {
-            n.id = map[n.id as usize];
-            n.parent = n.parent.and_then(new);
-            n.reference = n.reference.and_then(new);
-            n.link = n.link.and_then(new);
-            remap(&mut n.used_by);
-            remap(&mut n.children);
-            n.edges.retain(|e| keep[e.from as usize] && keep[e.to as usize]);
-            for e in &mut n.edges {
-                e.from = map[e.from as usize];
-                e.to = map[e.to as usize];
+        // Chunk by chunk, each freed for the next once its nodes have moved.
+        let mut nodes = Nodes::default();
+        for chunk in self.nodes.chunks {
+            for mut n in chunk.into_iter().filter(|n| keep[n.id as usize]) {
+                n.id = map[n.id as usize];
+                n.parent = n.parent.and_then(new);
+                n.reference = n.reference.and_then(new);
+                n.link = n.link.and_then(new);
+                remap(&mut n.used_by);
+                remap(&mut n.children);
+                n.edges.retain(|e| keep[e.from as usize] && keep[e.to as usize]);
+                for e in &mut n.edges {
+                    e.from = map[e.from as usize];
+                    e.to = map[e.to as usize];
+                }
+                nodes.push(n);
             }
         }
-        (self.nodes, map[root as usize])
+        (nodes, map[root as usize])
     }
 }
