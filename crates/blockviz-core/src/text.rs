@@ -43,6 +43,10 @@ pub fn squash(s: &str) -> String {
 /// The first `n` characters of `squash(s)`, read no further: enough to tell
 /// whether the text fits in fewer, however long it is.
 pub fn squash_head(s: &str, n: usize) -> String {
+    // Most code is one line with single spaces already, and short: copied.
+    if s.len() <= n && is_squashed(s) {
+        return s.to_string();
+    }
     let mut out = String::with_capacity(s.len().min(n));
     let mut left = n;
     for word in s.split_whitespace() {
@@ -67,6 +71,13 @@ pub fn squash_head(s: &str, n: usize) -> String {
         }
     }
     out
+}
+
+/// Whether `squash(s)` is `s`: printable ASCII with single spaces between
+/// words (other text may hold Unicode's spaces, so it is not looked into).
+fn is_squashed(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.first() != Some(&b' ') && b.last() != Some(&b' ') && b.iter().all(|c| (b' '..0x7f).contains(c)) && !b.windows(2).any(|w| w == b"  ")
 }
 
 /// Shortens to at most `max` characters with an ellipsis.
@@ -171,7 +182,9 @@ pub fn summary(doc: &str) -> String {
         }
         kept.push(l);
     }
-    let text = squash(&kept.join(" "));
+    // Only the first sentence is kept, clipped to 160 characters: one more
+    // tells whether there was more, however long the documentation.
+    let text = squash_head(&kept.join(" "), 161);
     let mut end = text.len();
     for (i, c) in text.char_indices() {
         if (c == '.' || c == '!' || c == '?') && text[i + 1..].starts_with(' ') && i > 12 {
@@ -196,6 +209,8 @@ mod tests {
         assert_eq!(squash("  f(a,\n\t  b)  "), "f(a, b)");
         assert_eq!(squash_head("  f(a,\n\t  b)  ", 5), "f(a, ");
         assert_eq!(squash_head("f(a, b)", 99), "f(a, b)");
+        assert_eq!(squash_head("f(a,  b)", 99), "f(a, b)");
+        assert_eq!(squash("a\u{a0}b\u{2028}\x0bc"), "a b c");
     }
     #[test]
     fn clips_at_words() {
