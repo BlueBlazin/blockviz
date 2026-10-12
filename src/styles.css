@@ -204,3 +204,14 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
   .stats { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+/* Hover card: what a block is, beside the pointer. */
+.tooltip {
+  position: fixed; z-index: 15; pointer-events: none; max-width: 340px;
+  background: rgba(23, 25, 29, 0.94); color: #fff; border-radius: 8px; padding: 6px 9px 7px;
+  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.18); font-size: 12px; line-height: 1.4;
+}
+.tt-title { font-weight: 600; word-break: break-word; }
+.tt-title.mono { font-family: var(--mono); font-weight: 500; font-size: 11.5px; }
+.tt-meta { color: #c9cdd3; }
+.tt-hint { color: #9aa3ae; font-size: 11px; margin-top: 2px; }

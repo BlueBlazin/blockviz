@@ -8,6 +8,8 @@ export interface ViewState { path: number[]; zoom: number }
 export interface EngineEvents {
   onView(state: ViewState): void;
   onSelect(id: number | null, path: number[] | null): void;
+  /** The block under the pointer changed (null: none, or the view is moving). */
+  onHover?(id: number | null, x: number, y: number): void;
 }
 
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -273,6 +275,7 @@ export class Engine {
   private wheel = (e: WheelEvent) => {
     e.preventDefault();
     this.flight = null;
+    this.unhover();
     const p = this.point(e);
     const lineMode = e.deltaMode === 1;
     const dy = lineMode ? e.deltaY * 16 : e.deltaY;
@@ -291,6 +294,7 @@ export class Engine {
   private down = (e: PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
     this.flight = null;
+    this.unhover();
     this.canvas.setPointerCapture(e.pointerId);
     const p = this.point(e);
     this.pointers.set(e.pointerId, p);
@@ -306,6 +310,7 @@ export class Engine {
       if (id !== this.hover) {
         this.hover = id;
         this.canvas.style.cursor = id === null ? 'grab' : 'pointer';
+        this.events.onHover?.(id, e.clientX, e.clientY);
         this.invalidate();
       }
       return;
@@ -344,11 +349,16 @@ export class Engine {
   };
 
   private leave = () => {
-    if (this.hover !== null) {
-      this.hover = null;
-      this.invalidate();
-    }
+    this.unhover();
   };
+
+  /** Forgets the hovered block while the view moves; the next pointer move finds it again. */
+  private unhover() {
+    if (this.hover === null) return;
+    this.hover = null;
+    this.events.onHover?.(null, 0, 0);
+    this.invalidate();
+  }
 
   private dblclick = (e: MouseEvent) => {
     const p = this.point(e);

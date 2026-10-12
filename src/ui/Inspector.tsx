@@ -5,7 +5,7 @@ import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
 import { CodeView } from './CodeView';
 
-const KIND_LABEL: Record<string, string> = {
+export const KIND_LABEL: Record<string, string> = {
   repo: 'Repository', dir: 'Folder', file: 'File', notebook: 'Notebook', doc: 'Document', asset: 'Asset',
   class: 'Class', function: 'Function', section: 'Section', loop: 'Loop', branch: 'Branch', lane: 'Branch arm',
   group: 'Group', call: 'Call', op: 'Step', glyph: 'Operator', table: 'Settings', artifact: 'File on disk',

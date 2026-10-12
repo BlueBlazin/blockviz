@@ -11,6 +11,7 @@ import { Highlights } from './core/highlights';
 import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
+import { Tooltip } from './ui/Tooltip';
 
 interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
 
@@ -40,6 +41,8 @@ export default function App() {
   const [dialog, setDialog] = useState<'open' | 'search' | 'help' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
+  const hoverTimer = useRef(0);
   const [panel, setPanel] = useState<PanelSize>(() => clampPanel({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
@@ -98,10 +101,16 @@ export default function App() {
     const e = new Engine(canvas.current, loaded.model, {
       onView: setView,
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); },
+      onHover: (id, x, y) => {
+        clearTimeout(hoverTimer.current);
+        setHover(null);
+        // The card appears once the pointer rests, not while it sweeps across blocks.
+        if (id !== null) hoverTimer.current = window.setTimeout(() => setHover({ id, x, y }), 350);
+      },
     }, overlayInsets(false, DEFAULT_PANEL));
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
-    return () => { e.dispose(); if (engine.current === e) engine.current = null; };
+    return () => { e.dispose(); clearTimeout(hoverTimer.current); setHover(null); if (engine.current === e) engine.current = null; };
   }, [loaded]);
 
   useEffect(() => engine.current?.select(selected), [selected]);
@@ -255,6 +264,8 @@ export default function App() {
           onGo={goTo}
         />
       )}
+
+      {hover && loaded && !dialog && <Tooltip model={loaded.model} id={hover.id} x={hover.x} y={hover.y} />}
 
       {busy && <div className="busy" role="status"><span className="spinner" />{busy}</div>}
       {error && !dialog && <div className="toast" role="alert">{error}<button className="icon" aria-label="Dismiss" onClick={() => setError(null)}><X size={14} /></button></div>}
