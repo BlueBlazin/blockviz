@@ -151,10 +151,43 @@ enum Callee {
     Unknown,
 }
 
-struct TypesView<'a>(&'a HashMap<String, Ty>);
-impl Locals for TypesView<'_> {
+/// The types of local names: a scope's own over those of the scopes around
+/// it, which a nested definition reads in place instead of copying.
+#[derive(Default)]
+struct Types<'a> {
+    /// `None` where an outer scope's type no longer holds.
+    own: HashMap<String, Option<Ty>>,
+    outer: Option<&'a Types<'a>>,
+}
+
+impl<'a> Types<'a> {
+    fn within(outer: &'a Types<'a>) -> Self {
+        Types { own: HashMap::new(), outer: Some(outer) }
+    }
+
+    fn get(&self, name: &str) -> Option<&Ty> {
+        match self.own.get(name) {
+            Some(t) => t.as_ref(),
+            None => self.outer.and_then(|o| o.get(name)),
+        }
+    }
+
+    fn insert(&mut self, name: String, ty: Ty) {
+        self.own.insert(name, Some(ty));
+    }
+
+    fn remove(&mut self, name: &str) {
+        if self.outer.and_then(|o| o.get(name)).is_some() {
+            self.own.insert(name.to_string(), None);
+        } else {
+            self.own.remove(name);
+        }
+    }
+}
+
+impl Locals for Types<'_> {
     fn local(&self, name: &str) -> Option<Ty> {
-        self.0.get(name).cloned()
+        self.get(name).cloned()
     }
 }
 
@@ -181,7 +214,7 @@ pub struct Fb<'c, 'p> {
     mi: usize,
     m: &'p Module,
     regions: Vec<Region>,
-    types: HashMap<String, Ty>,
+    types: Types<'c>,
     files: HashMap<String, Vec<String>>,
     this: Option<(String, usize)>,
     outer: HashSet<String>,
@@ -229,7 +262,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             mi,
             m: &modules[mi],
             regions: vec![Region::new(root)],
-            types: HashMap::new(),
+            types: Types::default(),
             files: HashMap::new(),
             this: None,
             outer: HashSet::new(),
@@ -1494,7 +1527,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let shown = if value.start() == target.start() { compact(src.slice(TextRange::new(target.end(), value.end())).trim(), 40) } else { Namer::plain(src).code(value, 40) };
             rows.push(Row { key: name.clone(), value: shown, note: src.trailing_comment(line).filter(|c| !is_directive(c)).unwrap_or("").to_string(), heading: false });
             names.push(name.clone());
-            let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
+            let ty = self.cx.ix.infer(self.mi, value, &self.types);
             if ty != Ty::Unknown {
                 self.types.insert(name.clone(), ty.clone());
                 self.cx.ix.var_types.borrow_mut().insert((self.mi, name.clone()), ty);
@@ -1780,7 +1813,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             let outcome = self.value(value, &mut g, &Dest::Names(names.clone()));
             // Types and file names flow through assignments.
             if names.len() == 1 {
-                let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
+                let ty = self.cx.ix.infer(self.mi, value, &self.types);
                 if ty != Ty::Unknown {
                     self.types.insert(names[0].clone(), ty.clone());
                     if self.module_level {
@@ -1792,7 +1825,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             } else if let (Expr::Tuple(tt), Expr::Tuple(vt)) = (&targets[0], value) {
                 for (t, v) in tt.elts.iter().zip(&vt.elts) {
                     if let Expr::Name(n) = t {
-                        let ty = self.cx.ix.infer(self.mi, v, &TypesView(&self.types));
+                        let ty = self.cx.ix.infer(self.mi, v, &self.types);
                         self.types.insert(n.id.to_string(), ty);
                     }
                 }
@@ -1800,7 +1833,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 // `db, err := Open(…)`, `v, ok := m[k]`: the first value is the
                 // result; what follows is an error or a flag.
                 if let Some(Expr::Name(n)) = tt.elts.first() {
-                    let ty = self.cx.ix.infer(self.mi, value, &TypesView(&self.types));
+                    let ty = self.cx.ix.infer(self.mi, value, &self.types);
                     if ty != Ty::Unknown {
                         self.types.insert(n.id.to_string(), ty);
                     }
@@ -2494,7 +2527,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             ast::ForKind::Of => format!("for {} of {}", self.namer().code(target, 16), self.namer().code(iter, 32)),
             ast::ForKind::Count => format!("for {}", self.namer().code(iter, 40)),
         };
-        let iter_ty = self.cx.ix.infer(self.mi, iter, &TypesView(&self.types));
+        let iter_ty = self.cx.ix.infer(self.mi, iter, &self.types);
         let count = match (&iter_ty, x.kind) {
             (Ty::List(_, Some(n)), _) => Some(n.clone()),
             // `for (let i = 0; i < n; i++)` runs n times.
@@ -2613,7 +2646,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             // `with Session() as s`: calls on `s` reach `Session`, as after `s = Session()`.
             if let Some(Expr::Name(n)) = item.optional_vars.as_deref() {
-                match self.cx.ix.entered(self.mi, e, with.is_async, &TypesView(&self.types)) {
+                match self.cx.ix.entered(self.mi, e, with.is_async, &self.types) {
                     Ty::Unknown => self.types.remove(&n.id),
                     ty => self.types.insert(n.id.clone(), ty),
                 };
@@ -2854,8 +2887,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         let outer = self.link_free_names(f, node);
         self.types.insert(f.name.to_string(), Ty::Func(fid));
         self.bind(f.name, Bind::Src(vec![node], Style::Def));
-        let types = self.types.clone();
-        build_function(self.cx, fid, outer, types);
+        build_function(self.cx, fid, outer, &self.types);
     }
 
     /// Values a nested function reads from the code around it flow into its
@@ -2901,8 +2933,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             n.title = format!("{context} callback");
         }
         let outer = self.link_free_names(def, node);
-        let types = self.types.clone();
-        build_function(self.cx, fid, outer, types);
+        build_function(self.cx, fid, outer, &self.types);
         node
     }
 
@@ -2912,8 +2943,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         let def = FnDef::of(f);
         let fid = self.cx.ix.register_nested_func(self.mi, def, None, node);
         let outer = self.link_free_names(def, node);
-        let types = self.types.clone();
-        build_function(self.cx, fid, outer, types);
+        build_function(self.cx, fid, outer, &self.types);
         let params = def.params();
         let n = self.cx.b.get_mut(node);
         if n.inputs.is_empty() {
@@ -3074,8 +3104,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         self.types.insert(c.name.to_string(), Ty::Class(cid));
         self.bind(&c.name, Bind::Src(vec![node], Style::Def));
-        let types = self.types.clone();
-        build_class(self.cx, cid, outer, types);
+        build_class(self.cx, cid, outer, &self.types);
     }
 
     // ----- expressions -------------------------------------------------------------
@@ -3349,7 +3378,7 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     fn ty(&self, e: &Expr) -> Ty {
-        self.cx.ix.infer(self.mi, e, &TypesView(&self.types))
+        self.cx.ix.infer(self.mi, e, &self.types)
     }
 
     fn classify(&self, c: &ast::ExprCall) -> Callee {
@@ -4474,14 +4503,14 @@ pub fn attach(b: &mut Builder, parent: Id, child: Id) {
     b.get_mut(parent).children.push(child);
 }
 
-pub fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, types: HashMap<String, Ty>) {
+fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, types: &Types) {
     let info = &cx.ix.funcs[fid];
     let (mi, node, def, class, kind) = (info.module, info.node, info.def, info.class, info.kind);
     let top = class.is_none() && matches!(cx.ix.defs_at.get(&(mi, u32::from(def.range.start()))), Some(Sym::Func(f)) if *f == fid);
     let mut fb = Fb::new(cx, mi, node);
     fb.fid = Some(fid);
     fb.top = top;
-    fb.types = types;
+    fb.types = Types::within(types);
     fb.outer = outer;
     fb.in_init = def.name == "__init__" || def.kind == ast::DefKind::Constructor;
     let params = def.params();
@@ -4501,7 +4530,7 @@ pub fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, 
         fb.cx.b.get_mut(port).category = "port";
         fb.regions[0].env.insert(p.clone(), Bind::Src(vec![port], Style::Data));
         let annotation = def.args.iter().filter(|a| matches!(a.kind, ast::ParamKind::Positional | ast::ParamKind::KeywordOnly)).find(|a| a.name == *p).and_then(|a| a.annotation.as_ref());
-        match annotation.map(|a| fb.cx.ix.annotated(mi, a, &TypesView(&fb.types))) {
+        match annotation.map(|a| fb.cx.ix.annotated(mi, a, &fb.types)) {
             Some(t @ (Ty::Inst(_) | Ty::List(..))) => {
                 fb.types.insert(p.clone(), t);
             }
@@ -4531,7 +4560,7 @@ pub fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: HashSet<String>, 
     n.effects.dedup();
 }
 
-pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, types: HashMap<String, Ty>) {
+fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, types: &Types) {
     let (mi, node, def) = {
         let c = &cx.ix.classes[cid];
         (c.module, c.node, c.def)
@@ -4677,12 +4706,12 @@ pub fn build_class<'p>(cx: &mut Ctx<'p>, cid: usize, outer: HashSet<String>, typ
             let mut fb = Fb::new(cx, mi, node);
             fb.describe_function(*fid, def_stmt);
         }
-        build_function(cx, *fid, outer.clone(), types.clone());
+        build_function(cx, *fid, outer.clone(), types);
     }
     // A namespace's own types, drawn inside it.
     for (_, k) in cx.ix.classes[cid].inner.clone() {
         attach(&mut cx.b, node, cx.ix.classes[k].node);
-        build_class(cx, k, outer.clone(), types.clone());
+        build_class(cx, k, outer.clone(), types);
     }
     // Method → method dependencies (callee above caller).
     for (_, fid) in &methods {
