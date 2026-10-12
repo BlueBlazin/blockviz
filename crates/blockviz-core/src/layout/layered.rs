@@ -8,7 +8,7 @@
 //! line splits into several consumers (like residual connections in an
 //! architecture figure) instead of fanning out as parallel wires.
 
-use std::collections::HashMap;
+use crate::hash::{Map, Set};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pin {
@@ -64,8 +64,123 @@ const TRACK_GAP: f64 = 8.;
 const LABEL_H: f64 = 13.;
 const COMPONENT_GAP: f64 = 56.;
 
+/// Buffers for laying out diagrams, kept from one to the next: most take a
+/// few microseconds, and allocating every buffer afresh cost as much again.
+#[derive(Default)]
+pub struct Scratch {
+    // Components.
+    uf: Vec<usize>,
+    comp_of: Vec<usize>,
+    comp_at: Vec<usize>,
+    members: Lists,
+    wires: Lists,
+    order: Vec<usize>,
+    local: Vec<usize>,
+    // Orientation and layering.
+    adj: Lists,
+    reversed: Vec<bool>,
+    state: Vec<u8>,
+    roots: Vec<usize>,
+    dfs: Vec<(usize, usize)>,
+    succ: Lists,
+    pred: Lists,
+    indeg: Vec<usize>,
+    topo: Vec<usize>,
+    ready: Vec<usize>,
+    layer: Vec<usize>,
+    // Vertices and the segments between them.
+    vw: Vec<f64>,
+    vh: Vec<f64>,
+    vlayer: Vec<usize>,
+    vorder: Vec<f64>,
+    vrank: Vec<Option<u32>>,
+    segs: Vec<Seg>,
+    groups: Vec<(usize, u64, bool)>,
+    grouped: Vec<(usize, usize)>,
+    by_group: Lists,
+    links: Vec<usize>,
+    chains: Vec<std::ops::Range<usize>>,
+    vsucc: Lists,
+    vpred: Lists,
+    // Ordering and placement.
+    layers: Lists,
+    best: Vec<usize>,
+    pos: Vec<f64>,
+    pairs: Vec<(f64, f64)>,
+    bs: Vec<f64>,
+    tree: Vec<usize>,
+    keyed: Vec<(usize, f64)>,
+    x: Vec<f64>,
+    offs: Vec<f64>,
+    blocks: Vec<(f64, f64, usize)>,
+    // Ports and channels.
+    end_label: Vec<Option<f64>>,
+    out_x: Vec<f64>,
+    in_x: Vec<f64>,
+    ports: Vec<(f64, usize, usize)>,
+    port_of: Vec<usize>,
+    port_x: Vec<f64>,
+    perm: Vec<usize>,
+    ins: Vec<usize>,
+    free: Vec<usize>,
+    steps: Vec<f64>,
+    band_h: Vec<f64>,
+    channel_h: Vec<f64>,
+    channel_label: Vec<f64>,
+    buses: Vec<(f64, f64, f64, usize)>,
+    bus_of: Vec<usize>,
+    runs: Vec<(f64, f64)>,
+    band_y: Vec<f64>,
+}
+
+/// Lists for keys 0..n in one buffer: key k's list is
+/// `items[start[k]..start[k + 1]]`, in the order its items came.
+#[derive(Default)]
+struct Lists {
+    start: Vec<usize>,
+    items: Vec<usize>,
+}
+
+impl Lists {
+    /// Refills the lists with (key, item) pairs, counting each key's items first.
+    fn fill(&mut self, n: usize, pairs: impl DoubleEndedIterator<Item = (usize, usize)> + Clone) {
+        refill(&mut self.start, n + 1, 0);
+        for (k, _) in pairs.clone() {
+            self.start[k] += 1;
+        }
+        for k in 1..=n {
+            self.start[k] += self.start[k - 1];
+        }
+        refill(&mut self.items, self.start[n], 0);
+        // Placed from the back, so each key's end moves down to its start.
+        for (k, v) in pairs.rev() {
+            self.start[k] -= 1;
+            self.items[self.start[k]] = v;
+        }
+    }
+}
+
+impl std::ops::Index<usize> for Lists {
+    type Output = [usize];
+    fn index(&self, k: usize) -> &[usize] {
+        &self.items[self.start[k]..self.start[k + 1]]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Lists {
+    fn index_mut(&mut self, k: usize) -> &mut [usize] {
+        &mut self.items[self.start[k]..self.start[k + 1]]
+    }
+}
+
+/// Empties a kept buffer and fills it with `n` copies of `v`.
+fn refill<T: Clone>(buf: &mut Vec<T>, n: usize, v: T) {
+    buf.clear();
+    buf.resize(n, v);
+}
+
 /// `arrive`: labels sit where edges arrive (shared trunks) rather than where they leave.
-pub fn layout(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
+pub fn layout(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch) -> LOut {
     let n = nodes.len();
     let mut out = LOut { pos: vec![(0., 0.); n], routes: vec![vec![]; edges.len()], labels: vec![None; edges.len()], width: 0., height: 0. };
     if n == 0 {
@@ -73,78 +188,99 @@ pub fn layout(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     }
     // Weakly connected components; everything touching a pinned port is one piece
     // so inputs and outputs span the whole diagram.
-    let mut uf: Vec<usize> = (0..n).collect();
-    fn find(uf: &mut Vec<usize>, mut x: usize) -> usize {
+    let uf = &mut scratch.uf;
+    uf.clear();
+    uf.extend(0..n);
+    fn find(uf: &mut [usize], mut x: usize) -> usize {
         while uf[x] != x {
             uf[x] = uf[uf[x]];
             x = uf[x];
         }
         x
     }
-    let union = |uf: &mut Vec<usize>, a: usize, b: usize| {
+    let union = |uf: &mut [usize], a: usize, b: usize| {
         let (ra, rb) = (find(uf, a), find(uf, b));
         if ra != rb {
             uf[ra] = rb;
         }
     };
     for e in edges {
-        union(&mut uf, e.from, e.to);
+        union(uf, e.from, e.to);
     }
     let pinned: Vec<usize> = (0..n).filter(|&i| nodes[i].pin != Pin::Free).collect();
     for w in pinned.windows(2) {
-        union(&mut uf, w[0], w[1]);
+        union(uf, w[0], w[1]);
     }
-    // Each component's nodes and edges, bucketed in one pass over each.
-    let mut comp_of = vec![usize::MAX; n];
-    let mut comps: Vec<(Vec<usize>, Vec<usize>)> = vec![];
+    // Each component's nodes and edges, numbered in order of their first node.
+    let (comp_of, comp_at) = (&mut scratch.comp_of, &mut scratch.comp_at);
+    refill(comp_at, n, usize::MAX);
+    refill(comp_of, n, 0);
+    let mut count = 0;
     for i in 0..n {
-        let r = find(&mut uf, i);
-        if comp_of[r] == usize::MAX {
-            comp_of[r] = comps.len();
-            comps.push((vec![], vec![]));
+        let r = find(uf, i);
+        if comp_at[r] == usize::MAX {
+            comp_at[r] = count;
+            count += 1;
         }
-        comps[comp_of[r]].0.push(i);
+        comp_of[i] = comp_at[r];
     }
-    for (ei, e) in edges.iter().enumerate() {
-        let r = find(&mut uf, e.from);
-        comps[comp_of[r]].1.push(ei);
-    }
-    let key = |c: &Vec<usize>| {
+    scratch.members.fill(count, (0..n).map(|i| (comp_of[i], i)));
+    scratch.wires.fill(count, edges.iter().enumerate().map(|(ei, e)| (comp_of[e.from], ei)));
+    let members = &scratch.members;
+    let key = |c: usize| {
+        let c = &members[c];
         let pinned = c.iter().any(|&i| nodes[i].pin != Pin::Free);
         let pack = c.iter().map(|&i| nodes[i].pack).min().unwrap_or(0);
         let order = c.iter().map(|&i| nodes[i].order).fold(f64::INFINITY, f64::min);
         (!pinned, pack, order)
     };
-    comps.sort_by(|a, b| key(&a.0).partial_cmp(&key(&b.0)).unwrap_or(std::cmp::Ordering::Equal));
+    let order = &mut scratch.order;
+    order.clear();
+    order.extend(0..count);
+    order.sort_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut pieces = vec![];
-    let mut local = vec![0; n];
-    for (comp, edge_ids) in comps {
-        for (i, &g) in comp.iter().enumerate() {
-            local[g] = i;
-        }
-        let sub_nodes: Vec<LNode> = comp.iter().map(|&g| nodes[g].clone()).collect();
-        let sub_edges: Vec<LEdge> = edge_ids.iter().map(|&ei| LEdge { from: local[edges[ei].from], to: local[edges[ei].to], ..edges[ei].clone() }).collect();
-        let piece = layered(&sub_nodes, &sub_edges, arrive);
-        pieces.push((comp, edge_ids, piece));
+    let mut pieces = Vec::with_capacity(count);
+    let (mut sub_nodes, mut sub_edges) = (vec![], vec![]);
+    refill(&mut scratch.local, n, 0);
+    for k in 0..count {
+        let c = scratch.order[k];
+        // A diagram in one piece is laid out as it is.
+        let piece = if count == 1 {
+            layered(nodes, edges, arrive, scratch)
+        } else {
+            let (comp, local) = (&scratch.members[c], &mut scratch.local);
+            for (i, &g) in comp.iter().enumerate() {
+                local[g] = i;
+            }
+            sub_nodes.clear();
+            sub_nodes.extend(comp.iter().map(|&g| nodes[g].clone()));
+            sub_edges.clear();
+            sub_edges.extend(scratch.wires[c].iter().map(|&ei| LEdge { from: local[edges[ei].from], to: local[edges[ei].to], ..edges[ei].clone() }));
+            layered(&sub_nodes, &sub_edges, arrive, scratch)
+        };
+        pieces.push((c, piece));
     }
 
     // Shelf-pack pieces in reading order, aiming for a landscape aspect.
-    let area: f64 = pieces.iter().map(|(_, _, p)| (p.width + COMPONENT_GAP) * (p.height + COMPONENT_GAP)).sum();
-    let widest = pieces.iter().map(|(_, _, p)| p.width).fold(0., f64::max);
+    let area: f64 = pieces.iter().map(|(_, p)| (p.width + COMPONENT_GAP) * (p.height + COMPONENT_GAP)).sum();
+    let widest = pieces.iter().map(|(_, p)| p.width).fold(0., f64::max);
     let row_width = widest.max((area * 1.7).sqrt());
     let (mut x, mut y, mut row_h) = (0f64, 0f64, 0f64);
-    for (comp, edge_ids, piece) in pieces {
+    for (c, mut piece) in pieces {
         if x > 0. && x + piece.width > row_width {
             x = 0.;
             y += row_h + COMPONENT_GAP;
             row_h = 0.;
         }
-        for (i, &g) in comp.iter().enumerate() {
+        for (i, &g) in scratch.members[c].iter().enumerate() {
             out.pos[g] = (piece.pos[i].0 + x, piece.pos[i].1 + y);
         }
-        for (i, &ei) in edge_ids.iter().enumerate() {
-            out.routes[ei] = piece.routes[i].iter().map(|&(px, py)| (px + x, py + y)).collect();
+        for (i, &ei) in scratch.wires[c].iter().enumerate() {
+            let mut route = std::mem::take(&mut piece.routes[i]);
+            for p in &mut route {
+                *p = (p.0 + x, p.1 + y);
+            }
+            out.routes[ei] = route;
             out.labels[ei] = piece.labels[i].map(|(lx, ly)| (lx + x, ly + y));
         }
         out.width = out.width.max(x + piece.width);
@@ -265,7 +401,7 @@ struct Seg {
 }
 
 /// Layered layout of one connected piece.
-fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
+fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch) -> LOut {
     let n = nodes.len();
     let mut out = LOut { pos: vec![(0., 0.); n], routes: vec![vec![]; edges.len()], labels: vec![None; edges.len()], width: 0., height: 0. };
     if n == 1 {
@@ -273,29 +409,33 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
         out.height = nodes[0].h;
         return out;
     }
+    let Scratch {
+        adj, reversed, state, roots, dfs, succ, pred, indeg, topo, ready, layer,
+        vw, vh, vlayer, vorder, vrank, segs, groups, grouped, by_group, links, chains, vsucc, vpred,
+        layers, best, pos, pairs, bs, tree, keyed, x, offs, blocks,
+        end_label, out_x, in_x, ports, port_of, port_x, perm, ins, free, steps,
+        band_h, channel_h, channel_label, buses, bus_of, runs, band_y, ..
+    } = scratch;
 
     // 1. Orient edges: break cycles with a DFS in source order; pins win.
-    let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
-    for (ei, e) in edges.iter().enumerate() {
-        if e.from != e.to {
-            adj[e.from].push(ei);
-        }
-    }
-    let mut reversed = vec![false; edges.len()];
-    let mut state = vec![0u8; n];
-    let mut roots: Vec<usize> = (0..n).collect();
+    adj.fill(n, edges.iter().enumerate().filter(|(_, e)| e.from != e.to).map(|(ei, e)| (e.from, ei)));
+    refill(reversed, edges.len(), false);
+    refill(state, n, 0u8);
+    roots.clear();
+    roots.extend(0..n);
     roots.sort_by(|&a, &b| {
         let pa = nodes[a].pin != Pin::Top;
         let pb = nodes[b].pin != Pin::Top;
         (pa, nodes[a].order).partial_cmp(&(pb, nodes[b].order)).unwrap_or(std::cmp::Ordering::Equal)
     });
-    for &r in &roots {
+    for &r in roots.iter() {
         if state[r] != 0 {
             continue;
         }
-        let mut stack = vec![(r, 0usize)];
+        dfs.clear();
+        dfs.push((r, 0usize));
         state[r] = 1;
-        while let Some(&mut (v, ref mut i)) = stack.last_mut() {
+        while let Some(&mut (v, ref mut i)) = dfs.last_mut() {
             if *i < adj[v].len() {
                 let ei = adj[v][*i];
                 *i += 1;
@@ -303,14 +443,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
                 match state[w] {
                     0 => {
                         state[w] = 1;
-                        stack.push((w, 0));
+                        dfs.push((w, 0));
                     }
                     1 => reversed[ei] = true,
                     _ => {}
                 }
             } else {
                 state[v] = 2;
-                stack.pop();
+                dfs.pop();
             }
         }
     }
@@ -322,6 +462,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             reversed[ei] = false;
         }
     }
+    let reversed = &*reversed;
     let oriented = |ei: usize| -> (usize, usize) {
         let e = &edges[ei];
         if reversed[ei] {
@@ -332,18 +473,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     };
 
     // 2. Layering: longest path, then pull sources and fan-out nodes toward consumers.
-    let mut succ: Vec<Vec<usize>> = vec![vec![]; n];
-    let mut pred: Vec<Vec<usize>> = vec![vec![]; n];
-    for ei in 0..edges.len() {
-        let (a, b) = oriented(ei);
-        if a != b {
-            succ[a].push(b);
-            pred[b].push(a);
-        }
-    }
-    let mut indeg: Vec<usize> = pred.iter().map(|p| p.len()).collect();
-    let mut topo = Vec::with_capacity(n);
-    let mut ready: Vec<usize> = (0..n).filter(|&v| indeg[v] == 0).collect();
+    let arcs = (0..edges.len()).map(oriented).filter(|&(a, b)| a != b);
+    succ.fill(n, arcs.clone());
+    pred.fill(n, arcs.map(|(a, b)| (b, a)));
+    indeg.clear();
+    indeg.extend((0..n).map(|v| pred[v].len()));
+    topo.clear();
+    ready.clear();
+    ready.extend((0..n).filter(|&v| indeg[v] == 0));
     ready.sort_by(|a, b| nodes[*b].order.partial_cmp(&nodes[*a].order).unwrap_or(std::cmp::Ordering::Equal));
     while let Some(v) = ready.pop() {
         topo.push(v);
@@ -356,12 +493,12 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     }
     // Any leftovers (should not happen after orientation) keep source order.
     if topo.len() < n {
-        let seen: std::collections::HashSet<usize> = topo.iter().copied().collect();
+        let seen: Set<usize> = topo.iter().copied().collect();
         topo.extend((0..n).filter(|v| !seen.contains(v)));
     }
     let has_top = nodes.iter().any(|v| v.pin == Pin::Top);
-    let mut layer = vec![0usize; n];
-    for &v in &topo {
+    refill(layer, n, 0);
+    for &v in topo.iter() {
         let base = if has_top && nodes[v].pin == Pin::Free { 1 } else { 0 };
         layer[v] = pred[v].iter().map(|&p| layer[p] + 1).max().unwrap_or(0).max(base);
         if nodes[v].pin == Pin::Top {
@@ -389,17 +526,21 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     let nlayers = layer.iter().copied().max().unwrap_or(0) + 1;
 
     // 3. Vertices = real nodes + trunk dummies. Edges sharing (source, group) share a trunk.
-    let mut vw: Vec<f64> = nodes.iter().map(|v| v.w).collect();
-    let mut vh: Vec<f64> = nodes.iter().map(|v| v.h).collect();
-    let mut vlayer = layer.clone();
-    let mut vorder: Vec<f64> = nodes.iter().map(|v| v.order).collect();
-    let mut vrank: Vec<Option<u32>> = nodes.iter().map(|v| v.rank).collect();
-    let mut segs: Vec<Seg> = vec![];
-    let mut seg_index: HashMap<(usize, usize, u64), usize> = HashMap::new();
-    let mut chains: Vec<Vec<usize>> = vec![vec![]; edges.len()];
+    vw.clear();
+    vw.extend(nodes.iter().map(|v| v.w));
+    vh.clear();
+    vh.extend(nodes.iter().map(|v| v.h));
+    vlayer.clone_from(layer);
+    vorder.clear();
+    vorder.extend(nodes.iter().map(|v| v.order));
+    vrank.clear();
+    vrank.extend(nodes.iter().map(|v| v.rank));
+    segs.clear();
+    let mut seg_index: Map<(usize, usize, u64), usize> = Map::default();
     // Edges by (source, group, reversed), in order of first appearance.
-    let mut groups: Vec<((usize, u64, bool), Vec<usize>)> = vec![];
-    let mut group_at: HashMap<(usize, u64, bool), usize> = HashMap::with_capacity(edges.len());
+    groups.clear();
+    grouped.clear();
+    let mut group_at: Map<(usize, u64, bool), usize> = Map::default();
     for (ei, e) in edges.iter().enumerate() {
         if !e.draw || e.from == e.to {
             continue;
@@ -407,11 +548,12 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
         let (a, _) = oriented(ei);
         let k = (a, e.group, reversed[ei]);
         let g = *group_at.entry(k).or_insert_with(|| {
-            groups.push((k, vec![]));
+            groups.push(k);
             groups.len() - 1
         });
-        groups[g].1.push(ei);
+        grouped.push((g, ei));
     }
+    by_group.fill(groups.len(), grouped.iter().copied());
     let mut add_seg = |segs: &mut Vec<Seg>, a: usize, b: usize, port: u64, weight: f64, from_x: Option<f64>, to_x: Option<f64>| -> usize {
         let key = (a, b, if to_x.is_some() { to_x.unwrap().to_bits() } else { u64::MAX });
         if let Some(&s) = seg_index.get(&key) {
@@ -422,81 +564,73 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
         seg_index.insert(key, segs.len() - 1);
         segs.len() - 1
     };
-    for (k, eids) in &groups {
-        let (a, group, rev) = *k;
+    // Each edge's segments, source to reader, are links[chains[edge]].
+    links.clear();
+    refill(chains, edges.len(), 0..0);
+    for (g, &(a, group, rev)) in groups.iter().enumerate() {
+        let eids = &by_group[g];
         let deepest = eids.iter().map(|&ei| layer[oriented(ei).1]).max().unwrap_or(layer[a]);
-        let mut trunk = vec![];
         // Dummy for each intermediate layer between source and the deepest consumer.
+        let trunk = vw.len();
         for l in layer[a] + 1..deepest {
-            let _ = l;
             vw.push(0.);
             vh.push(0.);
-            vlayer.push(layer[a] + 1 + trunk.len());
+            vlayer.push(l);
             vorder.push(nodes[a].order + 0.5);
             vrank.push(None);
-            trunk.push(vw.len() - 1);
         }
         for &ei in eids {
             let e = &edges[ei];
             let (_, b) = oriented(ei);
             let (from_x, to_x) = if rev { (None, None) } else { (e.from_x, e.to_x) };
             let mut prev = a;
-            let mut chain = vec![];
+            let start = links.len();
             let span = layer[b].saturating_sub(layer[a]);
             for step in 0..span.saturating_sub(1) {
-                let d = trunk[step];
-                let s = add_seg(&mut segs, prev, d, group, e.weight, if prev == a { from_x } else { None }, None);
-                chain.push(s);
+                let d = trunk + step;
+                let s = add_seg(segs, prev, d, group, e.weight, if prev == a { from_x } else { None }, None);
+                links.push(s);
                 prev = d;
             }
-            let s = add_seg(&mut segs, prev, b, group, e.weight, if prev == a { from_x } else { None }, to_x);
-            chain.push(s);
-            chains[ei] = chain;
+            let s = add_seg(segs, prev, b, group, e.weight, if prev == a { from_x } else { None }, to_x);
+            links.push(s);
+            chains[ei] = start..links.len();
         }
     }
+    let chain_of = |ei: usize| &links[chains[ei].clone()];
     let nv = vw.len();
-    let mut vsucc: Vec<Vec<usize>> = vec![vec![]; nv];
-    let mut vpred: Vec<Vec<usize>> = vec![vec![]; nv];
-    for (si, s) in segs.iter().enumerate() {
-        vsucc[s.a].push(si);
-        vpred[s.b].push(si);
-    }
+    vsucc.fill(nv, segs.iter().enumerate().map(|(si, s)| (s.a, si)));
+    vpred.fill(nv, segs.iter().enumerate().map(|(si, s)| (s.b, si)));
 
     // 4. Ordering by barycentre sweeps, keeping the best crossing count.
-    let mut layers: Vec<Vec<usize>> = vec![vec![]; nlayers];
-    for v in 0..nv {
-        layers[vlayer[v]].push(v);
+    layers.fill(nlayers, (0..nv).map(|v| (vlayer[v], v)));
+    for l in 0..nlayers {
+        layers[l].sort_by(|&a, &b| (vrank[a].unwrap_or(u32::MAX), vorder[a]).partial_cmp(&(vrank[b].unwrap_or(u32::MAX), vorder[b])).unwrap_or(std::cmp::Ordering::Equal));
     }
-    for l in &mut layers {
-        l.sort_by(|&a, &b| (vrank[a].unwrap_or(u32::MAX), vorder[a]).partial_cmp(&(vrank[b].unwrap_or(u32::MAX), vorder[b])).unwrap_or(std::cmp::Ordering::Equal));
-    }
-    let mut pos = vec![0f64; nv];
-    let refresh = |layers: &Vec<Vec<usize>>, pos: &mut Vec<f64>| {
-        for l in layers {
-            for (i, &v) in l.iter().enumerate() {
+    refill(pos, nv, 0.);
+    let refresh = |layers: &Lists, pos: &mut Vec<f64>| {
+        for l in 0..nlayers {
+            for (i, &v) in layers[l].iter().enumerate() {
                 pos[v] = i as f64;
             }
         }
     };
-    refresh(&layers, &mut pos);
-    // Scratch for the sweeps, allocated once per diagram.
-    let (mut pairs, mut bs, mut tree) = (vec![], vec![], vec![]);
-    let mut crossings = |layers: &Vec<Vec<usize>>, pos: &Vec<f64>| -> usize {
+    refresh(layers, pos);
+    let mut crossings = |layers: &Lists, pos: &Vec<f64>| -> usize {
         let mut total = 0;
-        for l in 0..layers.len().saturating_sub(1) {
+        for l in 0..nlayers - 1 {
             pairs.clear();
             for &v in &layers[l] {
                 for &si in &vsucc[v] {
                     pairs.push((pos[v], pos[segs[si].b]));
                 }
             }
-            total += inversions(&mut pairs, &mut bs, &mut tree);
+            total += inversions(pairs, bs, tree);
         }
         total
     };
-    let mut keyed: Vec<(usize, f64)> = vec![];
-    let mut best = layers.clone();
-    let mut best_cross = crossings(&layers, &pos);
+    best.clone_from(&layers.items);
+    let mut best_cross = crossings(layers, pos);
     // Sweeps in a row that moved nothing: after one each way, none would.
     let mut still = 0;
     for iter in 0..16 {
@@ -530,14 +664,15 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             continue;
         }
         still = 0;
-        let c = crossings(&layers, &pos);
+        let c = crossings(layers, pos);
         if c < best_cross {
             best_cross = c;
-            best.clone_from(&layers);
+            best.clone_from(&layers.items);
         }
     }
-    layers = best;
-    refresh(&layers, &mut pos);
+    std::mem::swap(&mut layers.items, best);
+    let layers = &*layers;
+    refresh(layers, pos);
 
     // 5. Horizontal placement: alternating sweeps, each solved exactly per layer
     // as weighted isotonic regression under minimum-separation constraints.
@@ -561,8 +696,9 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     // Offset of an attachment point from the node centre, when fixed.
     let out_off = |s: &Seg| s.from_x.map(|fx| fx - vw[s.a] / 2.).unwrap_or(0.);
     let in_off = |s: &Seg| s.to_x.map(|tx| tx - vw[s.b] / 2.).unwrap_or(0.);
-    let mut x = vec![0f64; nv];
-    for l in &layers {
+    refill(x, nv, 0.);
+    for l in 0..nlayers {
+        let l = &layers[l];
         let mut cursor = 0.;
         for (i, &v) in l.iter().enumerate() {
             if i > 0 {
@@ -597,10 +733,6 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             (sum / wsum, wsum)
         }
     };
-    // Per layer, each vertex's offset from the first at minimum spacing and
-    // the pooled blocks (weight, weighted sum, count); reused by every sweep.
-    let mut offs: Vec<f64> = vec![];
-    let mut blocks: Vec<(f64, f64, usize)> = vec![];
     // As in ordering, once a sweep each way moves nothing, only the last one can.
     let mut still = 0;
     for iter in 0..12 {
@@ -611,11 +743,13 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
         let mut moved = false;
         for k in 0..nlayers {
             let l = &layers[if mode == 1 { nlayers - 1 - k } else { k }];
+            // Each vertex's offset from the first at minimum spacing, and the
+            // pooled blocks (weight, weighted sum, count).
             offs.clear();
             blocks.clear();
             for (i, &v) in l.iter().enumerate() {
                 offs.push(if i == 0 { 0. } else { offs[i - 1] + gap(l[i - 1], v) });
-                let (d, w) = desired(v, &x, mode);
+                let (d, w) = desired(v, x, mode);
                 let w = w.max(1e-3);
                 blocks.push((w, w * (d - offs[i]), 1));
                 while blocks.len() >= 2 {
@@ -632,7 +766,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             }
             // Every vertex is read before any moves, so a sweep sees the layer as it was.
             let mut i = 0;
-            for &(w, s, c) in &blocks {
+            for &(w, s, c) in blocks.iter() {
                 for _ in 0..c {
                     let nx = s / w + offs[i];
                     moved |= nx.to_bits() != x[l[i]].to_bits();
@@ -647,22 +781,23 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     for v in x.iter_mut() {
         *v -= min_left;
     }
+    let x = &*x;
 
     // Label widths of the segments that end labelled edges (labelled where they arrive).
-    let mut end_label: HashMap<usize, f64> = HashMap::new();
+    refill(end_label, segs.len(), None);
     for (ei, e) in edges.iter().enumerate() {
         if arrive && e.draw && e.label && !reversed[ei] {
-            if let Some(&si) = chains[ei].last() {
-                let w = end_label.entry(si).or_insert(0.);
+            if let Some(&si) = chain_of(ei).last() {
+                let w = end_label[si].get_or_insert(0.);
                 *w = w.max(e.label_w);
             }
         }
     }
 
     // 6. Ports: one outgoing port per (node, group), one incoming port per segment.
-    let left = |v: usize, x: &Vec<f64>| x[v] - vw[v] / 2.;
-    let mut out_x = vec![0f64; segs.len()];
-    let mut in_x = vec![0f64; segs.len()];
+    let left = |v: usize| x[v] - vw[v] / 2.;
+    refill(out_x, segs.len(), 0.);
+    refill(in_x, segs.len(), 0.);
     let spread = |count: usize, width: f64| -> f64 {
         if count <= 1 {
             0.
@@ -670,8 +805,13 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             ((width * 0.72) / (count - 1) as f64).min(26.)
         }
     };
+    let target_x = |si: usize| -> f64 {
+        let s = &segs[si];
+        s.to_x.map(|tx| left(s.b) + tx).unwrap_or(x[s.b])
+    };
     // Where each (vertex, group) is among its vertex's ports.
-    let mut port_at: HashMap<(usize, u64), usize> = HashMap::with_capacity(segs.len());
+    let mut port_at: Map<(usize, u64), usize> = Map::default();
+    refill(port_of, segs.len(), 0);
     for v in 0..nv {
         if is_dummy(v) || nodes[v].converge {
             for &si in &vsucc[v] {
@@ -679,55 +819,58 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             }
             continue;
         }
-        let mut ports: Vec<(u64, Vec<usize>)> = vec![];
+        // Per port: the sum of its targets, its segments and its first segment.
+        ports.clear();
         for &si in &vsucc[v] {
-            let p = segs[si].port;
-            let k = *port_at.entry((v, p)).or_insert_with(|| {
-                ports.push((p, vec![]));
+            let k = *port_at.entry((v, segs[si].port)).or_insert_with(|| {
+                ports.push((0., 0, si));
                 ports.len() - 1
             });
-            ports[k].1.push(si);
+            ports[k].0 += target_x(si);
+            ports[k].1 += 1;
+            port_of[si] = k;
         }
-        let target_x = |si: usize| -> f64 {
-            let s = &segs[si];
-            s.to_x.map(|tx| left(s.b, &x) + tx).unwrap_or(x[s.b])
-        };
-        ports.sort_by(|a, b| {
-            let ma = a.1.iter().map(|&s| target_x(s)).sum::<f64>() / a.1.len() as f64;
-            let mb = b.1.iter().map(|&s| target_x(s)).sum::<f64>() / b.1.len() as f64;
-            ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Ports left to right by where they lead.
+        perm.clear();
+        perm.extend(0..ports.len());
+        perm.sort_by(|&a, &b| (ports[a].0 / ports[a].1 as f64).partial_cmp(&(ports[b].0 / ports[b].1 as f64)).unwrap_or(std::cmp::Ordering::Equal));
         let step = spread(ports.len(), vw[v]);
         let start = x[v] - step * (ports.len() as f64 - 1.) / 2.;
         let single = ports.len() == 1;
-        for (i, (_, sids)) in ports.iter().enumerate() {
-            let fixed = segs[sids[0]].from_x.map(|fx| left(v, &x) + fx);
+        refill(port_x, ports.len(), 0.);
+        for (i, &k) in perm.iter().enumerate() {
+            let (_, count, first) = ports[k];
+            let fixed = segs[first].from_x.map(|fx| left(v) + fx);
             let mut px = fixed.unwrap_or(start + step * i as f64);
-            if fixed.is_none() && single && sids.len() == 1 {
-                let t = target_x(sids[0]);
-                if t > left(v, &x) + 8. && t < left(v, &x) + vw[v] - 8. {
+            if fixed.is_none() && single && count == 1 {
+                let t = target_x(first);
+                if t > left(v) + 8. && t < left(v) + vw[v] - 8. {
                     px = t;
                 }
             }
-            for &si in sids {
-                out_x[si] = px;
-            }
+            port_x[k] = px;
+        }
+        for &si in &vsucc[v] {
+            out_x[si] = port_x[port_of[si]];
         }
     }
     for v in 0..nv {
-        let mut ins: Vec<usize> = vpred[v].clone();
         if is_dummy(v) || nodes[v].converge {
-            for si in ins {
+            for &si in &vpred[v] {
                 in_x[si] = x[v];
             }
             continue;
         }
+        ins.clear();
+        ins.extend_from_slice(&vpred[v]);
         ins.sort_by(|&a, &b| out_x[a].partial_cmp(&out_x[b]).unwrap_or(std::cmp::Ordering::Equal));
-        let free: Vec<usize> = ins.iter().copied().filter(|&si| segs[si].to_x.is_none()).collect();
+        free.clear();
+        free.extend(ins.iter().copied().filter(|&si| segs[si].to_x.is_none()));
         let base = spread(free.len(), vw[v]);
         // With labels where edges arrive, arrows enter far enough apart for
         // the label beside each to fit, as far as the box is wide.
-        let steps: Vec<f64> = free.windows(2).map(|w| base.max(end_label.get(&w[0]).map_or(0., |lw| lw + 12.))).collect();
+        steps.clear();
+        steps.extend(free.windows(2).map(|w| base.max(end_label[w[0]].map_or(0., |lw| lw + 12.))));
         let total: f64 = steps.iter().sum();
         let fit = if total > vw[v] * 0.92 && total > 0. { (vw[v] * 0.92 / total).min(1.) } else { 1. };
         let mut px = x[v] - total * fit / 2.;
@@ -736,39 +879,34 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
                 px += steps[i - 1] * fit;
             }
             let at = if arrive { px } else { x[v] - base * (free.len() as f64 - 1.) / 2. + base * i as f64 };
-            in_x[si] = if free.len() == 1 && out_x[si] > left(v, &x) + 8. && out_x[si] < left(v, &x) + vw[v] - 8. { out_x[si] } else { at };
+            in_x[si] = if free.len() == 1 && out_x[si] > left(v) + 8. && out_x[si] < left(v) + vw[v] - 8. { out_x[si] } else { at };
         }
-        for &si in &ins {
+        for &si in ins.iter() {
             if let Some(tx) = segs[si].to_x {
-                in_x[si] = left(v, &x) + tx;
+                in_x[si] = left(v) + tx;
             }
         }
     }
 
     // 7. Channels: horizontal runs between layers get tracks; buses from one
     // port share a track so a value visibly splits.
-    let band_h: Vec<f64> = (0..nlayers).map(|l| layers[l].iter().map(|&v| vh[v]).fold(0., f64::max)).collect();
+    band_h.clear();
+    band_h.extend((0..nlayers).map(|l| layers[l].iter().map(|&v| vh[v]).fold(0., f64::max)));
     // Labels sit under the port an edge leaves, or above the reader it reaches.
-    let labeled_port: std::collections::HashSet<(usize, u64)> = edges
+    let labeled_port: Set<(usize, u64)> = edges
         .iter()
         .enumerate()
         .filter(|(ei, e)| !arrive && e.draw && e.label && !reversed[*ei])
         .map(|(ei, e)| (oriented(ei).0, e.group))
         .collect();
-    let labeled_end: std::collections::HashSet<usize> = edges
-        .iter()
-        .enumerate()
-        .filter(|(ei, e)| arrive && e.draw && e.label && !reversed[*ei] && !chains[*ei].is_empty())
-        .map(|(ei, _)| *chains[ei].last().unwrap())
-        .collect();
-    let mut track_of = vec![0usize; segs.len()];
-    let mut channel_h = vec![LAYER_GAP; nlayers];
-    let mut channel_label = vec![0f64; nlayers];
-    // Where each bus is in its layer's list, by its key.
-    let mut bus_at: HashMap<(usize, u64), usize> = HashMap::with_capacity(segs.len());
-    for l in 0..nlayers.saturating_sub(1) {
-        // bus key → (min, max, start x, segments)
-        let mut buses: Vec<((usize, u64), f64, f64, f64, Vec<usize>)> = vec![];
+    refill(channel_h, nlayers, LAYER_GAP);
+    refill(channel_label, nlayers, 0.);
+    // Buses by their key, each (min, max, start x, track); horizontal segments' buses.
+    let mut bus_at: Map<(usize, u64), usize> = Map::default();
+    buses.clear();
+    refill(bus_of, segs.len(), usize::MAX);
+    for l in 0..nlayers - 1 {
+        let first = buses.len();
         for &v in &layers[l] {
             for &si in &vsucc[v] {
                 let (x1, x2) = (out_x[si], in_x[si]);
@@ -777,37 +915,36 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
                 }
                 let key = (v, if is_dummy(v) { 0 } else { segs[si].port });
                 let i = *bus_at.entry(key).or_insert_with(|| {
-                    buses.push((key, x1.min(x2), x1.max(x2), x1, vec![]));
+                    buses.push((x1.min(x2), x1.max(x2), x1, 0));
                     buses.len() - 1
                 });
                 let b = &mut buses[i];
-                b.1 = b.1.min(x1.min(x2));
-                b.2 = b.2.max(x1.max(x2));
-                b.4.push(si);
+                b.0 = b.0.min(x1.min(x2));
+                b.1 = b.1.max(x1.max(x2));
+                bus_of[si] = i;
             }
         }
         // Rightward buses whose start is further right sit higher; leftward mirror.
-        buses.sort_by(|a, b| {
-            let dir = |bus: &(_, f64, f64, f64, _)| if (bus.2 - bus.3).abs() < 0.5 { 1 } else if (bus.1 - bus.3).abs() < 0.5 { 0 } else { 2 };
-            let ka = (dir(a), if dir(a) == 0 { -a.3 } else { a.3 });
-            let kb = (dir(b), if dir(b) == 0 { -b.3 } else { b.3 });
-            ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let dir = |b: &(f64, f64, f64, usize)| if (b.1 - b.2).abs() < 0.5 { 1 } else if (b.0 - b.2).abs() < 0.5 { 0 } else { 2 };
+        let key = |b: &(f64, f64, f64, usize)| (dir(b), if dir(b) == 0 { -b.2 } else { b.2 });
+        perm.clear();
+        perm.extend(first..buses.len());
+        perm.sort_by(|&a, &b| key(&buses[a]).partial_cmp(&key(&buses[b])).unwrap_or(std::cmp::Ordering::Equal));
         // Buses closer than 6 px count as overlapping.
-        let tracks = stack(&buses.iter().map(|b| (b.1, b.2 + 6.)).collect::<Vec<_>>());
-        for (b, &t) in buses.iter().zip(&tracks) {
-            for &si in &b.4 {
-                track_of[si] = t;
-            }
+        runs.clear();
+        runs.extend(perm.iter().map(|&b| (buses[b].0, buses[b].1 + 6.)));
+        let tracks = stack(runs);
+        for (&b, &t) in perm.iter().zip(&tracks) {
+            buses[b].3 = t;
         }
         let used = tracks.iter().map(|t| t + 1).max().unwrap_or(0);
         // Room for labels: above the tracks for those leaving this layer, below
         // them for those arriving at the next.
-        let has_label = layers[l].iter().any(|&v| vsucc[v].iter().any(|&si| labeled_end.contains(&si) || (!is_dummy(v) && labeled_port.contains(&(v, segs[si].port)))));
+        let has_label = layers[l].iter().any(|&v| vsucc[v].iter().any(|&si| end_label[si].is_some() || (!is_dummy(v) && labeled_port.contains(&(v, segs[si].port)))));
         channel_label[l] = if has_label { LABEL_H } else { 0. };
         channel_h[l] = (LAYER_GAP + channel_label[l] * 0.6).max(channel_label[l] + (used as f64 + 1.) * TRACK_GAP + 6.);
     }
-    let mut band_y = vec![0f64; nlayers];
+    refill(band_y, nlayers, 0.);
     for l in 1..nlayers {
         band_y[l] = band_y[l - 1] + band_h[l - 1] + channel_h[l - 1];
     }
@@ -820,70 +957,75 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     out.height = band_y[nlayers - 1] + band_h[nlayers - 1];
 
     // 8. Routes.
+    // Segments in no bus run within the last layer, on its first track.
+    let track = |si: usize| buses.get(bus_of[si]).map_or(0, |b| b.3);
     let track_y = |si: usize| {
         let l = vlayer[segs[si].a];
-        band_y[l] + band_h[l] + if arrive { 0. } else { channel_label[l] } + (track_of[si] as f64 + 1.) * TRACK_GAP + 2.
+        band_y[l] + band_h[l] + if arrive { 0. } else { channel_label[l] } + (track(si) as f64 + 1.) * TRACK_GAP + 2.
     };
-    for (ei, chain) in chains.iter().enumerate() {
+    for ei in 0..edges.len() {
+        let chain = chain_of(ei);
         if chain.is_empty() {
             continue;
         }
         let first = &segs[chain[0]];
-        let mut pts: Vec<(f64, f64)> = vec![(out_x[chain[0]], top(first.a) + vh[first.a])];
+        let mut route = Vec::with_capacity(1 + 3 * chain.len());
+        turn(&mut route, (out_x[chain[0]], top(first.a) + vh[first.a]));
         for &si in chain {
             let s = &segs[si];
             let (x1, x2) = (out_x[si], in_x[si]);
             if (x1 - x2).abs() >= 0.5 {
                 let ty = track_y(si);
-                pts.push((x1, ty));
-                pts.push((x2, ty));
+                turn(&mut route, (x1, ty));
+                turn(&mut route, (x2, ty));
             }
             if !is_dummy(s.b) {
-                pts.push((x2, top(s.b)));
+                turn(&mut route, (x2, top(s.b)));
             }
-        }
-        // Drop collinear points.
-        let mut clean: Vec<(f64, f64)> = vec![];
-        for p in pts {
-            if let Some(&last) = clean.last() {
-                if (last.0 - p.0).abs() < 0.01 && (last.1 - p.1).abs() < 0.01 {
-                    continue;
-                }
-            }
-            if clean.len() >= 2 {
-                let a = clean[clean.len() - 2];
-                let b = clean[clean.len() - 1];
-                let collinear = ((a.0 - b.0).abs() < 0.01 && (b.0 - p.0).abs() < 0.01) || ((a.1 - b.1).abs() < 0.01 && (b.1 - p.1).abs() < 0.01);
-                if collinear {
-                    clean.pop();
-                }
-            }
-            clean.push(p);
         }
         if reversed[ei] {
-            clean.reverse();
+            route.reverse();
         }
-        out.routes[ei] = clean;
+        out.routes[ei] = route;
     }
     // Each branch says what it carries just above the block it reaches; or
     // one label per port, just under the block it leaves.
-    let mut labeled: std::collections::HashSet<(usize, u64)> = std::collections::HashSet::new();
+    let mut labeled: Set<(usize, u64)> = Set::default();
     for (ei, e) in edges.iter().enumerate() {
-        if !e.draw || !e.label || reversed[ei] || chains[ei].is_empty() {
+        let chain = chain_of(ei);
+        if !e.draw || !e.label || reversed[ei] || chain.is_empty() {
             continue;
         }
         if arrive {
-            let si = *chains[ei].last().unwrap();
+            let si = *chain.last().unwrap();
             out.labels[ei] = Some((in_x[si] + 4., top(segs[si].b) - 4.));
         } else {
             let (a, _) = oriented(ei);
             if labeled.insert((a, e.group)) {
-                let si = chains[ei][0];
+                let si = chain[0];
                 out.labels[ei] = Some((out_x[si] + 4., top(a) + vh[a] + 10.5));
             }
         }
     }
     out
+}
+
+/// Adds a point to a route, dropping repeats and the middle of straight runs.
+fn turn(route: &mut Vec<(f64, f64)>, p: (f64, f64)) {
+    if let Some(&last) = route.last() {
+        if (last.0 - p.0).abs() < 0.01 && (last.1 - p.1).abs() < 0.01 {
+            return;
+        }
+    }
+    if route.len() >= 2 {
+        let a = route[route.len() - 2];
+        let b = route[route.len() - 1];
+        let collinear = ((a.0 - b.0).abs() < 0.01 && (b.0 - p.0).abs() < 0.01) || ((a.1 - b.1).abs() < 0.01 && (b.1 - p.1).abs() < 0.01);
+        if collinear {
+            route.pop();
+        }
+    }
+    route.push(p);
 }
 
 #[cfg(test)]
@@ -898,7 +1040,7 @@ mod tests {
     #[test]
     fn chain_is_vertical_and_non_overlapping() {
         let nodes = vec![node(100., 0.), node(120., 1.), node(80., 2.)];
-        let out = layout(&nodes, &[edge(0, 1, 1), edge(1, 2, 2)], false);
+        let out = layout(&nodes, &[edge(0, 1, 1), edge(1, 2, 2)], false, &mut Scratch::default());
         assert!(out.pos[0].1 < out.pos[1].1 && out.pos[1].1 < out.pos[2].1);
         let cx: Vec<f64> = (0..3).map(|i| out.pos[i].0 + nodes[i].w / 2.).collect();
         assert!((cx[0] - cx[1]).abs() < 1. && (cx[1] - cx[2]).abs() < 1.);
@@ -909,7 +1051,7 @@ mod tests {
         // x -> f -> add, x -> add (skip connection)
         let mut nodes = vec![node(60., 0.), node(100., 1.), node(22., 2.)];
         nodes[0].pin = Pin::Top;
-        let out = layout(&nodes, &[edge(0, 1, 7), edge(0, 2, 7), edge(1, 2, 3)], false);
+        let out = layout(&nodes, &[edge(0, 1, 7), edge(0, 2, 7), edge(1, 2, 3)], false, &mut Scratch::default());
         assert!(out.pos[2].1 > out.pos[1].1);
         // Both edges from x leave from the same point.
         assert_eq!(out.routes[0][0], out.routes[1][0]);
@@ -918,7 +1060,7 @@ mod tests {
     fn siblings_do_not_overlap_and_cycles_terminate() {
         let nodes: Vec<LNode> = (0..6).map(|i| node(90., i as f64)).collect();
         let edges = vec![edge(0, 1, 0), edge(1, 2, 0), edge(2, 0, 0), edge(0, 3, 0), edge(0, 4, 0), edge(0, 5, 0)];
-        let out = layout(&nodes, &edges, false);
+        let out = layout(&nodes, &edges, false, &mut Scratch::default());
         for i in 0..6 {
             for j in i + 1..6 {
                 let (a, b) = (out.pos[i], out.pos[j]);
@@ -954,7 +1096,7 @@ mod tests {
     #[test]
     fn disconnected_pieces_are_packed() {
         let nodes: Vec<LNode> = (0..9).map(|i| node(100., i as f64)).collect();
-        let out = layout(&nodes, &[], false);
+        let out = layout(&nodes, &[], false, &mut Scratch::default());
         assert!(out.width < 9. * 130., "packed into rows, not one line");
     }
 }

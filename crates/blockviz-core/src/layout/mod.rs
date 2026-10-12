@@ -45,11 +45,19 @@ pub struct Options {
 }
 
 pub fn layout(b: &mut Builder, root: Id, opts: Options) {
-    let mut st = vec![State::Todo; b.nodes.len()];
-    content(b, root, &mut st, opts);
+    let mut cx = Ctx { st: vec![State::Todo; b.nodes.len()], opts, scratch: layered::Scratch::default() };
+    content(b, root, &mut cx);
     let r = b.get_mut(root);
     r.w = r.cw;
     r.h = r.ch;
+}
+
+/// The walk over the tree: whose interiors are laid out, in what style, and
+/// buffers kept from one diagram to the next.
+struct Ctx {
+    st: Vec<State>,
+    opts: Options,
+    scratch: layered::Scratch,
 }
 
 /// Whether a node is drawn as a named, zoomable box rather than an inline region.
@@ -99,17 +107,17 @@ fn decide_shape(b: &mut Builder, id: Id) {
 }
 
 /// Lays out the interior owned by `id` (children or rows) and records cw/ch.
-fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
-    if st[id as usize] != State::Todo {
+fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
+    if cx.st[id as usize] != State::Todo {
         return;
     }
-    st[id as usize] = State::Busy;
+    cx.st[id as usize] = State::Busy;
     if !b.get(id).rows.is_empty() {
         let (w, h) = table_size(&b.get(id).rows);
         let n = b.get_mut(id);
         n.cw = w;
         n.ch = h;
-        st[id as usize] = State::Done;
+        cx.st[id as usize] = State::Done;
         return;
     }
     let children = b.get(id).children.clone();
@@ -120,7 +128,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
             let n = b.get_mut(c);
             n.hints.hidden = inline_parent;
         }
-        size(b, c, st, opts);
+        size(b, c, cx);
     }
     let lanes = b.get(id).hints.lanes;
     let lnodes: Vec<LNode> = children
@@ -158,7 +166,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
         let mut h = DefaultHasher::new();
         // Values a block sends share a line when they are one value, or always
         // with shared trunks.
-        if opts.shared_trunks {
+        if cx.opts.shared_trunks {
             (e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
         } else {
             (e.label.as_str(), e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
@@ -185,7 +193,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
             }
         }
     }
-    let out = layered::layout(&lnodes, &ledges, opts.shared_trunks);
+    let out = layered::layout(&lnodes, &ledges, cx.opts.shared_trunks, &mut cx.scratch);
     for (i, &c) in children.iter().enumerate() {
         let n = b.get_mut(c);
         n.x = out.pos[i].0;
@@ -220,7 +228,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
     n.edges = new_edges;
     n.cw = cw;
     n.ch = ch;
-    st[id as usize] = State::Done;
+    cx.st[id as usize] = State::Done;
 }
 
 /// Values entering or leaving a collapsed box travel as one bundled edge;
@@ -281,7 +289,7 @@ fn port_offset(b: &Builder, region: Id, port: Id) -> Option<f64> {
     Some(inner.x + p.x + p.w / 2.)
 }
 
-fn size(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
+fn size(b: &mut Builder, id: Id, cx: &mut Ctx) {
     decide_shape(b, id);
     let n = b.get(id);
     match n.shape {
@@ -309,12 +317,12 @@ fn size(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
     // Which node's interior does this one show?
     let owner = if n.has_interior() { Some(id) } else { n.reference.filter(|&r| b.get(r).has_interior()) };
     if let Some(o) = owner {
-        if o != id && st[o as usize] == State::Busy {
+        if o != id && cx.st[o as usize] == State::Busy {
             // Recursive reference: draw as a leaf that links to its definition.
             leaf_size(b, id);
             return;
         }
-        content(b, o, st, opts);
+        content(b, o, cx);
         let (cw, ch) = (b.get(o).cw, b.get(o).ch);
         if b.get(id).hints.inline {
             region_size(b, id, cw, ch);
