@@ -1,5 +1,5 @@
 import { Camera, type CameraState, type Framing, type Plan } from './camera';
-import { clamp, type Insets } from './geometry';
+import { clamp, type Insets, type Xf } from './geometry';
 import type { SceneModel } from './model';
 import { Renderer, type EdgeHit, type Trace } from './renderer';
 import { distanceToPolyline } from './trace';
@@ -185,12 +185,26 @@ export class Engine {
     this.changed();
   }
 
+  /** Where the reader is, as of when the view last moved. */
+  private focused: { path: number[]; xf: Xf; focus: number[] } | null = null;
+
+  /** Where the reader is, worked out when the view moves: a panel opening
+   * or closing over a view that stays put does not move the reader. */
+  private focusPath(): number[] {
+    const { path, xf } = this.camera;
+    const f = this.focused;
+    if (f && f.xf.x === xf.x && f.xf.y === xf.y && f.xf.s === xf.s && f.path.length === path.length && f.path.every((id, i) => id === path[i])) return f.focus;
+    const focus = this.findFocus();
+    this.focused = { path: path.slice(), xf: { ...xf }, focus };
+    return focus;
+  }
+
   /**
    * The anchor path extended into the container that dominates the view:
    * it contains the centre of what the overlays leave visible, and fills a
    * good part of it, or all of it in one direction (as fitting it does).
    */
-  private focusPath(): number[] {
+  private findFocus(): number[] {
     const path = this.camera.path.slice();
     let t = this.camera.xf;
     const i = this.camera.insets;
