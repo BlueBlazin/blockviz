@@ -106,8 +106,6 @@ pub struct Scratch {
     layers: Lists,
     best: Vec<usize>,
     pos: Vec<f64>,
-    pairs: Vec<(f64, f64)>,
-    bs: Vec<f64>,
     tree: Vec<usize>,
     keyed: Vec<(usize, f64)>,
     x: Vec<f64>,
@@ -291,51 +289,6 @@ pub fn layout(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scra
     out
 }
 
-/// Counts pairs (i, j) with a_i < a_j and b_i > b_j, i.e. edge crossings
-/// between two layers, in O(E log E) with a Fenwick tree over b ranks.
-/// `bs` and `tree` are scratch space, reused across calls.
-fn inversions(pairs: &mut [(f64, f64)], bs: &mut Vec<f64>, tree: &mut Vec<usize>) -> usize {
-    if pairs.len() < 2 {
-        return 0;
-    }
-    pairs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    bs.clear();
-    bs.extend(pairs.iter().map(|p| p.1));
-    bs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    bs.dedup();
-    let rank = |b: f64| bs.partition_point(|&v| v < b) + 1;
-    tree.clear();
-    tree.resize(bs.len() + 1, 0);
-    let mut total = 0;
-    let mut seen = 0;
-    let mut i = 0;
-    while i < pairs.len() {
-        // Pairs sharing a source position never cross each other.
-        let mut j = i;
-        while j < pairs.len() && pairs[j].0 == pairs[i].0 {
-            let r = rank(pairs[j].1);
-            let mut k = r;
-            let mut le = 0;
-            while k > 0 {
-                le += tree[k];
-                k &= k - 1;
-            }
-            total += seen - le;
-            j += 1;
-        }
-        for p in &pairs[i..j] {
-            let mut k = rank(p.1);
-            while k < tree.len() {
-                tree[k] += 1;
-                k += k & k.wrapping_neg();
-            }
-            seen += 1;
-        }
-        i = j;
-    }
-    total
-}
-
 /// Puts each horizontal run `(start, end)`, in order, one track above the
 /// highest earlier run it overlaps. Overlaps are found in a max segment tree
 /// over the gaps between the runs' ends: O(n log n), where comparing every
@@ -412,7 +365,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     let Scratch {
         adj, reversed, state, roots, dfs, succ, pred, indeg, topo, ready, layer,
         vw, vh, vlayer, vorder, vrank, segs, groups, grouped, by_group, links, chains, vsucc, vpred,
-        layers, best, pos, pairs, bs, tree, keyed, x, offs, blocks,
+        layers, best, pos, tree, keyed, x, offs, blocks,
         end_label, out_x, in_x, ports, port_of, port_x, perm, ins, free, steps,
         band_h, channel_h, channel_label, buses, bus_of, runs, band_y, ..
     } = scratch;
@@ -616,16 +569,35 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         }
     };
     refresh(layers, pos);
+    // Crossings between each layer and the next: pairs of segments whose ends
+    // are in opposite orders. Left to right, a Fenwick tree over positions
+    // below counts the earlier segments that end right of each one; segments
+    // from one vertex never cross. A segment ends in the next layer or, between
+    // pinned ports, in its own.
     let mut crossings = |layers: &Lists, pos: &Vec<f64>| -> usize {
         let mut total = 0;
         for l in 0..nlayers - 1 {
-            pairs.clear();
+            refill(tree, layers[l].len().max(layers[l + 1].len()) + 1, 0);
+            let mut seen = 0;
             for &v in &layers[l] {
                 for &si in &vsucc[v] {
-                    pairs.push((pos[v], pos[segs[si].b]));
+                    let mut k = pos[segs[si].b] as usize + 1;
+                    let mut le = 0;
+                    while k > 0 {
+                        le += tree[k];
+                        k &= k - 1;
+                    }
+                    total += seen - le;
+                }
+                for &si in &vsucc[v] {
+                    let mut k = pos[segs[si].b] as usize + 1;
+                    while k < tree.len() {
+                        tree[k] += 1;
+                        k += k & k.wrapping_neg();
+                    }
+                    seen += 1;
                 }
             }
-            total += inversions(pairs, bs, tree);
         }
         total
     };
@@ -653,9 +625,10 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
                     .partial_cmp(&(vrank[b.0].unwrap_or(u32::MAX), b.1, vorder[b.0]))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+            let row = &mut layers[l];
             for (i, &(v, _)) in keyed.iter().enumerate() {
-                moved |= layers[l][i] != v;
-                layers[l][i] = v;
+                moved |= row[i] != v;
+                row[i] = v;
                 pos[v] = i as f64;
             }
         }
