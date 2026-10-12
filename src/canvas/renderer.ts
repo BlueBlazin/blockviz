@@ -5,8 +5,9 @@ import { swatch, theme } from './theme';
 
 /** A block drawn this frame. `clear` when the reader can see what it is (its
  * name is legible, or the box is large), so clicks never land on a block
- * too small to make out. */
-export interface Hit { id: number; box: Box; parent: number; clear: boolean }
+ * too small to make out. `face` when its name is on its face: it is closed,
+ * or what is drawn inside it is only a thumbnail. */
+export interface Hit { id: number; box: Box; parent: number; clear: boolean; face?: boolean }
 
 /** An edge drawn this frame: its container (`owner`), the hit of the box
  * whose interior it is in (-1 for the root), and its route on screen. */
@@ -187,6 +188,7 @@ export class Renderer {
     // pill over the faint interior; it moves to the header once legible.
     const legible = smoothstep(9, 10.5, 13 * t.s);
     const faceAlpha = Math.max(1 - open, open * (1 - legible));
+    if (this.hits[me]?.id === n.id) this.hits[me].face = faceAlpha >= 0.5;
     if (open > 0.01 && inner && owner) {
       this.seen(me, n, Math.min(13 * t.s, 19), alpha * open * legible * smoothstep(4.2, 7, Math.min(13 * t.s, 19)));
       this.header(n, b, t, alpha * open * legible);

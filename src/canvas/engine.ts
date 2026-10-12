@@ -326,11 +326,21 @@ export class Engine {
     for (let i = hits.length - 1; i >= 0; i--) {
       const b = hits[i].box;
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-        if (hits[i].clear || any) return i;
+        if (any) return this.shown(i);
+        if (hits[i].clear) return i;
         if (fallback < 0) fallback = i;
       }
     }
     return fallback;
+  }
+
+  /** Hit `i`, or the closed block it is drawn inside: a block in the thumbnail
+   * of a block whose name is still on its face is part of that block's picture. */
+  private shown(i: number): number {
+    const hits = this.renderer.hits;
+    let out = i;
+    for (let j = hits[i].parent; j >= 0; j = hits[j].parent) if (hits[j].face) out = j;
+    return out;
   }
 
   private wheel = (e: WheelEvent) => {
