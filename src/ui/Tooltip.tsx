@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { SceneModel } from '../canvas/model';
+import type { EdgeRef } from '../canvas/engine';
 import { KIND_LABEL } from './Inspector';
 
 /** What a block is and what double-clicking it does, shown beside the pointer
  * once it rests on a block: most names are too small to read at most zooms. */
-export function Tooltip({ model, id, x, y }: { model: SceneModel; id: number; x: number; y: number }) {
+export function Tooltip({ model, id, edge, x, y }: { model: SceneModel; id?: number; edge?: EdgeRef; x: number; y: number }) {
   const box = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState({ left: x + 14, top: y + 18 });
   useLayoutEffect(() => {
@@ -14,8 +15,20 @@ export function Tooltip({ model, id, x, y }: { model: SceneModel; id: number; x:
     const left = x + 14 + r.width > window.innerWidth - 8 ? Math.max(8, x - 14 - r.width) : x + 14;
     const top = y + 18 + r.height > window.innerHeight - 8 ? Math.max(8, y - 12 - r.height) : y + 18;
     setAt({ left, top });
-  }, [x, y, id]);
-  const n = model.node(id);
+  }, [x, y, id, edge?.owner, edge?.index]);
+  if (edge) {
+    const e = model.node(edge.owner).edges?.[edge.index];
+    if (!e) return null;
+    const name = (n: number) => { const k = model.node(n); return k.kind === 'input' ? `input ${k.title}` : k.kind === 'output' ? 'result' : k.title || k.kind; };
+    return (
+      <div ref={box} className="tooltip" role="tooltip" style={at}>
+        <div className="tt-title mono">{e.label || 'value'}</div>
+        <div className="tt-meta">{name(e.from)} → {name(e.to)}</div>
+        {(e.kind === 'data' || e.kind === 'context') && <div className="tt-hint">Click to follow this value</div>}
+      </div>
+    );
+  }
+  const n = model.node(id!);
   const meta = [KIND_LABEL[n.kind] ?? n.kind, n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
   const target = n.link ?? n.ref;
   const def = target !== undefined && target !== n.id ? model.node(target) : null;

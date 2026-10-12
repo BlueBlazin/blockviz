@@ -8,6 +8,13 @@ import { swatch, theme } from './theme';
  * too small to make out. */
 export interface Hit { id: number; box: Box; parent: number; clear: boolean }
 
+/** An edge drawn this frame: its container (`owner`), the hit of the box
+ * whose interior it is in (-1 for the root), and its route on screen. */
+export interface EdgeHit { edge: Edge; owner: number; container: number; pts: number[] }
+
+/** A value being followed: the diagrams it is traced in and the edges carrying it. */
+export interface Trace { scope: ReadonlySet<number>; edges: ReadonlySet<Edge> }
+
 export interface Paint {
   width: number;
   height: number;
@@ -18,6 +25,10 @@ export interface Paint {
   xfs: Xf[];
   /** Blocks that use the one in focus (calls of a component or function), outlined. */
   related?: ReadonlySet<number>;
+  /** A value followed through its diagram: its edges lit, the rest faded. */
+  trace?: Trace | null;
+  /** The edge under the pointer. */
+  hoverEdge?: Edge | null;
 }
 
 const ROW_H = 17;
@@ -38,6 +49,7 @@ const NAMED_KINDS = new Set(['file', 'notebook', 'dir', 'class', 'function', 'se
  */
 export class Renderer {
   hits: Hit[] = [];
+  edgeHits: EdgeHit[] = [];
   private widths = new Map<string, number>();
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
   private quietEdges = new WeakMap<SceneNode, Set<Edge>>();
@@ -49,6 +61,7 @@ export class Renderer {
     ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, p.width, p.height);
     this.hits = [];
+    this.edgeHits = [];
     const root = this.model.node(this.model.root);
     this.interior(root, p.xfs[0], -1, 0, p, [root.id], 1);
   }
@@ -65,12 +78,19 @@ export class Renderer {
     const lw = clamp(1.3 * Math.sqrt(t.s), 0.45, 1.45);
     const focus = p.hover ?? p.selected;
     const focused = focus !== null && kids.includes(focus);
+    // A value followed here outshines the block in focus.
+    const traced = p.trace?.scope.has(owner.id) ? p.trace.edges : null;
+    const lit = (e: Edge): boolean | null => {
+      if (e === p.hoverEdge) return true;
+      if (traced) return traced.has(e);
+      return focused ? e.from === focus || e.to === focus : null;
+    };
     if (edgeAlpha > 0.02) {
       const quiet = this.quiet(owner);
       for (const e of owner.edges ?? []) {
         // Settings that fan out everywhere are drawn only for the block in focus.
-        if (quiet.has(e) && !(focused && (e.from === focus || e.to === focus))) continue;
-        this.edge(e, t, p, edgeAlpha, lw, focused ? focus : null);
+        if (quiet.has(e) && !lit(e)) continue;
+        this.edge(e, t, p, edgeAlpha, lw, lit(e), owner.id, parentHit);
       }
     }
     for (const id of kids) {
@@ -80,12 +100,14 @@ export class Renderer {
       const nextPos = pathPos >= 0 && p.path[pathPos + 1] === id ? pathPos + 1 : -1;
       this.node(n, b, t, parentHit, nextPos, p, chain, alpha);
     }
-    if (edgeAlpha > 0.02 && t.s * 10.5 >= 4.5) {
+    if (edgeAlpha > 0.02 && t.s * 11 >= 4.5) {
       const placed: Box[] = [];
       const quiet = this.quiet(owner);
-      for (const e of owner.edges ?? []) {
-        if (quiet.has(e) && !(focused && (e.from === focus || e.to === focus))) continue;
-        this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 10.5), focused ? focus : null, placed);
+      // Labels of lit edges are placed first, so they are the ones shown.
+      const order = [...(owner.edges ?? [])].sort((a, b) => Number(!!lit(b)) - Number(!!lit(a)));
+      for (const e of order) {
+        if (quiet.has(e) && !lit(e)) continue;
+        this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 11), lit(e), placed);
       }
     }
   }
@@ -439,14 +461,23 @@ export class Renderer {
     return b;
   }
 
-  private edge(e: Edge, t: Xf, p: Paint, alpha: number, lw: number, focus: number | null) {
+  /** Draws an edge; `state` is true when lit, false when faded beside lit ones. */
+  private edge(e: Edge, t: Xf, p: Paint, alpha: number, lw: number, state: boolean | null, owner: number, container: number) {
     const pts = e.points;
     if (pts.length < 4) return;
     const [x0, y0, x1, y1] = this.bounds(e);
     if (!intersects({ x: t.x + x0 * t.s, y: t.y + y0 * t.s, w: (x1 - x0) * t.s + 1, h: (y1 - y0) * t.s + 1 }, p.width, p.height, 10)) return;
     const ctx = this.ctx;
-    const lit = focus !== null && (e.from === focus || e.to === focus);
-    const dim = focus !== null && !lit;
+    const lit = state === true;
+    const dim = state === false;
+    if (alpha > 0.3 && (x1 - x0 + y1 - y0) * t.s > 6) {
+      const screen = new Array<number>(pts.length);
+      for (let i = 0; i < pts.length; i += 2) {
+        screen[i] = t.x + pts[i] * t.s;
+        screen[i + 1] = t.y + pts[i + 1] * t.s;
+      }
+      this.edgeHits.push({ edge: e, owner, container, pts: screen });
+    }
     // Settings and sizes are faint; conditions are dotted: neither is the data itself.
     const context = e.kind === 'context';
     const control = e.kind === 'control';
@@ -498,25 +529,26 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  private edgeLabel(e: Edge, t: Xf, p: Paint, alpha: number, focus: number | null, placed: Box[]) {
+  private edgeLabel(e: Edge, t: Xf, p: Paint, alpha: number, state: boolean | null, placed: Box[]) {
     if (!e.label || !e.labelAt || alpha < 0.03) return;
     const x = t.x + e.labelAt[0] * t.s;
     const y = t.y + e.labelAt[1] * t.s;
     if (x < -200 || y < -20 || x > p.width + 20 || y > p.height + 20) return;
     const ctx = this.ctx;
-    const lit = focus !== null && (e.from === focus || e.to === focus);
-    const size = Math.min(10.5 * t.s, 13);
+    const lit = state === true;
+    const size = Math.min(11 * t.s, 13.5);
     ctx.font = `${size}px ${theme.mono}`;
     // Labels never overprint each other; the one for a highlighted edge wins.
     const r = { x: x - 1, y: y - size, w: this.measure(ctx.font, e.label) + 2, h: size + 2 };
     if (!lit && placed.some(q => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h)) return;
     placed.push(r);
-    ctx.globalAlpha = focus !== null && !lit ? alpha * 0.4 : alpha;
+    ctx.globalAlpha = state === false ? alpha * 0.4 : alpha;
     ctx.lineWidth = 3;
     ctx.strokeStyle = theme.labelHalo;
     ctx.lineJoin = 'round';
     ctx.strokeText(e.label, x, y);
-    ctx.fillStyle = lit ? theme.accent : theme.muted;
+    // Values read in ink; settings stay muted like their lines.
+    ctx.fillStyle = lit ? theme.accent : e.kind === 'data' ? theme.labelInk : theme.muted;
     ctx.fillText(e.label, x, y);
     ctx.globalAlpha = 1;
   }

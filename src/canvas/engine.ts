@@ -1,7 +1,11 @@
 import { Camera, type CameraState, type Framing } from './camera';
 import { clamp, type Insets } from './geometry';
 import type { SceneModel } from './model';
-import { Renderer, type Hit } from './renderer';
+import { Renderer, type EdgeHit, type Trace } from './renderer';
+import { distanceToPolyline } from './trace';
+
+/** An edge, as its container and its index among the container's edges. */
+export interface EdgeRef { owner: number; index: number }
 
 export interface ViewState { path: number[]; zoom: number }
 
@@ -12,6 +16,10 @@ export interface EngineEvents {
   onHover?(id: number | null, x: number, y: number): void;
   /** A flight to somewhere else is about to start: a step in the reader's history. */
   onJump?(): void;
+  /** The edge under the pointer changed. */
+  onHoverEdge?(edge: EdgeRef | null, x: number, y: number): void;
+  /** An edge was clicked: follow its value. */
+  onSelectEdge?(edge: EdgeRef): void;
 }
 
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -30,6 +38,8 @@ export class Engine {
   private dpr = 1;
   private frame = 0;
   private hover: number | null = null;
+  private hoverEdge: EdgeHit | null = null;
+  private traced: Trace | null = null;
   /** A block pointed out from outside the canvas (a line of its source). */
   private peeked: number | null = null;
   private selected: number | null = null;
@@ -82,6 +92,12 @@ export class Engine {
 
   select(id: number | null) {
     this.selected = id;
+    this.invalidate();
+  }
+
+  /** Follows a value through its diagram (null: stop). */
+  trace(t: Trace | null) {
+    this.traced = t;
     this.invalidate();
   }
 
@@ -291,6 +307,8 @@ export class Engine {
       height: this.height,
       hover: this.hover ?? this.peeked,
       related: focus === null ? undefined : this.related(focus),
+      trace: this.traced,
+      hoverEdge: this.hoverEdge?.edge ?? null,
       selected: this.selected,
       path: this.camera.path,
       xfs: this.camera.transforms(),
@@ -358,13 +376,19 @@ export class Engine {
     const prev = this.pointers.get(e.pointerId);
     if (!prev) {
       const i = this.hitAt(p.x, p.y);
-      const id = i >= 0 ? this.renderer.hits[i].id : null;
+      const edge = this.edgeAt(p.x, p.y, i);
+      const id = edge ? null : i >= 0 ? this.renderer.hits[i].id : null;
+      if (edge?.edge !== this.hoverEdge?.edge) {
+        this.hoverEdge = edge;
+        this.events.onHoverEdge?.(edge ? this.refOf(edge) : null, e.clientX, e.clientY);
+        this.invalidate();
+      }
       if (id !== this.hover) {
         this.hover = id;
-        this.canvas.style.cursor = id === null ? 'grab' : 'pointer';
         this.events.onHover?.(id, e.clientX, e.clientY);
         this.invalidate();
       }
+      this.canvas.style.cursor = id === null && !edge ? 'grab' : 'pointer';
       return;
     }
     if (this.pointers.size === 2) {
@@ -386,8 +410,13 @@ export class Engine {
     const p = this.point(e);
     if (this.press && !this.press.moved && this.pointers.size === 1) {
       const i = this.hitAt(p.x, p.y);
-      this.selected = i >= 0 ? this.renderer.hits[i].id : null;
-      this.events.onSelect(this.selected, i >= 0 ? this.pathOf(i) : null);
+      const edge = this.edgeAt(p.x, p.y, i);
+      if (edge && this.events.onSelectEdge) {
+        this.events.onSelectEdge(this.refOf(edge));
+      } else {
+        this.selected = i >= 0 ? this.renderer.hits[i].id : null;
+        this.events.onSelect(this.selected, i >= 0 ? this.pathOf(i) : null);
+      }
       this.invalidate();
     }
     this.pointers.delete(e.pointerId);
@@ -406,10 +435,32 @@ export class Engine {
 
   /** Forgets the hovered block while the view moves; the next pointer move finds it again. */
   private unhover() {
+    if (this.hoverEdge) {
+      this.hoverEdge = null;
+      this.events.onHoverEdge?.(null, 0, 0);
+      this.invalidate();
+    }
     if (this.hover === null) return;
     this.hover = null;
     this.events.onHover?.(null, 0, 0);
     this.invalidate();
+  }
+
+  /** The edge within a few pixels of a point, drawn in the interior of hit `container`
+   * (the block under the point, so a block drawn over an edge wins). */
+  private edgeAt(x: number, y: number, container: number): EdgeHit | null {
+    let best: EdgeHit | null = null;
+    let d = 5 * 5;
+    for (const h of this.renderer.edgeHits) {
+      if (h.container !== container) continue;
+      const k = distanceToPolyline(x, y, h.pts);
+      if (k <= d) { d = k; best = h; }
+    }
+    return best;
+  }
+
+  private refOf(h: EdgeHit): EdgeRef {
+    return { owner: h.owner, index: (this.model.node(h.owner).edges ?? []).indexOf(h.edge) };
   }
 
   private dblclick = (e: MouseEvent) => {

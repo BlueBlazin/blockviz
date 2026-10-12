@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubProject, pastedProject } from './core/loaders';
 import type { Project, Scene } from './core/types';
-import { Engine, type ViewState } from './canvas/engine';
+import { Engine, type EdgeRef, type ViewState } from './canvas/engine';
+import { traceValue } from './canvas/trace';
+import { ValuePanel } from './ui/ValuePanel';
 import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
 import { legend, swatch } from './canvas/theme';
@@ -43,7 +45,9 @@ export default function App() {
   const [dialog, setDialog] = useState<'open' | 'search' | 'help' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [hover, setHover] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ id?: number; edge?: EdgeRef; x: number; y: number } | null>(null);
+  /** A value being followed (an edge clicked). */
+  const [value, setValue] = useState<EdgeRef | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
   const hoverTimer = useRef(0);
   const [panel, setPanel] = useState<PanelSize>(() => clampPanel({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
@@ -112,7 +116,13 @@ export default function App() {
     const e = new Engine(canvas.current, loaded.model, {
       onView: v => { setView(v); nav.current?.viewChanged(); },
       onJump: () => nav.current?.jump(),
-      onSelect: (id, path) => { setSelected(id); setSelectedPath(path); },
+      onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); },
+      onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); },
+      onHoverEdge: (edge, x, y) => {
+        clearTimeout(hoverTimer.current);
+        setHover(null);
+        if (edge) hoverTimer.current = window.setTimeout(() => setHover({ edge, x, y }), 250);
+      },
       onHover: (id, x, y) => {
         clearTimeout(hoverTimer.current);
         setHover(null);
@@ -137,6 +147,7 @@ export default function App() {
       else if ((hashParam('github') ?? '') !== (repo ? decodeURIComponent(repo) : '')) loadFromUrl();
     };
     window.addEventListener('popstate', pop);
+    setValue(null);
     return () => {
       window.removeEventListener('popstate', pop);
       n.dispose();
@@ -149,8 +160,16 @@ export default function App() {
 
   useEffect(() => engine.current?.select(selected), [selected]);
 
+  const traced = useMemo(() => {
+    const start = value && loaded?.model.node(value.owner).edges?.[value.index];
+    if (!value || !start) return null;
+    const model = loaded!.model;
+    return { owner: value.owner, start, ...traceValue(id => model.node(id), value.owner, start) };
+  }, [value, loaded]);
+  useEffect(() => engine.current?.trace(traced && { scope: traced.scope, edges: traced.edges }), [traced]);
+
   // Framing keeps blocks clear of the top bar, footer and details panel.
-  const panelOpen = selected !== null;
+  const panelOpen = selected !== null || value !== null;
   useEffect(() => {
     engine.current?.setInsets(overlayInsets(panelOpen, panel));
   }, [panelOpen, panel, loaded]);
@@ -177,11 +196,11 @@ export default function App() {
   /** Selects a block for a line of source, staying in the instance being read. */
   const pick = useCallback((id: number) => {
     if (!loaded) return;
-    const path = loaded.model.instancePath(id, selectedPath);
+    const path = loaded.model.instancePath(id, selectedPath ?? view.path);
     setSelected(id);
     setSelectedPath(path);
     engine.current?.reveal(path);
-  }, [loaded, selectedPath]);
+  }, [loaded, selectedPath, view.path]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -189,6 +208,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setDialog(d => (d === 'search' ? null : 'search')); return; }
       if (e.key === 'Escape') {
         if (dialog) { if (dialog !== 'open' || loaded) setDialog(null); return; }
+        if (value !== null) { setValue(null); return; }
         if (selected !== null) { setSelected(null); setSelectedPath(null); return; }
         engine.current?.zoomOut();
         return;
@@ -214,7 +234,7 @@ export default function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [dialog, selected, selectedPath, loaded]);
+  }, [dialog, selected, selectedPath, loaded, value]);
 
   const crumbs = useMemo(() => {
     if (!loaded) return [];
@@ -337,7 +357,20 @@ export default function App() {
         />
       )}
 
-      {hover && loaded && !dialog && <Tooltip model={loaded.model} id={hover.id} x={hover.x} y={hover.y} />}
+      {hover && loaded && !dialog && <Tooltip model={loaded.model} id={hover.id} edge={hover.edge} x={hover.x} y={hover.y} />}
+
+      {traced && loaded && !node && (
+        <ValuePanel
+          model={loaded.model}
+          owner={traced.owner}
+          edges={traced.edges}
+          start={traced.start}
+          size={panel}
+          onClose={() => { setValue(null); engine.current?.peek(null); }}
+          onPick={id => { setValue(null); pick(id); }}
+          onPeek={id => engine.current?.peek(id)}
+        />
+      )}
 
       {busy && <div className="busy" role="status"><span className="spinner" />{busy}</div>}
       {error && !dialog && <div className="toast" role="alert">{error}<button className="icon" aria-label="Dismiss" onClick={() => setError(null)}><X size={14} /></button></div>}

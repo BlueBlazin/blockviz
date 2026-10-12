@@ -56,6 +56,7 @@ export const theme = {
   accent: '#2563eb',
   accentSoft: 'rgba(37, 99, 235, 0.14)',
   labelHalo: '#ffffff',
+  labelInk: '#3d434c',
   effect: '#d97706',
   sans: '"Helvetica Neue", Helvetica, -apple-system, "Segoe UI", Arial, sans-serif',
   mono: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
