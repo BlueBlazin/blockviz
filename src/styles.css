@@ -47,6 +47,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .logo i:nth-child(2) { background: #c6e5f5; }
 .logo i:nth-child(3) { background: #eff3c4; grid-column: span 2; }
 .sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 4px; }
+.history { display: flex; gap: 1px; background: rgba(255,255,255,0.92); border-radius: 8px; margin-right: 2px; }
+.history .icon { width: 28px; height: 28px; }
 .crumb-root { font-weight: 600; padding: 4px 7px; background: rgba(255,255,255,0.92); border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
 .tagline { color: var(--faint); font-size: 12px; max-width: 520px; min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(255,255,255,0.92); padding: 4px 6px; border-radius: 6px; }
 .crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; background: rgba(255,255,255,0.92); border-radius: 8px; padding: 2px; }

@@ -1,4 +1,4 @@
-import { Camera, type Framing } from './camera';
+import { Camera, type CameraState, type Framing } from './camera';
 import { clamp, type Insets } from './geometry';
 import type { SceneModel } from './model';
 import { Renderer, type Hit } from './renderer';
@@ -10,6 +10,8 @@ export interface EngineEvents {
   onSelect(id: number | null, path: number[] | null): void;
   /** The block under the pointer changed (null: none, or the view is moving). */
   onHover?(id: number | null, x: number, y: number): void;
+  /** A flight to somewhere else is about to start: a step in the reader's history. */
+  onJump?(): void;
 }
 
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -106,8 +108,24 @@ export class Engine {
 
   /** Flies to the node at the end of an instance path: `open` to read it
    * (the default), `fit` to see all of it. */
-  flyTo(path: number[], how: Framing = 'open', pad = 0.08) {
-    this.animate(this.camera.flight(path, this.width, this.height, how, pad));
+  flyTo(path: number[], how: Framing = 'open', pad = 0.08, record = true) {
+    this.animate(this.camera.flight(path, this.width, this.height, how, pad), record);
+  }
+
+  /** Where the camera is, to come back to with `restore`. */
+  state(): CameraState {
+    return this.camera.state();
+  }
+
+  /** Flies back to a saved camera state (history navigation: not itself a step). */
+  restore(state: CameraState) {
+    if (!state.path.every(id => this.model.nodes[id])) return;
+    this.animate(this.camera.flightTo(state, this.width, this.height), false);
+  }
+
+  /** The containers the view is in, root first (what the breadcrumbs show). */
+  focus(): number[] {
+    return this.focusPath();
   }
 
   flyToNode(id: number) {
@@ -202,7 +220,8 @@ export class Engine {
 
   // ----- frame loop ------------------------------------------------------------------
 
-  private animate(plan: { duration: number; step: (t: number) => void }) {
+  private animate(plan: { duration: number; step: (t: number) => void }, record = true) {
+    if (record) this.events.onJump?.();
     this.framed = false;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
       plan.step(1);

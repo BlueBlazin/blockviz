@@ -4,6 +4,9 @@ import type { SceneNode } from '../core/types';
 /** How a flight frames its target: `open` reads it (zooming until its
  * diagram is legible), `fit` shows all of it. */
 export type Framing = 'open' | 'fit';
+
+/** Exactly where the camera is: its anchor path and the anchor's interior transform. */
+export interface CameraState { path: number[]; xf: Xf }
 import type { SceneModel } from './model';
 
 /**
@@ -112,6 +115,30 @@ export class Camera {
       step: (t: number) => {
         this.path = base.slice();
         this.xf = xfOf(path.at(t), width, height);
+        this.reanchor(width, height);
+      },
+    };
+  }
+
+  state(): CameraState {
+    return { path: this.path.slice(), xf: { ...this.xf } };
+  }
+
+  /** Plans a flight back to a saved state (on the same scene). */
+  flightTo(saved: CameraState, width: number, height: number): { duration: number; step: (t: number) => void } {
+    let common = 0;
+    while (common < this.path.length && common < saved.path.length && this.path[common] === saved.path[common]) common++;
+    const lca = Math.max(0, common - 1);
+    const base = saved.path.slice(0, lca + 1);
+    // The saved transform, carried up to the common ancestor's interior.
+    let t = saved.xf;
+    for (let i = saved.path.length - 1; i > lca; i--) t = this.model.exterior(t, this.model.node(saved.path[i]));
+    const path = smoothPath(viewOf(this.transforms()[lca], width, height), viewOf(t, width, height));
+    return {
+      duration: Math.min(1400, Math.max(320, path.length * 260)),
+      step: (u: number) => {
+        this.path = base.slice();
+        this.xf = xfOf(path.at(u), width, height);
         this.reanchor(width, height);
       },
     };

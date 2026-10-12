@@ -1,4 +1,4 @@
-import { ChevronRight, CircleHelp, Download, FolderOpen, Home, Info, Maximize, Minus, Plus, Search as SearchIcon, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubProject, pastedProject } from './core/loaders';
@@ -12,6 +12,7 @@ import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspe
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Tooltip } from './ui/Tooltip';
+import { hashParam, hashParams, Navigation } from './ui/navigation';
 
 interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
 
@@ -49,6 +50,9 @@ export default function App() {
   const engine = useRef<Engine | null>(null);
   const analyzer = useRef(new Analyzer());
   const request = useRef(0);
+  const nav = useRef<Navigation | null>(null);
+  const [steps, setSteps] = useState({ back: false, forward: false });
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async (make: (progress: (m: string) => void) => Promise<Project>) => {
     const id = ++request.current;
@@ -79,10 +83,12 @@ export default function App() {
   }, []);
 
   const open = useCallback((r: OpenRequest) => {
+    // The URL names the project only when a link can load it again.
+    if (r.kind !== 'github') history.pushState(null, '', location.pathname + location.search);
     if (r.kind === 'example') void load(() => exampleProject());
     if (r.kind === 'github') {
       storage.set('blockviz.github', r.url);
-      history.replaceState(null, '', `#github=${encodeURIComponent(r.url.replace(/^https?:\/\//, ''))}`);
+      history.pushState(null, '', `#github=${encodeURIComponent(r.url.replace(/^https?:\/\//, ''))}`);
       void load(p => githubProject(r.url, p));
     }
     if (r.kind === 'folder') void load(p => folderProject(r.files, p));
@@ -90,17 +96,21 @@ export default function App() {
   }, [load]);
 
   // First load: a shared GitHub link, else the bundled example.
-  useEffect(() => {
-    const hash = new URLSearchParams(location.hash.slice(1)).get('github');
-    if (hash) void load(p => githubProject(hash, p));
+  const loadFromUrl = useCallback(() => {
+    const repo = hashParam('github');
+    if (repo) void load(p => githubProject(repo, p));
     else void load(() => exampleProject());
-    return () => analyzer.current.cancel();
   }, [load]);
+  useEffect(() => {
+    loadFromUrl();
+    return () => analyzer.current.cancel();
+  }, [loadFromUrl]);
 
   useEffect(() => {
     if (!loaded || !canvas.current) return;
     const e = new Engine(canvas.current, loaded.model, {
-      onView: setView,
+      onView: v => { setView(v); nav.current?.viewChanged(); },
+      onJump: () => nav.current?.jump(),
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); },
       onHover: (id, x, y) => {
         clearTimeout(hoverTimer.current);
@@ -112,8 +122,29 @@ export default function App() {
     }, overlayInsets(false, DEFAULT_PANEL));
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
-    return () => { e.dispose(); clearTimeout(hoverTimer.current); setHover(null); if (engine.current === e) engine.current = null; };
-  }, [loaded]);
+    const repo = hashParams().get('github');
+    const n = new Navigation(
+      loaded.model, e, `${loaded.project.source}#${loaded.scene.nodes.length}`, repo ? [['github', repo]] : [],
+      sel => { setSelected(sel?.id ?? null); setSelectedPath(sel?.path ?? null); },
+      () => setSteps({ back: n.canBack, forward: n.canForward }),
+    );
+    nav.current = n;
+    setSteps({ back: n.canBack, forward: n.canForward });
+    const pop = (ev: PopStateEvent) => {
+      // An entry of another project (or a link to one): load that project.
+      if (!n.pop(ev.state)) loadFromUrl();
+      else if ((hashParam('github') ?? '') !== (repo ? decodeURIComponent(repo) : '')) loadFromUrl();
+    };
+    window.addEventListener('popstate', pop);
+    return () => {
+      window.removeEventListener('popstate', pop);
+      n.dispose();
+      if (nav.current === n) nav.current = null;
+      e.dispose(); clearTimeout(hoverTimer.current); setHover(null); if (engine.current === e) engine.current = null;
+    };
+  }, [loaded, loadFromUrl]);
+
+  useEffect(() => nav.current?.setSelection(selected !== null && selectedPath ? { id: selected, path: selectedPath } : null), [selected, selectedPath]);
 
   useEffect(() => engine.current?.select(selected), [selected]);
 
@@ -161,6 +192,9 @@ export default function App() {
         engine.current?.zoomOut();
         return;
       }
+      // Back and forward, as in a browser.
+      if (!typing && !dialog && ((e.altKey && e.key === 'ArrowLeft') || ((e.metaKey || e.ctrlKey) && e.key === '['))) { e.preventDefault(); history.back(); return; }
+      if (!typing && !dialog && ((e.altKey && e.key === 'ArrowRight') || ((e.metaKey || e.ctrlKey) && e.key === ']'))) { e.preventDefault(); history.forward(); return; }
       if (typing || dialog || e.metaKey || e.ctrlKey || e.altKey) return;
       const eng = engine.current;
       if (!eng) return;
@@ -208,7 +242,10 @@ export default function App() {
         <button className="brand" onClick={() => engine.current?.home()} title="Whole project (H)">
           <span className="logo" aria-hidden="true"><i /><i /><i /></span>blockviz
         </button>
-        <span className="sep" />
+        <span className="history">
+          <button className="icon" aria-label="Back" title="Back (Alt+←)" disabled={!steps.back} onClick={() => history.back()}><ArrowLeft size={15} /></button>
+          <button className="icon" aria-label="Forward" title="Forward (Alt+→)" disabled={!steps.forward} onClick={() => history.forward()}><ArrowRight size={15} /></button>
+        </span>
         {crumbs.length <= 1 && <span className="crumb-root">{loaded?.scene.title}</span>}
         {view.path.length <= 1 && loaded?.scene.description && <span className="tagline" title={loaded.scene.description}>{loaded.scene.description}</span>}
         <div className="crumbs">
@@ -225,6 +262,16 @@ export default function App() {
         <button className="search-button" onClick={() => setDialog('search')} aria-label="Search">
           <SearchIcon size={15} /><span>Search</span><kbd>⌘K</kbd>
         </button>
+        <button
+          className="icon"
+          title={copied ? 'Link copied' : 'Copy a link to this view'}
+          aria-label="Copy a link to this view"
+          onClick={() => {
+            nav.current?.viewChanged();
+            // The URL is brought up to date a moment after the view settles.
+            setTimeout(() => void navigator.clipboard?.writeText(location.href).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400); }), 300);
+          }}
+        >{copied ? <Check size={17} /> : <Link size={17} />}</button>
         <button className="icon" title="Open a codebase" aria-label="Open a codebase" onClick={() => setDialog('open')}><FolderOpen size={17} /></button>
         <button className="icon" title="Export PNG" aria-label="Export PNG" onClick={() => engine.current?.exportPng(loaded?.scene.title ?? 'diagram')}><Download size={17} /></button>
         <button className="icon" title="Help (?)" aria-label="Help" onClick={() => setDialog('help')}><CircleHelp size={17} /></button>
