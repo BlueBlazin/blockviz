@@ -94,34 +94,39 @@ pub fn layout(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     for w in pinned.windows(2) {
         union(&mut uf, w[0], w[1]);
     }
-    let mut comps: HashMap<usize, Vec<usize>> = HashMap::new();
+    // Each component's nodes and edges, bucketed in one pass over each.
+    let mut comp_of = vec![usize::MAX; n];
+    let mut comps: Vec<(Vec<usize>, Vec<usize>)> = vec![];
     for i in 0..n {
         let r = find(&mut uf, i);
-        comps.entry(r).or_default().push(i);
+        if comp_of[r] == usize::MAX {
+            comp_of[r] = comps.len();
+            comps.push((vec![], vec![]));
+        }
+        comps[comp_of[r]].0.push(i);
     }
-    let mut comps: Vec<Vec<usize>> = comps.into_values().collect();
+    for (ei, e) in edges.iter().enumerate() {
+        let r = find(&mut uf, e.from);
+        comps[comp_of[r]].1.push(ei);
+    }
     let key = |c: &Vec<usize>| {
         let pinned = c.iter().any(|&i| nodes[i].pin != Pin::Free);
         let pack = c.iter().map(|&i| nodes[i].pack).min().unwrap_or(0);
         let order = c.iter().map(|&i| nodes[i].order).fold(f64::INFINITY, f64::min);
         (!pinned, pack, order)
     };
-    comps.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+    comps.sort_by(|a, b| key(&a.0).partial_cmp(&key(&b.0)).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut pieces = vec![];
-    for comp in &comps {
-        let local: HashMap<usize, usize> = comp.iter().enumerate().map(|(i, &g)| (g, i)).collect();
-        let sub_nodes: Vec<LNode> = comp.iter().map(|&g| nodes[g].clone()).collect();
-        let mut sub_edges = vec![];
-        let mut edge_ids = vec![];
-        for (ei, e) in edges.iter().enumerate() {
-            if let (Some(&a), Some(&b)) = (local.get(&e.from), local.get(&e.to)) {
-                sub_edges.push(LEdge { from: a, to: b, ..e.clone() });
-                edge_ids.push(ei);
-            }
+    let mut local = vec![0; n];
+    for (comp, edge_ids) in comps {
+        for (i, &g) in comp.iter().enumerate() {
+            local[g] = i;
         }
+        let sub_nodes: Vec<LNode> = comp.iter().map(|&g| nodes[g].clone()).collect();
+        let sub_edges: Vec<LEdge> = edge_ids.iter().map(|&ei| LEdge { from: local[edges[ei].from], to: local[edges[ei].to], ..edges[ei].clone() }).collect();
         let piece = layered(&sub_nodes, &sub_edges, arrive);
-        pieces.push((comp.clone(), edge_ids, piece));
+        pieces.push((comp, edge_ids, piece));
     }
 
     // Shelf-pack pieces in reading order, aiming for a landscape aspect.
