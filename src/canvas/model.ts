@@ -21,6 +21,7 @@ export class SceneModel {
   private texts: (string | undefined)[];
   private index: SearchEntry[] | null = null;
   private lineStarts = new Map<number, Uint32Array>();
+  private userIndex: Map<number, number[]> | null = null;
 
   constructor(readonly scene: Scene, project: Project) {
     this.nodes = scene.nodes;
@@ -89,6 +90,40 @@ export class SceneModel {
 
   fileText(file: number): string | undefined {
     return this.texts[file];
+  }
+
+  /**
+   * Blocks that use `id`: calls of a function, constructions of a class,
+   * components of its type, calls of a component. In scene order.
+   */
+  users(id: number): number[] {
+    if (!this.userIndex) {
+      const index = new Map<number, number[]>();
+      const add = (target: number, user: number) => {
+        const list = index.get(target);
+        if (!list) index.set(target, [user]);
+        else if (!list.includes(user)) list.push(user);
+      };
+      for (const n of this.nodes) {
+        if (n.link !== undefined && n.link !== n.id) add(n.link, n.id);
+        if (n.ref !== undefined && n.ref !== n.id) add(n.ref, n.id);
+        for (const u of n.usedBy ?? []) add(n.id, u);
+      }
+      for (const list of index.values()) list.sort((a, b) => a - b);
+      this.userIndex = index;
+    }
+    return this.userIndex.get(id) ?? [];
+  }
+
+  /** The definition a block is part of (`Block.forward`, a section, a file), for saying where it is. */
+  where(id: number): { name: string; at: number } | null {
+    let p = this.nodes[id].parent;
+    while (p !== undefined && !WHOLE.has(this.nodes[p].kind)) p = this.nodes[p].parent;
+    if (p === undefined) return null;
+    const def = this.nodes[p];
+    const up = def.parent !== undefined ? this.nodes[def.parent] : null;
+    const name = def.kind === 'function' && up?.kind === 'class' ? `${up.title}.${def.title}` : def.title;
+    return { name, at: p };
   }
 
   /**

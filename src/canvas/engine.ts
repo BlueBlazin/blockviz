@@ -92,6 +92,14 @@ export class Engine {
     this.invalidate();
   }
 
+  private relatedCache: { id: number; set: ReadonlySet<number> } | null = null;
+
+  /** The blocks that use `id`, outlined while it is in focus. */
+  private related(id: number): ReadonlySet<number> {
+    if (this.relatedCache?.id !== id) this.relatedCache = { id, set: new Set(this.model.users(id)) };
+    return this.relatedCache.set;
+  }
+
   /** Brings a block into view unless it is already on screen and legible. */
   reveal(path: number[]) {
     const id = path[path.length - 1];
@@ -271,10 +279,12 @@ export class Engine {
       if (t >= 1) this.flight = null;
     }
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const focus = this.hover ?? this.peeked ?? this.selected;
     this.renderer.draw({
       width: this.width,
       height: this.height,
       hover: this.hover ?? this.peeked,
+      related: focus === null ? undefined : this.related(focus),
       selected: this.selected,
       path: this.camera.path,
       xfs: this.camera.transforms(),

@@ -16,6 +16,8 @@ export interface Paint {
   /** Anchor path (root first) and the interior transform of each element. */
   path: number[];
   xfs: Xf[];
+  /** Blocks that use the one in focus (calls of a component or function), outlined. */
+  related?: ReadonlySet<number>;
 }
 
 const ROW_H = 17;
@@ -166,6 +168,15 @@ export class Renderer {
       ctx.strokeStyle = theme.accentSoft;
       ctx.lineWidth = 6;
       ctx.stroke();
+    } else if (p.related?.has(n.id)) {
+      // A use of the block in focus: outlined so the reader sees where it is used.
+      ctx.beginPath();
+      ctx.roundRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6, radius + 3);
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     const me = this.hit(n, b, parentHit);
 

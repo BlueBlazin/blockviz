@@ -116,6 +116,15 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .row code { color: var(--ink); }
 .row-heading { margin: 6px 0 2px; font-size: 10.5px; font-weight: 700; color: #8a6d1f; text-transform: uppercase; }
 .insp-source { margin-top: 14px; }
+.insp-field label .count { font-weight: 500; color: var(--faint); margin-left: 3px; }
+.uses { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.uses button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 5px 9px; text-align: left; border-top: 1px solid var(--line); }
+.uses button:first-child { border-top: 0; }
+.uses button:hover { background: var(--hover); }
+.use-name { font-weight: 550; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.use-name .dim { font-weight: 400; }
+.use-at { font: 11px var(--mono); color: var(--faint); flex: none; }
+.insp-field .more { margin-top: 5px; color: var(--accent); font-size: 12px; }
 
 /* Source view: long lines wrap under their own indentation. */
 .code {

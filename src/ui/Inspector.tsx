@@ -1,5 +1,5 @@
 import { ArrowUpRight, Maximize2, X } from 'lucide-react';
-import { useRef, type CSSProperties } from 'react';
+import { useState, useRef, type CSSProperties } from 'react';
 import type { SceneNode } from '../core/types';
 import type { SceneModel } from '../canvas/model';
 import type { Highlights } from '../core/highlights';
@@ -23,6 +23,37 @@ function List({ label, values, mono = true }: { label: string; values?: string[]
 }
 
 export interface PanelSize { w: number; h: number }
+
+/** What a use is, when it is not a call. */
+const USE_KIND: Record<string, string> = { symbol: 'component', class: 'methods', file: 'imports' };
+
+/** The places that use a block, each a link to it. */
+function UsedBy({ model, id, onGo, onPeek }: { model: SceneModel; id: number; onGo: (id: number) => void; onPeek: (id: number | null) => void }) {
+  const [all, setAll] = useState(false);
+  const users = model.users(id);
+  if (!users.length) return null;
+  const shown = all ? users : users.slice(0, 8);
+  return (
+    <div className="insp-field">
+      <label>Used by {users.length > 1 ? <span className="count">{users.length}</span> : null}</label>
+      <div className="uses" onMouseLeave={() => onPeek(null)}>
+        {shown.map(u => {
+          const n = model.node(u);
+          const where = model.where(u);
+          const file = model.fileOf(n);
+          const kind = USE_KIND[n.kind];
+          return (
+            <button key={u} onClick={() => onGo(u)} onMouseEnter={() => onPeek(u)} title={n.code ?? n.title}>
+              <span className="use-name">{where?.name ?? n.title}{kind ? <span className="dim"> · {kind}{n.title !== model.node(id).title ? ` ${n.title}` : ''}</span> : null}</span>
+              {file && n.span && <span className="use-at">{file.split('/').pop()}:{n.span.line}</span>}
+            </button>
+          );
+        })}
+      </div>
+      {users.length > shown.length && <button className="more" onClick={() => setAll(true)}>Show all {users.length}</button>}
+    </div>
+  );
+}
 
 const NARROW = '(max-width: 760px)';
 export const DEFAULT_PANEL: PanelSize = { w: 380, h: 0 };
@@ -134,6 +165,7 @@ export function Inspector({ model, highlights, node, hover, size, onResize, onCl
           {owner && <button onClick={onZoom}><Maximize2 size={13} />Zoom in</button>}
           {def && <button onClick={() => onGo(def.id)}><ArrowUpRight size={13} />Go to {def.kind === 'class' ? 'class' : 'definition'}<span className="dim">{def.title}</span></button>}
         </div>
+        <UsedBy key={node.id} model={model} id={node.id} onGo={onGo} onPeek={onPeek} />
         <List label="Inputs" values={node.inputs} />
         <List label="Outputs" values={node.outputs} />
         <List label="Tags" values={node.badges} mono={false} />

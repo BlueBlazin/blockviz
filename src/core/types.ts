@@ -43,6 +43,8 @@ export interface SceneNode {
   ref?: number;
   /** Where "go to definition" leads. */
   link?: number;
+  /** Blocks that use this one without linking to it (a component's calls). */
+  usedBy?: number[];
   x: number;
   y: number;
   w: number;
