@@ -263,6 +263,51 @@ fn body_end(text: &str, from: usize) -> Option<(usize, usize)> {
     Some((open, bytes.len()))
 }
 
+/// `\s`: ASCII whitespace, vertical tab included.
+fn is_space(c: u8) -> bool {
+    matches!(c, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
+}
+
+fn skip_space(bytes: &[u8], i: usize) -> usize {
+    i + bytes[i..].iter().take_while(|c| is_space(**c)).count()
+}
+
+/// Names called in `code`, in order: what `\b([A-Za-z_]\w*)\s*(?:<<<[^>]*>>>)?\s*\(`
+/// matches (a CUDA launch may come between a kernel and its arguments), found
+/// by hand because regex-lite ran its machine over every byte of every body.
+fn called(code: &str) -> impl Iterator<Item = &str> {
+    let bytes = code.as_bytes();
+    let word = |i: usize| bytes.get(i).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_');
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i < bytes.len() {
+            // A name begins a word, and not with a digit.
+            if !word(i) || (i > 0 && word(i - 1)) || bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while word(i) {
+                i += 1;
+            }
+            let name = &code[start..i];
+            let mut j = skip_space(bytes, i);
+            if bytes[j..].starts_with(b"<<<") {
+                // A launch ends at its first `>`.
+                match bytes[j + 3..].iter().position(|&c| c == b'>') {
+                    Some(k) if bytes[j + 3 + k..].starts_with(b">>>") => j = skip_space(bytes, j + 6 + k),
+                    _ => continue,
+                }
+            }
+            if bytes.get(j) == Some(&b'(') {
+                i = j + 1;
+                return Some(name);
+            }
+        }
+        None
+    })
+}
+
 fn leading_comment(text: &str) -> String {
     let mut lines = vec![];
     let mut in_block = false;
@@ -459,18 +504,13 @@ pub fn outline(lang: &str, text: &str) -> Outline {
     // Calls between definitions of the same file (brace languages).
     if brace_language(lang) {
         let names: Vec<String> = keep.iter().map(|s| s.name.clone()).collect();
-        let call = rx!(r"\b([A-Za-z_][\w]*)\s*(?:<<<[^>]*>>>)?\s*\(");
         for s in keep.iter_mut() {
             let body = &text[s.start..s.end.min(text.len())];
             let header_end = body.find('{').unwrap_or(0);
-            let body = &body[header_end..];
-            // Every call ends at its `(`: what follows the last cannot hold one.
-            let body = &body[..body.rfind('(').map_or(0, |i| i + 1)];
-            let mut calls = vec![];
-            for c in call.captures_iter(body) {
-                let n = c[1].to_string();
-                if n != s.name && names.contains(&n) && !calls.contains(&n) {
-                    calls.push(n);
+            let mut calls: Vec<String> = vec![];
+            for n in called(&body[header_end..]) {
+                if n != s.name && names.iter().any(|m| m == n) && !calls.iter().any(|c| c == n) {
+                    calls.push(n.to_string());
                 }
             }
             s.calls = calls;
@@ -557,6 +597,12 @@ mod tests {
         let names: Vec<&str> = o.symbols.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["add", "main"]);
         assert_eq!(o.symbols[1].calls, ["add"]);
+    }
+    #[test]
+    fn calls_are_names_before_parentheses() {
+        // A launch's own arguments are not calls; `m<<<n>(o)` is no launch.
+        let found: Vec<&str> = called("a(b) + 2c(d) x.f (y); k<<<g(1), 32>>>(z); m<<<n>(o)").collect();
+        assert_eq!(found, ["a", "f", "k"]);
     }
     #[test]
     fn cuda_kernels_are_marked() {
