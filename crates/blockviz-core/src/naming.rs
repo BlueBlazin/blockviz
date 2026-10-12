@@ -226,13 +226,19 @@ pub fn calls(names: &[String]) -> String {
     }
 }
 
-/// Names a step. `code` is its source shortened to about `CAPTION_MAX`
-/// characters by eliding whole sub-expressions as `…`.
 /// Names that hold an error: `err`, `error`, `err2`, `cerr`, `saveErr`.
 pub fn is_error_name(n: &str) -> bool {
     n == "err" || n == "error" || n.strip_prefix("err").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) || (n.len() == 4 && n.ends_with("err")) || (n.len() > 3 && n.ends_with("Err"))
 }
 
+/// Types that stand in for real ones in tests: `MockStore`, `fakeClock`,
+/// `StubResolver`, `spy_logger`, `testDimension`.
+pub fn is_test_double(n: &str) -> bool {
+    ["mock", "fake", "stub", "spy", "dummy", "test"].iter().any(|p| n.len() > p.len() && n.is_char_boundary(p.len()) && n[..p.len()].eq_ignore_ascii_case(p) && n[p.len()..].starts_with(|c: char| c.is_ascii_uppercase() || c == '_'))
+}
+
+/// Names a step. `code` is its source shortened to about `CAPTION_MAX`
+/// characters by eliding whole sub-expressions as `…`.
 pub fn name(step: &Step, dest: &Dest, code: &str) -> Name {
     let whole = !code.contains('…');
     // A short value reads as part of the exit: `return None`, `return value`.

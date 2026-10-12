@@ -10,8 +10,8 @@ use super::syntax::{self as ast, DefKind, Expr, Lang, Ranged, Stmt, TextRange};
 use super::walk;
 use crate::ir::Id;
 use crate::text::{clip, squash};
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::cell::{OnceCell, RefCell};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// One source file, parsed and lowered to the shared syntax tree.
 pub struct Module {
@@ -185,10 +185,17 @@ pub struct Index<'p> {
     pub namespace_of: Vec<Option<usize>>,
     /// Each namespace's definitions, as members of the module defining them.
     pub namespaces: Vec<HashMap<String, Sym>>,
-    /// The project types that implement each contract (a Go interface), by
-    /// class; `implements` is the same relation from the other side.
+    /// The project types that implement each contract (see `contracts`),
+    /// by class; `implements` is the same relation from the other side.
     pub implementers: Vec<Vec<usize>>,
     pub implements: Vec<Vec<usize>>,
+    /// A Go interface's method signatures, embedded interfaces included.
+    pub(super) go_needs: Vec<Option<HashSet<String>>>,
+    /// The types Go code puts where each interface is expected, and whether
+    /// in test code.
+    pub(super) flows: Vec<Vec<(usize, bool)>>,
+    /// Whether non-test code names each class outside its own definition.
+    pub(super) named: OnceCell<Vec<bool>>,
 }
 
 pub trait Locals {
@@ -254,6 +261,9 @@ impl<'p> Index<'p> {
             namespaces: vec![],
             implementers: vec![],
             implements: vec![],
+            go_needs: vec![],
+            flows: vec![],
+            named: OnceCell::new(),
         };
         for (mi, m) in modules.iter().enumerate() {
             ix.collect_defs(mi, &m.ast, &mut alloc, true);
@@ -308,9 +318,7 @@ impl<'p> Index<'p> {
             let fields = ix.infer_fields(c);
             ix.classes[c].fields = fields;
         }
-        ix.implementers = vec![vec![]; ix.classes.len()];
-        ix.implements = vec![vec![]; ix.classes.len()];
-        ix.satisfy_go_interfaces();
+        ix.find_contracts();
         // Objects a module creates once (`const users = new UsersService()`) are
         // known everywhere in it, including in functions written above them.
         for (mi, m) in modules.iter().enumerate() {
@@ -741,70 +749,6 @@ impl<'p> Index<'p> {
             }
         }
         Ty::Unknown
-    }
-
-    /// A Go type satisfies the project's interfaces whose methods it has,
-    /// without saying so.
-    fn satisfy_go_interfaces(&mut self) {
-        let go = |c: &ClassInfo| self.modules[c.module].lang == Lang::Go;
-        let contracts: Vec<(usize, Vec<String>)> = (0..self.classes.len())
-            .filter(|&k| self.classes[k].def.kind == ast::ClassKind::Interface && go(&self.classes[k]))
-            .map(|k| (k, self.go_contract(k)))
-            .filter(|(_, need)| !need.is_empty())
-            .collect();
-        if contracts.is_empty() {
-            return;
-        }
-        for c in (0..self.classes.len()).filter(|&c| self.classes[c].def.kind == ast::ClassKind::Class && go(&self.classes[c])) {
-            let have = self.go_method_set(c);
-            for (k, need) in &contracts {
-                if need.iter().all(|m| have.contains(m)) {
-                    self.implementers[*k].push(c);
-                    self.implements[c].push(*k);
-                }
-            }
-        }
-    }
-
-    /// A Go method by name and signature: parameter and result types as
-    /// written, without package qualifiers or pointers.
-    fn go_signature(&self, name: &str, params: &[ast::Param], returns: Option<&Expr>, module: usize) -> String {
-        let src = &self.modules[module].src;
-        let norm = |e: &Expr| {
-            let t = squash(src.of(e));
-            t.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '[' || c == ']')).filter(|w| !w.is_empty()).map(|w| w.rsplit('.').next().unwrap_or(w).to_string()).collect::<Vec<_>>().join(" ")
-        };
-        let params: Vec<String> = params.iter().map(|a| a.annotation.as_ref().map(norm).unwrap_or_default()).collect();
-        format!("{name}({})->{}", params.join(", "), returns.map(norm).unwrap_or_default())
-    }
-
-    /// A Go interface's methods: the signatures in its body.
-    fn go_contract(&self, k: usize) -> Vec<String> {
-        let c = &self.classes[k];
-        c.def.body.iter().filter_map(|s| if let Stmt::FunctionDef(f) = s { Some(self.go_signature(&f.name, &f.params, f.returns.as_deref(), c.module)) } else { None }).collect()
-    }
-
-    /// The signatures of a Go type's methods, its own and those of the types
-    /// it embeds.
-    fn go_method_set(&self, cid: usize) -> std::collections::HashSet<String> {
-        let mut have = std::collections::HashSet::new();
-        let mut stack = vec![cid];
-        while let Some(k) = stack.pop() {
-            let c = &self.classes[k];
-            if c.def.kind == ast::ClassKind::Interface {
-                have.extend(self.go_contract(k));
-            } else {
-                have.extend(c.methods.iter().chain(&c.extra).map(|(_, f)| {
-                    let info = &self.funcs[*f];
-                    self.go_signature(&info.name, info.def.args.get(1..).unwrap_or(&[]), info.def.returns, info.module)
-                }));
-            }
-            stack.extend(c.bases.iter().filter_map(|b| if let Ty::Class(p) = b { Some(*p) } else { None }).filter(|p| *p != k).take(4));
-            if stack.len() > 16 {
-                break;
-            }
-        }
-        have
     }
 
     pub fn method(&self, c: usize, name: &str) -> Option<usize> {

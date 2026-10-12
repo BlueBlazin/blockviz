@@ -78,9 +78,21 @@ fn groupcache_layers_its_packages() {
     assert_eq!(def(&s, file(&s, "http.go"), "httpGetter").subtitle, "ProtoGetter");
     assert_eq!(def(&s, file(&s, "singleflight/singleflight.go"), "Group").subtitle, "flightGroup");
     assert_eq!(def(&s, file(&s, "consistenthash/consistenthash.go"), "Map").subtitle, "");
+    assert_eq!(def(&s, file(&s, "http.go"), "HTTPPool").subtitle, "PeerPicker");
     // An interface is its method signatures.
     let picker = def(&s, file(&s, "peers.go"), "PeerPicker");
     assert_eq!(picker.rows[0].key, "PickPeer");
+    // Calls through interfaces: a peer is an httpGetter (what HTTPPool hands
+    // out); either picker may pick it; the getter is the library user's.
+    let group = def(&s, gc, "Group");
+    let get = within(&s, def(&s, group, "getFromPeer"), "Get");
+    assert_eq!(get.reference, Some(def(&s, def(&s, file(&s, "http.go"), "httpGetter"), "Get").id));
+    let pick = within(&s, def(&s, group, "load"), "PickPeer");
+    assert_eq!((pick.subtitle.as_str(), pick.reference), ("HTTPPool or NoPeers", Some(picker.id)));
+    assert!(descendants(&s, def(&s, group, "getLocally")).iter().all(|n| n.reference.is_none()));
+    // singleflight's Group is the flightGroup groupcache loads through.
+    let flight = within(&s, def(&s, group, "load"), "Do");
+    assert_eq!(flight.reference, Some(def(&s, def(&s, file(&s, "singleflight/singleflight.go"), "Group"), "Do").id));
     // Generated protobuf code is shown, not opened.
     assert_eq!(file(&s, "groupcachepb/groupcache.pb.go").subtitle, "generated");
     assert!(file(&s, "http.go").effects.contains(&"network".to_string()));

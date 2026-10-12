@@ -156,6 +156,48 @@ fn errors_wrapped_or_not_are_passed_on() {
 }
 
 #[test]
+fn calls_through_interfaces_reach_what_the_program_puts_behind_them() {
+    let s = analyze(&[
+        ("go.mod", "module example.com/shop\n"),
+        (
+            "store/store.go",
+            "package store\n\nimport (\n\t\"database/sql\"\n\t\"strings\"\n)\n\n// Store keeps products.\ntype Store interface {\n\tGet(id int) (name string, err error)\n}\n\n// Cache answers from memory.\ntype Cache interface {\n\tLookup(key string) string\n}\n\n// Scanner walks rows.\ntype Scanner interface {\n\tNext() bool\n}\n\n// Shape has a name.\ntype Shape interface {\n\tName() string\n}\n\ntype pgStore struct{ db *sql.DB }\n\n// NewPostgres opens the products table.\nfunc NewPostgres(db *sql.DB) Store { return &pgStore{db: db} }\n\nfunc (s *pgStore) Get(id int) (string, error) {\n\tvar name string\n\terr := s.db.QueryRow(\"SELECT name FROM products WHERE id = $1\", id).Scan(&name)\n\treturn name, err\n}\n\ntype lru struct{ items map[string]string }\n\nfunc (c *lru) Lookup(key string) string { return strings.ToLower(c.items[key]) }\n\ntype redisCache struct{ addr string }\n\nfunc (c *redisCache) Lookup(key string) string { return strings.TrimSpace(c.addr + key) }\n\n// Pick chooses a cache.\nfunc Pick(name string) Cache {\n\tif name == \"redis\" {\n\t\treturn &redisCache{addr: \":6379\"}\n\t}\n\treturn &lru{items: map[string]string{}}\n}\n\n// Rows wraps sql.Rows: Next is sql.Rows'.\ntype Rows struct{ *sql.Rows }\n\ntype done struct{}\n\nfunc (done) Next() bool { return strings.HasPrefix(\"\", \"x\") }\n\n// Each walks every row.\nfunc Each(s Scanner) int {\n\tn := 0\n\tfor s.Next() {\n\t\tn++\n\t}\n\treturn n\n}\n\n// Count counts rows.\nfunc Count(db *sql.DB) int {\n\tr, _ := db.Query(\"SELECT 1\")\n\treturn Each(&Rows{r}) + Each(done{})\n}\n\ntype square struct{}\n\nfunc (square) Name() string { return \"square\" }\n\n// Label names a shape.\nfunc Label(s Shape) string { return \"a \" + s.Name() }\n\n// Default is a square.\nvar Default Shape = square{}\n",
+        ),
+        (
+            "api/server.go",
+            "package api\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/shop/store\"\n)\n\n// Validator checks input; programs register their own.\ntype Validator interface {\n\tValidate(v any) error\n}\n\n// Server answers product lookups.\ntype Server struct {\n\tstore     store.Store\n\tcache     store.Cache\n\tValidator Validator\n}\n\n// New makes a server.\nfunc New(s store.Store, c store.Cache) *Server { return &Server{store: s, cache: c} }\n\n// Product looks a product up.\nfunc (s *Server) Product(id int) (string, error) {\n\tif err := s.Validator.Validate(id); err != nil {\n\t\treturn \"\", err\n\t}\n\tif v := s.cache.Lookup(fmt.Sprint(id)); v != \"\" {\n\t\treturn v, nil\n\t}\n\treturn s.store.Get(id)\n}\n\n// Validate happens to have Validator's method; it is not one.\nfunc (s *Server) Validate(v any) error { return fmt.Errorf(\"%v\", v) }\n",
+        ),
+        ("main.go", "package main\n\nimport (\n\t\"database/sql\"\n\n\t\"example.com/shop/api\"\n\t\"example.com/shop/store\"\n)\n\nfunc main() {\n\tdb, _ := sql.Open(\"postgres\", \"\")\n\tsrv := api.New(store.NewPostgres(db), store.Pick(\"redis\"))\n\tsrv.Product(1)\n}\n"),
+        ("store/store_test.go", "package store\n\ntype fakeStore struct{}\n\nfunc (fakeStore) Get(id int) (string, error) { return \"\", nil }\n\nfunc use() Store { return fakeStore{} }\n"),
+    ]);
+    let product = find(&s, "Product");
+    let calls = |title: &str| descendants(&s, product).into_iter().filter(|n| n.kind == Kind::Call && n.title == title).collect::<Vec<_>>();
+    // One type goes where a Store is expected (the test's fake aside): the
+    // call is that type's method.
+    let get = calls("Get");
+    assert_eq!(get.len(), 1, "{:?}", descendants(&s, product).iter().map(|n| (&n.title, &n.subtitle)).collect::<Vec<_>>());
+    assert_eq!(get[0].subtitle, "pgStore");
+    let pg_get = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == "Get" && s.nodes[n.parent.unwrap() as usize].title == "pgStore").expect("pgStore.Get");
+    assert_eq!(get[0].reference, Some(pg_get.id));
+    // Two caches can be behind it: both are named, and the call leads to the contract.
+    let lookup = calls("Lookup");
+    assert_eq!(lookup[0].subtitle, "lru or redisCache");
+    assert_eq!(lookup[0].reference, Some(find(&s, "Cache").id));
+    // Nothing the program writes goes in a Validator: the server's own
+    // Validate method is not taken for it.
+    let own = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == "Validate").expect("Server.Validate");
+    assert!(!descendants(&s, product).iter().any(|n| n.reference == Some(own.id)));
+    assert!(descendants(&s, product).iter().any(|n| n.subtitle.contains("s.Validator")), "the call is still shown: {:?}", descendants(&s, product).iter().map(|n| (&n.title, &n.subtitle)).collect::<Vec<_>>());
+    // A wrapper's Next is the library's: listed, not followed.
+    let next = descendants(&s, find(&s, "Each")).into_iter().find(|n| n.title == "Next").expect("Next call");
+    assert_eq!((next.subtitle.as_str(), next.reference), ("Rows or done", Some(find(&s, "Scanner").id)));
+    // A method that only returns a value reads as the value.
+    assert!(!descendants(&s, find(&s, "Label")).iter().any(|n| n.kind == Kind::Call && n.title == "Name"));
+    // Results named or not are the same signature: pgStore is a Store.
+    assert!(find(&s, "pgStore").subtitle.contains("Store"), "{:?}", find(&s, "pgStore").subtitle);
+}
+
+#[test]
 fn a_package_imported_twice_is_reached_either_way() {
     // `models` and `. models` in one file (gorm's tests do this). Each run
     // hashes differently, so a few runs catch an answer that depends on it.

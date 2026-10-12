@@ -2,6 +2,7 @@
 //! into `syntax`, then this indexes symbols project-wide and builds one
 //! dataflow diagram per module, class and function.
 
+pub mod contracts;
 pub mod effects;
 pub mod flow;
 pub mod frameworks;

@@ -129,6 +129,9 @@ struct Gather {
 #[derive(Clone, Debug)]
 enum Callee {
     Func(usize),
+    /// A method a contract leaves to its implementations, called on a value
+    /// of the contract's type: the types it may be.
+    Dispatch { contract: usize, name: String, types: Vec<usize> },
     Ctor(usize),
     Instance { class: usize, var: String },
     Component { name: String, ty: Ty },
@@ -586,7 +589,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         walk::stmt_exprs(stmts, false, &mut |e| {
             walk::walk(e, &mut |x| {
                 if let Expr::Call(c) = x {
-                    if matches!(self.classify(c), Callee::Func(_) | Callee::Ctor(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::ExecFile(_)) {
+                    if matches!(self.classify(c), Callee::Func(_) | Callee::Dispatch { .. } | Callee::Ctor(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::ExecFile(_)) {
                         project = true;
                     }
                 }
@@ -711,7 +714,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 let project = match self.classify(c) {
                     Callee::Method(_) | Callee::Ext(_) => false,
-                    Callee::Func(_) => true,
+                    Callee::Func(_) | Callee::Dispatch { .. } => true,
                     _ => return None,
                 };
                 Some(Subject { recv: squash(self.src().of(&*a.value)), verb: a.attr.to_string(), project, kind: RunKind::Call })
@@ -1315,7 +1318,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     || matches!(&callee, Callee::Builtin(b) if matches!(b.as_str(), "open" | "input" | "exec" | "eval" | "print"));
                 let allowed = match &callee {
                     Callee::Ctor(_) | Callee::Ext(_) => upper || !self.is_major(&callee, c),
-                    Callee::Func(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::Value(_) | Callee::ExecFile(_) => false,
+                    Callee::Func(_) | Callee::Dispatch { .. } | Callee::Instance { .. } | Callee::Component { .. } | Callee::Value(_) | Callee::ExecFile(_) => false,
                     _ => true,
                 };
                 if io || !allowed {
@@ -3398,6 +3401,9 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
                 if self.is_self(&a.value) {
                     let (_, cid) = self.this.clone().unwrap();
+                    if let Some(callee) = self.through_contract(cid, attr) {
+                        return callee;
+                    }
                     if let Some(f) = self.cx.ix.method(cid, attr) {
                         return Callee::Func(f);
                     }
@@ -3419,9 +3425,10 @@ impl<'c, 'p> Fb<'c, 'p> {
                         _ => Callee::Unknown,
                     },
                     Ty::Ext(p) => Callee::Ext(format!("{p}.{attr}")),
-                    Ty::Inst(k) => match self.cx.ix.method(k, attr) {
-                        Some(f) => Callee::Func(f),
-                        None => match self.cx.ix.field(k, attr) {
+                    Ty::Inst(k) => match (self.through_contract(k, attr), self.cx.ix.method(k, attr)) {
+                        (Some(callee), _) => callee,
+                        (None, Some(f)) => Callee::Func(f),
+                        (None, None) => match self.cx.ix.field(k, attr) {
                             Some(field) if is_callable_ty(&field.ty) => Callee::Component { name: attr.into(), ty: field.ty.clone() },
                             _ => Callee::Method(attr.into()),
                         },
@@ -3443,6 +3450,19 @@ impl<'c, 'p> Fb<'c, 'p> {
                 Ty::Class(k) => Callee::Ctor(k),
                 _ => Callee::Unknown,
             },
+        }
+    }
+
+    /// A call of a method a contract leaves to the types implementing it:
+    /// into the one implementation, or naming the several.
+    fn through_contract(&self, k: usize, name: &str) -> Option<Callee> {
+        let found = self.cx.ix.implementations(k, name, self.mi)?;
+        // Accessors everywhere (`w.Width()`): read as the value, as before.
+        let accessors = !found.open && found.funcs.iter().all(|&f| self.cx.ix.is_accessor(f));
+        match (&found.funcs[..], found.open) {
+            _ if found.types.is_empty() || accessors => None,
+            ([f], false) => Some(Callee::Func(*f)),
+            _ => Some(Callee::Dispatch { contract: found.contract, name: name.into(), types: found.types }),
         }
     }
 
@@ -3478,7 +3498,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             return false;
         }
         match callee {
-            Callee::Func(_) | Callee::Ctor(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::Value(_) | Callee::ExecFile(_) => true,
+            Callee::Func(_) | Callee::Dispatch { .. } | Callee::Ctor(_) | Callee::Instance { .. } | Callee::Component { .. } | Callee::Value(_) | Callee::ExecFile(_) => true,
             Callee::Ext(p) => !MINOR_EXT.iter().any(|m| p.starts_with(m) || p == m.trim_end_matches('.')) || effects::io_of(p, c, self.src()).is_some(),
             Callee::Builtin(b) => matches!(b.as_str(), "open" | "input" | "exec" | "eval"),
             Callee::Method(m) => self.m.lang == Lang::Python && effects::method_io(m).is_some()
@@ -3580,7 +3600,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                     return vec![];
                 }
                 if let Expr::Attribute(a) = &*c.func {
-                    if !matches!(callee, Callee::Instance { .. } | Callee::Func(_) | Callee::Ctor(_)) && self.is_database(a) {
+                    if !matches!(callee, Callee::Instance { .. } | Callee::Func(_) | Callee::Dispatch { .. } | Callee::Ctor(_)) && self.is_database(a) {
                         g.effects.insert("database".into());
                     }
                 }
@@ -3828,6 +3848,25 @@ impl<'c, 'p> Fb<'c, 'p> {
                     (info.name.clone(), owner, cat, Some(info.node))
                 }
             }
+            // `a.Sound()` on an Animal: the types it can be, and the contract.
+            Callee::Dispatch { contract, name, types } => {
+                let mut names: Vec<String> = vec![];
+                for &k in types {
+                    let t = self.cx.ix.classes[k].name.clone();
+                    if !names.contains(&t) {
+                        names.push(t);
+                    }
+                }
+                // A few are named; more are the contract they share.
+                let sub = match &names[..] {
+                    [a] => a.clone(),
+                    [a, b] => format!("{a} or {b}"),
+                    [a, b, c] if a.len() + b.len() + c.len() < 30 => format!("{a}, {b} or {c}"),
+                    _ => self.cx.ix.classes[*contract].name.clone(),
+                };
+                let reference = self.cx.ix.method(*contract, name).map(|f| self.cx.ix.funcs[f].node).unwrap_or(self.cx.ix.classes[*contract].node);
+                (name.clone(), sub, self.cx.category(self.mi, &[name]).unwrap_or("function"), Some(reference))
+            }
             Callee::Ctor(k) => {
                 let cls = &self.cx.ix.classes[*k];
                 link = Some(cls.node);
@@ -3985,7 +4024,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
         }
         // A call into a project method is drawn as that call, whatever the receiver is named.
-        let project = matches!(callee, Callee::Instance { .. } | Callee::Func(_) | Callee::Ctor(_));
+        let project = matches!(callee, Callee::Instance { .. } | Callee::Func(_) | Callee::Dispatch { .. } | Callee::Ctor(_));
         let database = !project && matches!(&*c.func, Expr::Attribute(a) if self.is_database(a));
         let last = func_text.rsplit('.').next().unwrap_or(&func_text);
         if matches!(last, "render_template" | "render" | "TemplateResponse" | "render_to_response" | "render_to_string" | "get_template" | "select_template" | "render_template_string") {
@@ -5036,6 +5075,7 @@ fn callee_name(c: &Callee, fb: &Fb) -> String {
         Callee::Ext(p) => p.rsplit('.').next().unwrap_or(p).trim_end_matches('!').to_string(),
         Callee::Builtin(b) | Callee::Method(b) => b.trim_end_matches('!').to_string(),
         Callee::Func(f) => fb.cx.ix.funcs[*f].name.clone(),
+        Callee::Dispatch { name, .. } => name.clone(),
         _ => String::new(),
     }
 }
@@ -5078,7 +5118,6 @@ fn is_log_macro(name: &str) -> bool {
     matches!(name, "info!" | "debug!" | "warn!" | "error!" | "trace!" | "event!" | "info_span!" | "debug_span!" | "trace_span!")
 }
 
-/// Calls that run their function argument once per item.
 /// The event a handler property answers: `onClick` → "on click",
 /// `onOpenChange` → "on open change".
 fn event(prop: &str) -> Option<String> {
@@ -5089,6 +5128,7 @@ fn event(prop: &str) -> Option<String> {
     Some(format!("on {}", crate::vocabulary::words(rest).join(" ")))
 }
 
+/// Calls that run their function argument once per item.
 fn iterates(func: &Expr) -> bool {
     matches!(func, Expr::Attribute(a) if matches!(a.attr.as_str(), "map" | "flatMap" | "forEach" | "filter" | "find" | "findIndex" | "some" | "every" | "reduce" | "sort" | "toSorted" | "flat_map"))
 }
