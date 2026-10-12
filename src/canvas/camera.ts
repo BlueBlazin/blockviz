@@ -38,11 +38,11 @@ export class Camera {
   }
 
   zoom(factor: number, px: number, py: number) {
-    const s = this.xf.s * factor;
-    // Keep zoom inside sane bounds relative to the whole scene.
+    // Keep zoom inside sane bounds: out, relative to the whole scene; in,
+    // relative to the innermost diagram under the point, past which there is nothing to see.
     const rootScale = this.transforms()[0].s * factor;
     if (rootScale < 0.02 && factor < 1) return;
-    if (s > 50 && factor > 1 && !this.canDescend()) return;
+    if (factor > 1 && this.scaleAt(px, py) * factor > 50) return;
     this.xf = zoomAt(this.xf, factor, px, py);
   }
 
@@ -50,10 +50,28 @@ export class Camera {
     this.xf = { x: this.xf.x + dx, y: this.xf.y + dy, s: this.xf.s };
   }
 
-  private canDescend(): boolean {
-    const n = this.model.node(this.path[this.path.length - 1]);
-    const owner = this.model.owner(n);
-    return !!owner?.children?.some(c => this.model.owner(this.model.node(c)));
+  /** The scale of the innermost diagram under a screen point: the interior of
+   * the deepest block there with one (a call back into code it is in has none). */
+  private scaleAt(px: number, py: number): number {
+    const owners = this.path.map(id => this.model.owner(this.model.node(id)));
+    let t = this.xf;
+    for (let owner = owners[owners.length - 1]; owner; ) {
+      // The point in the units of this diagram.
+      const u = (px - t.x) / t.s;
+      const v = (py - t.y) / t.s;
+      const c = owner.children?.find(c => {
+        const n = this.model.node(c);
+        if (u < n.x || v < n.y || u > n.x + n.w || v > n.y + n.h) return false;
+        const o = this.model.owner(n);
+        return !!o && !owners.includes(o);
+      });
+      if (c === undefined) break;
+      const n = this.model.node(c);
+      t = this.model.interior(t, n)!;
+      owner = this.model.owner(n);
+      owners.push(owner);
+    }
+    return t.s;
   }
 
   /** Moves the anchor up while it no longer fills the screen, and down into any child that does. */
