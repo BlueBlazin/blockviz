@@ -55,6 +55,8 @@ export default function App() {
   const [panel, setPanel] = useState<PanelSize>(() => ({ w: Number(storage.get('blockviz.panel.w')) || DEFAULT_PANEL.w, h: Number(storage.get('blockviz.panel.h')) || 0 }));
   const [resized, setResized] = useState(0);
   const fitted = useMemo(() => clampPanel(panel), [panel, resized]);
+  const fittedRef = useRef(fitted);
+  fittedRef.current = fitted;
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
   const analyzer = useRef(new Analyzer());
@@ -125,13 +127,15 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded || !canvas.current) return;
+    // A link that names a selection opens the details panel: frame its view beside it.
+    const insets = overlayInsets(hashParams().has('sel'), fittedRef.current);
     const e = new Engine(canvas.current, loaded.model, {
       onView: v => { setView(v); nav.current?.viewChanged(); },
       onJump: () => nav.current?.jump(),
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); },
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); },
       onHover: id => setHoverId(id),
-    }, overlayInsets(false, DEFAULT_PANEL));
+    }, insets);
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
     const repo = hashParams().get('github');

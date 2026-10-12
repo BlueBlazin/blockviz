@@ -106,6 +106,8 @@ export class Camera {
   flight(target: number[], width: number, height: number, how: Framing = 'fit', pad = 0.1): Plan {
     let common = 0;
     while (common < this.path.length && common < target.length && this.path[common] === target[common]) common++;
+    // Fitting a block shows all of it, its title too: it is framed in the diagram around it.
+    if (how === 'fit' && target.length > 1) common = Math.min(common, target.length - 1);
     const lca = Math.max(0, common - 1);
     const base = target.slice(0, lca + 1);
     const xfs = this.transforms();

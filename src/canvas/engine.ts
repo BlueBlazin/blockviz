@@ -161,8 +161,9 @@ export class Engine {
     this.flyTo(this.model.canonicalPath(id));
   }
 
+  /** Frames all of the block the breadcrumbs end at. */
   fit() {
-    const path = this.camera.path;
+    const path = this.focusPath();
     if (path.length <= 1) this.home();
     else this.flyTo(path, 'fit', 0.04);
   }
@@ -185,15 +186,21 @@ export class Engine {
   }
 
   /**
-   * The anchor path extended into the container that dominates the view
-   * (contains the centre and fills a good part of the screen).
+   * The anchor path extended into the container that dominates the view:
+   * it contains the centre of what the overlays leave visible, and fills a
+   * good part of it, or all of it in one direction (as fitting it does).
    */
   private focusPath(): number[] {
     const path = this.camera.path.slice();
     let t = this.camera.xf;
-    const cx = this.width / 2;
-    const cy = this.height / 2;
-    const area = this.width * this.height;
+    const i = this.camera.insets;
+    const x0 = i.left;
+    const y0 = i.top;
+    const x1 = Math.max(this.width - i.right, x0 + this.width * 0.3);
+    const y1 = Math.max(this.height - i.bottom, y0 + this.height * 0.3);
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const area = (x1 - x0) * (y1 - y0);
     for (let guard = 0; guard < 64; guard++) {
       const owner = this.model.owner(this.model.node(path[path.length - 1]));
       if (!owner) break;
@@ -202,8 +209,10 @@ export class Engine {
         const n = this.model.node(c);
         if (!this.model.owner(n)) continue;
         const b = { x: t.x + n.x * t.s, y: t.y + n.y * t.s, w: n.w * t.s, h: n.h * t.s };
-        const visible = Math.max(0, Math.min(b.x + b.w, this.width) - Math.max(b.x, 0)) * Math.max(0, Math.min(b.y + b.h, this.height) - Math.max(b.y, 0));
-        if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h && visible >= area * 0.3) {
+        const w = Math.max(0, Math.min(b.x + b.w, x1) - Math.max(b.x, x0));
+        const h = Math.max(0, Math.min(b.y + b.h, y1) - Math.max(b.y, y0));
+        const fills = w * h >= area * 0.3 || (w * h >= area * 0.15 && (w >= (x1 - x0) * 0.85 || h >= (y1 - y0) * 0.85));
+        if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h && fills) {
           next = c;
           break;
         }
