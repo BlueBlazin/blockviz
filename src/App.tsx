@@ -52,7 +52,7 @@ export default function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [busy, setBusy] = useState<string | null>('Starting…');
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<ViewState>({ path: [], zoom: 1 });
+  const [view, setView] = useState<ViewState>({ path: [] });
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedPath, setSelectedPath] = useState<number[] | null>(null);
   const [dialog, setDialog] = useState<'open' | 'search' | 'help' | null>(null);
@@ -117,7 +117,7 @@ export default function App() {
       setValue(null);
       setRemovedSel(null);
       setChangesOpen(true);
-      setView({ path: [], zoom: 1 });
+      setView({ path: [] });
       setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed, compare });
       setDialog(null);
       const info = comparison?.info;
@@ -162,7 +162,8 @@ export default function App() {
     // A link that names a selection opens the details panel: frame its view beside it.
     const insets = overlayInsets(hashParams().has('sel'), fittedRef.current);
     const e = new Engine(canvas.current, loaded.model, {
-      onView: v => { setView(v); nav.current?.viewChanged(); },
+      onView: setView,
+      onMove: () => nav.current?.viewChanged(),
       onJump: () => nav.current?.jump(),
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); setRemovedSel(null); },
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); setRemovedSel(null); },

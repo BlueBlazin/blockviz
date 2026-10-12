@@ -8,10 +8,13 @@ import { distanceToPolyline } from './trace';
 /** An edge, as its container and its index among the container's edges. */
 export interface EdgeRef { owner: number; index: number }
 
-export interface ViewState { path: number[]; zoom: number }
+export interface ViewState { path: number[] }
 
 export interface EngineEvents {
+  /** Where the reader is changed: the containers the view is in (what the breadcrumbs show). */
   onView(state: ViewState): void;
+  /** The view moved. */
+  onMove?(): void;
   onSelect(id: number | null, path: number[] | null): void;
   /** The block under the pointer changed (null: none, or the view is moving). */
   onHover?(id: number | null, x: number, y: number): void;
@@ -53,6 +56,8 @@ export class Engine {
   /** When a double tap last opened a block (a browser may follow it with a dblclick). */
   private tapped = -Infinity;
   private lastEmit = 0;
+  /** Where the reader was last reported to be. */
+  private emitted: number[] | null = null;
   private disposed = false;
   /** Still showing the initial whole-project framing (nothing has moved the camera). */
   private framed = true;
@@ -338,7 +343,14 @@ export class Engine {
     });
     if (now - this.lastEmit > 120 || !this.flight) {
       this.lastEmit = now;
-      this.events.onView({ path: this.focusPath(), zoom: this.camera.transforms()[0].s });
+      // Reported only when it changes: not on every frame of a pan or zoom.
+      const path = this.focusPath();
+      const was = this.emitted;
+      if (!was || was.length !== path.length || path.some((id, i) => id !== was[i])) {
+        this.emitted = path;
+        this.events.onView({ path });
+      }
+      this.events.onMove?.();
     }
     if (this.flight) this.invalidate();
   };
