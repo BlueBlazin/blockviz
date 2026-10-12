@@ -20,10 +20,14 @@ fn load(dir: &Path, root: &Path, out: &mut Vec<blockviz_core::project::InFile>) 
 }
 
 fn scene() -> Scene {
+    scene_with(blockviz_core::layout::Options::default())
+}
+
+fn scene_with(opts: blockviz_core::layout::Options) -> Scene {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nanogpt");
     let mut files = vec![];
     load(&root, &root, &mut files);
-    blockviz_core::analyze("nanoGPT", files)
+    blockviz_core::analyze_with("nanoGPT", files, opts)
 }
 
 fn child<'a>(s: &'a Scene, parent: &Node, title: &str) -> &'a Node {
@@ -220,4 +224,20 @@ fn artifacts_name_only_the_files_actually_touched() {
     for t in tofile {
         assert!(!t.effects.iter().any(|e| e.contains("input.txt")), "data does not carry file names: {:?}", t.effects);
     }
+}
+
+#[test]
+fn shared_trunks_are_a_choice() {
+    // `B, T, C` feeds the three reshapes and the output: one line per value
+    // it carries by default, one trunk for all of them when asked.
+    let starts = |s: &Scene| {
+        let f = path(s, &["model.py", "CausalSelfAttention", "forward"]);
+        let btc = child(s, f, "B, T, C").id;
+        let mut xs: Vec<i64> = f.edges.iter().filter(|e| e.from == btc).map(|e| e.points[0].round() as i64).collect();
+        xs.sort();
+        xs.dedup();
+        xs.len()
+    };
+    assert!(starts(&scene()) > 1);
+    assert_eq!(starts(&scene_with(blockviz_core::layout::Options { shared_trunks: true })), 1);
 }

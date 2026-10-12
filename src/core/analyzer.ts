@@ -12,7 +12,8 @@ export class Analyzer {
   private pending = new Map<number, { resolve: (r: Response) => void; reject: (e: Error) => void }>();
   private nextId = 1;
 
-  analyze(project: Project, timeoutMs = 60_000): Promise<AnalysisResult> {
+  /** `sharedTrunks`: lay out every block's values on one branching line. */
+  analyze(project: Project, { sharedTrunks = false } = {}, timeoutMs = 60_000): Promise<AnalysisResult> {
     this.cancel();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -21,7 +22,7 @@ export class Analyzer {
         reject(new Error(`Analysis took longer than ${timeoutMs / 1000}s. Try a smaller folder.`));
       }, timeoutMs);
     });
-    const work = this.call({ kind: 'analyze', name: project.name, description: project.description, files: project.files }).then(r => {
+    const work = this.call({ kind: 'analyze', name: project.name, description: project.description, files: project.files, sharedTrunks }).then(r => {
       // WebAssembly memory never shrinks, and analysis can grow it to
       // gigabytes: drop that worker and keep a fresh one for highlighting.
       this.cancel();

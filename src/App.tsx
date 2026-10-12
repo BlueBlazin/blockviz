@@ -54,6 +54,9 @@ export default function App() {
   const request = useRef(0);
   const nav = useRef<Navigation | null>(null);
   const [steps, setSteps] = useState({ back: false, forward: false });
+  /** Layout style: each block's values on one branching line (off: a line per value). */
+  const [trunks, setTrunks] = useState(() => storage.get('blockviz.trunks') === '1');
+  const trunksRef = useRef(trunks);
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async (make: (progress: (m: string) => void) => Promise<Project>) => {
@@ -67,7 +70,7 @@ export default function App() {
       if (id !== request.current) return;
       if (!project.files.length) throw new Error('No files found.');
       setBusy(`Analyzing ${project.files.length} files…`);
-      const result = await analyzer.current.analyze(project);
+      const result = await analyzer.current.analyze(project, { sharedTrunks: trunksRef.current });
       if (id !== request.current) return;
       if (!result.ok) throw new Error(result.error);
       setSelected(null);
@@ -315,6 +318,21 @@ export default function App() {
           <div className="legend-grid">
             {legend.map(([cat, label]) => <span key={cat}><i style={{ background: swatch(cat).fill }} />{label}</span>)}
           </div>
+          <label className="legend-option">
+            <input
+              type="checkbox"
+              checked={trunks}
+              onChange={e => {
+                const on = e.target.checked;
+                setTrunks(on);
+                trunksRef.current = on;
+                storage.set('blockviz.trunks', on ? '1' : '');
+                // Lay the same project out again; the address brings the view back.
+                if (loaded) void load(async () => loaded.project);
+              }}
+            />
+            <span>One line per block <small>all the values a block sends share a line that branches to each reader</small></span>
+          </label>
           <div className="legend-lines">
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#2c3036" strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#2c3036" /></svg>value flows into</span>
             <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke="#a3aab4" strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill="#a3aab4" /></svg>decides whether it runs</span>

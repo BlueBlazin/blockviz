@@ -1,5 +1,5 @@
 //! Prints the diagram tree for a directory, for inspecting abstractions
-//! without a browser: `cargo run --bin blockviz -- path/to/repo [--depth N] [--json]`.
+//! without a browser: `cargo run --bin blockviz -- path/to/repo [--depth N] [--json] [--trunks]`.
 
 use blockviz_core::ir::{Node, Scene};
 use std::path::Path;
@@ -62,14 +62,15 @@ fn print(scene: &Scene, id: u32, depth: usize, max: usize) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let dir = args.get(1).expect("usage: blockviz <dir> [--depth N] [--json]");
+    let dir = args.get(1).expect("usage: blockviz <dir> [--depth N] [--json] [--trunks]");
     let depth = args.iter().position(|a| a == "--depth").and_then(|i| args.get(i + 1)).and_then(|d| d.parse().ok()).unwrap_or(4);
     let root = Path::new(dir);
     let mut files = vec![];
     walk(root, root, &mut files);
     let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let start = std::time::Instant::now();
-    let scene = blockviz_core::analyze(&name, files);
+    let opts = blockviz_core::layout::Options { shared_trunks: args.iter().any(|a| a == "--trunks") };
+    let scene = blockviz_core::analyze_with(&name, files, opts);
     let elapsed = start.elapsed();
     if args.iter().any(|a| a == "--json") {
         println!("{}", serde_json::to_string(&scene).unwrap());

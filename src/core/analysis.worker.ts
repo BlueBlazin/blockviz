@@ -3,7 +3,7 @@ import init, { analyze_project, highlight_source } from '../wasm/blockviz_core';
 import type { AnalysisResult, InputFile } from './types';
 
 export type Request =
-  | { id: number; kind: 'analyze'; name: string; description?: string; files: InputFile[] }
+  | { id: number; kind: 'analyze'; name: string; description?: string; files: InputFile[]; sharedTrunks?: boolean }
   | { id: number; kind: 'highlight'; path: string; text: string };
 
 export type Response =
@@ -21,7 +21,7 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
     try {
       await ready;
       const start = performance.now();
-      result = { ...JSON.parse(analyze_project(JSON.stringify({ name: req.name, description: req.description ?? '', files: req.files }))), elapsed: performance.now() - start };
+      result = { ...JSON.parse(analyze_project(JSON.stringify({ name: req.name, description: req.description ?? '', files: req.files, shared_trunks: !!req.sharedTrunks }))), elapsed: performance.now() - start };
     } catch (e) {
       result = { ok: false, error: `Analysis failed: ${String(e)}` };
     }

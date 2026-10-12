@@ -10,7 +10,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Pasted code**: a single file, with its language guessed from the code (Python, JavaScript, TypeScript, JSX/TSX, Rust, Go).
 - **Runs in the browser**: a Rust core compiled to WebAssembly analyzes the code in a background worker. Nothing is uploaded or run.
 - **Skips what isn't the project's code**: `.git`, `node_modules`, `target`, `dist`, `build`, virtualenvs, caches and binary files. Limits are 4,000 files, 2 MB per file and 40 MB in total.
-- **Command line**: `blockviz <dir> [--depth N] [--json]` prints the same analysis without a browser.
+- **Command line**: `blockviz <dir> [--depth N] [--json] [--trunks]` prints the same analysis without a browser.
 
 ## Moving around
 
@@ -70,6 +70,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - corner mark: there is more inside
 - **Colours by role**: function, route or command, class, sub-module, library call, I/O, settings, file on disk. Architecture-figure colours (attention, norm, linear, embedding…) apply only in code that builds neural networks.
 - **Text stays readable**: names stay legible at any zoom, long names wrap onto two lines, and table rows never grow past the size of names.
+- **One line per block** (a switch in the legend, off by default, remembered): all the values a block sends share one line that branches to each reader, each branch labelled where it arrives. Off, each value has its own line, labelled where it leaves.
 - **Legend**, **help** (keys, how to read, analysis notes) and **footer stats** (files, lines, blocks, analysis time).
 
 ## What becomes a block (all languages)

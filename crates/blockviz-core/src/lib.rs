@@ -41,10 +41,18 @@ struct WireProject {
     #[serde(default)]
     description: String,
     files: Vec<WireFile>,
+    /// Layout style: one trunk per block (see `layout::Options`).
+    #[serde(default)]
+    shared_trunks: bool,
 }
 
 pub fn analyze(name: &str, files: Vec<project::InFile>) -> ir::Scene {
     project::build(name, files)
+}
+
+/// `analyze` with a choice of layout style.
+pub fn analyze_with(name: &str, files: Vec<project::InFile>, opts: layout::Options) -> ir::Scene {
+    project::build_with(name, files, opts)
 }
 
 /// Syntax classes for one file's text, as `[len, class, len, class, ...]`
@@ -68,7 +76,7 @@ pub fn analyze_project(input: &str) -> String {
                     project::InFile { path: f.path, text: f.text, bytes }
                 })
                 .collect();
-            let mut scene = analyze(&p.name, files);
+            let mut scene = analyze_with(&p.name, files, layout::Options { shared_trunks: p.shared_trunks });
             if !p.description.trim().is_empty() {
                 scene.description = p.description.trim().to_string();
             }

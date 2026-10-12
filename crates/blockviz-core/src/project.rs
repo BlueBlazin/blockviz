@@ -57,6 +57,10 @@ struct FileEntry {
 }
 
 pub fn build(name: &str, files: Vec<InFile>) -> Scene {
+    build_with(name, files, crate::layout::Options::default())
+}
+
+pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) -> Scene {
     let mut diagnostics = vec![];
     let mut files: Vec<InFile> = files
         .into_iter()
@@ -662,7 +666,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
         scene_root = code_files[0];
         b.get_mut(scene_root).parent = None;
     }
-    crate::layout::layout(&mut b, scene_root);
+    crate::layout::layout(&mut b, scene_root, opts);
     let python_files = py.files.len() as u32;
     let lines: u32 = metas.iter().map(|m| m.lines).sum();
     let max_depth = b.nodes.iter().map(|n| n.id).filter(|&id| b.get(id).parent.is_some()).map(|id| b.depth(id)).max().unwrap_or(0);

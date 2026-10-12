@@ -35,9 +35,18 @@ enum State {
     Done,
 }
 
-pub fn layout(b: &mut Builder, root: Id) {
+/// How diagrams are drawn, where there is a choice of style.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Options {
+    /// All values a block sends leave on one trunk that branches to each
+    /// reader, every branch labelled where it arrives. Off: one line per
+    /// value, labelled under the block it leaves.
+    pub shared_trunks: bool,
+}
+
+pub fn layout(b: &mut Builder, root: Id, opts: Options) {
     let mut st = vec![State::Todo; b.nodes.len()];
-    content(b, root, &mut st);
+    content(b, root, &mut st, opts);
     let r = b.get_mut(root);
     r.w = r.cw;
     r.h = r.ch;
@@ -90,7 +99,7 @@ fn decide_shape(b: &mut Builder, id: Id) {
 }
 
 /// Lays out the interior owned by `id` (children or rows) and records cw/ch.
-fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
+fn content(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
     if st[id as usize] != State::Todo {
         return;
     }
@@ -111,7 +120,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
             let n = b.get_mut(c);
             n.hints.hidden = inline_parent;
         }
-        size(b, c, st);
+        size(b, c, st, opts);
     }
     let lanes = b.get(id).hints.lanes;
     let lnodes: Vec<LNode> = children
@@ -145,9 +154,13 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
         // Every arrow says what it carries, unless the port it leaves already shows the name.
         let show_label = !e.label.is_empty() && !(src.is_port() && !src.hints.hidden && src.title == e.label);
         let mut h = DefaultHasher::new();
-        // Every value a block sends leaves on one trunk that branches to its
-        // readers; each branch is labelled where it arrives.
-        (e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
+        // Values a block sends share a line when they are one value, or always
+        // with shared trunks.
+        if opts.shared_trunks {
+            (e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
+        } else {
+            (e.label.as_str(), e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
+        }
         ledges.push(LEdge {
             from,
             to,
@@ -171,7 +184,7 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
             }
         }
     }
-    let out = layered::layout(&lnodes, &ledges);
+    let out = layered::layout(&lnodes, &ledges, opts.shared_trunks);
     for (i, &c) in children.iter().enumerate() {
         let n = b.get_mut(c);
         n.x = out.pos[i].0;
@@ -269,7 +282,7 @@ fn port_offset(b: &Builder, region: Id, port: Id) -> Option<f64> {
     Some(inner.x + p.x + p.w / 2.)
 }
 
-fn size(b: &mut Builder, id: Id, st: &mut Vec<State>) {
+fn size(b: &mut Builder, id: Id, st: &mut Vec<State>, opts: Options) {
     decide_shape(b, id);
     let n = b.get(id);
     match n.shape {
@@ -302,7 +315,7 @@ fn size(b: &mut Builder, id: Id, st: &mut Vec<State>) {
             leaf_size(b, id);
             return;
         }
-        content(b, o, st);
+        content(b, o, st, opts);
         let (cw, ch) = (b.get(o).cw, b.get(o).ch);
         if b.get(id).hints.inline {
             region_size(b, id, cw, ch);
