@@ -69,7 +69,11 @@ export class Renderer {
   private thumbnails = 0;
   /** How many faded (untouched) blocks the one being drawn is in. */
   private faded = 0;
+  /** Widths of text, by its font as set and the text. */
   private widths = new Map<string, number>();
+  /** The font as set (at a size on the ladder), and how much it is scaled to the size asked for. */
+  private fontKey = '';
+  private fontScale = 1;
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
 
   constructor(private ctx: CanvasRenderingContext2D, private model: SceneModel) {}
@@ -265,8 +269,8 @@ export class Renderer {
     const count = inside || through;
     const words = b.w >= 130 ? ` change${count === 1 ? '' : 's'}` : '';
     const text = through ? `→ ${count}${words}` : `${count}${words}`;
-    ctx.font = `600 10px ${theme.sans}`;
-    const w = this.measure(ctx.font, text) + 10;
+    this.font(10, theme.sans, 600);
+    const w = this.width(text) + 10;
     const h = 15;
     const x = Math.max(b.x + 2, b.x + b.w - w - 6);
     const y = b.y - h / 2 - (status ? 0 : 3);
@@ -282,7 +286,7 @@ export class Renderer {
     }
     ctx.fillStyle = through ? ink : '#ffffff';
     ctx.textAlign = 'center';
-    ctx.fillText(text, x + w / 2, y + 11);
+    this.text(text, x + w / 2, y + 11);
     ctx.textAlign = 'left';
   }
 
@@ -295,11 +299,16 @@ export class Renderer {
     // Names of boxes big enough to hold them stay readable at any zoom.
     const natural = (code ? 12 : 13) * t.s;
     const named = NAMED_KINDS.has(n.kind);
-    const fontAt = (px: number) => (code ? `${px}px ${theme.mono}` : `${n.kind === 'call' || n.kind === 'symbol' ? 500 : 600} ${px}px ${theme.sans}`);
+    const family = code ? theme.mono : theme.sans;
+    const weight = code ? 400 : n.kind === 'call' || n.kind === 'symbol' ? 500 : 600;
+    const at10 = (text: string) => {
+      this.font(10, family, weight);
+      return this.width(text);
+    };
     // Readable minimum, but never larger than what fits the box.
     const room = b.w - 14 * Math.min(t.s, 1);
     const sizeFor = (text: string, share: number) => {
-      const fits = room / Math.max(this.measure(fontAt(10), text) / 10, 1);
+      const fits = room / Math.max(at10(text) / 10, 1);
       return clamp(natural, Math.min(11.5, b.h * share, Math.max(fits, natural)), 18);
     };
     // A box with room keeps a readable name; so does a landmark (a file, a
@@ -316,7 +325,7 @@ export class Renderer {
     // rather than shrinking out of sight.
     if (prominent && size < 10 && n.title.includes(' ')) {
       const split = splitTitle(n.title);
-      const longer = this.measure(fontAt(10), split[0]) >= this.measure(fontAt(10), split[1]) ? split[0] : split[1];
+      const longer = at10(split[0]) >= at10(split[1]) ? split[0] : split[1];
       const two = sizeFor(longer, 0.3);
       if (two > size + 0.5) {
         lines = split;
@@ -339,12 +348,12 @@ export class Renderer {
     const cx = b.x + b.w / 2;
     const cy = b.y + b.h / 2;
     const maxW = room;
-    ctx.font = fontAt(size);
+    this.font(size, family, weight);
     const titles = lines.map(l => this.fit(l, maxW));
     const title = titles.join(' ').trim();
     if (overlay && title) {
       // A soft backing keeps the name legible over the interior preview.
-      const w = Math.max(...titles.map(l => this.measure(ctx.font, l))) + size * 1.1;
+      const w = Math.max(...titles.map(l => this.width(l))) + size * 1.1;
       const h = (twoLines ? size + extra + ms + 6 : size + extra) + size * 0.7;
       ctx.globalAlpha = alpha * 0.92;
       ctx.fillStyle = '#ffffff';
@@ -356,11 +365,11 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.fillStyle = theme.ink;
     const titleY = (twoLines ? cy - ms * 0.15 : cy + size * 0.35) - extra / 2;
-    titles.forEach((l, i) => ctx.fillText(l, cx, titleY + i * lh));
+    titles.forEach((l, i) => this.text(l, cx, titleY + i * lh));
     if (twoLines) {
-      ctx.font = `${ms}px ${theme.sans}`;
+      this.font(ms, theme.sans);
       ctx.fillStyle = theme.muted;
-      ctx.fillText(this.fit(meta, maxW), cx, titleY + extra + ms + 3);
+      this.text(this.fit(meta, maxW), cx, titleY + extra + ms + 3);
     }
     if (deep && !overlay && b.w > 46 && size > 6) {
       // Something lives inside: a small corner mark invites zooming.
@@ -387,16 +396,16 @@ export class Renderer {
     const x = b.x + Math.min(9 * t.s, 14);
     const y = b.y + Math.min(band / 2 + size * 0.36, band - 4);
     const maxW = b.w - 18 * t.s;
-    ctx.font = `600 ${size}px ${theme.sans}`;
+    this.font(size, theme.sans, 600);
     ctx.fillStyle = theme.ink;
     const title = this.fit(n.title, maxW);
-    ctx.fillText(title, x, y);
-    const used = this.measure(ctx.font, title) + 8 * t.s;
+    this.text(title, x, y);
+    const used = this.width(title) + 8 * t.s;
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
     if (meta && used < maxW - 20 * t.s) {
-      ctx.font = `${size * 0.82}px ${theme.sans}`;
+      this.font(size * 0.82, theme.sans);
       ctx.fillStyle = theme.muted;
-      ctx.fillText(this.fit(meta, maxW - used), x + used, y);
+      this.text(this.fit(meta, maxW - used), x + used, y);
     }
   }
 
@@ -446,21 +455,19 @@ export class Renderer {
     if (n.title && size >= 4.2) {
       ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
       const code = CODE_KINDS.has(n.kind);
-      ctx.font = code ? `${size}px ${theme.mono}` : `600 ${size}px ${theme.sans}`;
-      ctx.fillStyle = theme.muted;
       const badges = (n.badges ?? []).join('  ');
       let reserve = 0;
       if (badges) {
-        ctx.font = `700 ${12 * t.s}px ${theme.sans}`;
-        reserve = this.measure(ctx.font, badges) + 18 * t.s;
+        this.font(12 * t.s, theme.sans, 700);
+        reserve = this.width(badges) + 18 * t.s;
         ctx.fillStyle = theme.ink;
         ctx.textAlign = 'right';
-        ctx.fillText(badges, b.x + b.w - 10 * t.s, b.y + 17 * t.s);
+        this.text(badges, b.x + b.w - 10 * t.s, b.y + 17 * t.s);
         ctx.textAlign = 'left';
-        ctx.font = code ? `${size}px ${theme.mono}` : `600 ${size}px ${theme.sans}`;
-        ctx.fillStyle = theme.muted;
       }
-      ctx.fillText(this.fit(n.title, b.w - 20 * t.s - reserve), b.x + 10 * t.s, b.y + 17 * t.s);
+      this.font(size, code ? theme.mono : theme.sans, code ? 400 : 600);
+      ctx.fillStyle = theme.muted;
+      this.text(this.fit(n.title, b.w - 20 * t.s - reserve), b.x + 10 * t.s, b.y + 17 * t.s);
     }
     const inner = pathPos >= 0 ? p.xfs[pathPos] : this.model.interior(t, n, n);
     if (inner) this.interior(n, inner, me, pathPos, p, chain, alpha);
@@ -493,10 +500,10 @@ export class Renderer {
       ctx.lineTo(cx, cy + a);
       ctx.stroke();
     } else {
-      ctx.font = `600 ${r * 1.15}px ${theme.sans}`;
+      this.font(r * 1.15, theme.sans, 600);
       ctx.fillStyle = theme.ink;
       ctx.textAlign = 'center';
-      ctx.fillText(n.title, cx, cy + r * 0.4);
+      this.text(n.title, cx, cy + r * 0.4);
       ctx.textAlign = 'left';
     }
   }
@@ -507,11 +514,11 @@ export class Renderer {
     if (size < 4.2) return;
     const ctx = this.ctx;
     ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
-    ctx.font = `${size}px ${theme.mono}`;
+    this.font(size, theme.mono);
     // A new input or result is named in the colour of what was added.
     ctx.fillStyle = status ? changeColor[status].ink : theme.muted;
     ctx.textAlign = 'center';
-    ctx.fillText(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
+    this.text(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
     ctx.textAlign = 'left';
     ctx.globalAlpha = 1;
   }
@@ -537,18 +544,18 @@ export class Renderer {
           ctx.fillRect(x, y + h * 0.45, Math.min((r.key.length + (r.value?.length ?? 0) + 3) * size * 0.6, (owner.cw ?? 100) * t.s - 20 * f), Math.max(size * 0.35, 0.6));
         } else if (r.heading) {
           ctx.globalAlpha = textAlpha;
-          ctx.font = `700 ${10.5 * f}px ${theme.sans}`;
+          this.font(10.5 * f, theme.sans, 700);
           ctx.fillStyle = '#8a6d1f';
-          ctx.fillText(r.key.toUpperCase(), x, y + h * 0.72);
+          this.text(r.key.toUpperCase(), x, y + h * 0.72);
         } else {
           ctx.globalAlpha = textAlpha;
-          ctx.font = `${size}px ${theme.mono}`;
+          this.font(size, theme.mono);
           ctx.fillStyle = theme.ink;
-          ctx.fillText(r.key, x, y + h * 0.72);
+          this.text(r.key, x, y + h * 0.72);
           if (r.value) {
-            const kw = this.measure(ctx.font, r.key);
+            const kw = this.width(r.key);
             ctx.fillStyle = theme.muted;
-            ctx.fillText(this.fit(` = ${r.value}`, (owner.cw ?? 300) * t.s - kw - 20 * f), x + kw, y + h * 0.72);
+            this.text(this.fit(` = ${r.value}`, (owner.cw ?? 300) * t.s - kw - 20 * f), x + kw, y + h * 0.72);
           }
         }
       }
@@ -655,19 +662,19 @@ export class Renderer {
     const ctx = this.ctx;
     const lit = state === true;
     const size = Math.min(11 * t.s, 13.5);
-    ctx.font = `${size}px ${theme.mono}`;
+    this.font(size, theme.mono);
     // Labels never overprint each other; the one for a highlighted edge wins.
-    const r = { x: x - 1, y: y - size, w: this.measure(ctx.font, e.label) + 2, h: size + 2 };
+    const r = { x: x - 1, y: y - size, w: this.width(e.label) + 2, h: size + 2 };
     if (!lit && placed.some(q => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h)) return;
     placed.push(r);
     ctx.globalAlpha = state === false ? alpha * 0.4 : change === 'faded' && !lit ? alpha * UNTOUCHED : alpha;
     ctx.lineWidth = 3;
     ctx.strokeStyle = theme.labelHalo;
     ctx.lineJoin = 'round';
-    ctx.strokeText(e.label, x, y);
+    this.text(e.label, x, y, true);
     // Values read in ink; conditions stay muted like their dotted lines.
     ctx.fillStyle = lit ? theme.accent : change === 'added' ? changeColor.added.ink : e.kind === 'control' ? theme.muted : theme.labelInk;
-    ctx.fillText(e.label, x, y);
+    this.text(e.label, x, y);
     ctx.globalAlpha = 1;
   }
 
@@ -707,13 +714,13 @@ export class Renderer {
     ctx.fill();
     if (r.label && t.s * 11 >= 4.5) {
       const size = Math.min(11 * t.s, 13.5);
-      ctx.font = `${size}px ${theme.mono}`;
+      this.font(size, theme.mono);
       const mx = (x0 + x1) / 2;
       const my = (y0 + y1) / 2;
       ctx.lineWidth = 3;
       ctx.strokeStyle = theme.labelHalo;
-      ctx.strokeText(r.label, mx + 4, my);
-      ctx.fillText(r.label, mx + 4, my);
+      this.text(r.label, mx + 4, my, true);
+      this.text(r.label, mx + 4, my);
     }
     ctx.globalAlpha = 1;
   }
@@ -742,34 +749,65 @@ export class Renderer {
 
   // ----- text ------------------------------------------------------------------------
 
-  private measure(font: string, text: string): number {
-    const key = `${font}|${text}`;
+  /**
+   * Sets the font to `px` pixels of `family`. Text is laid out only at the
+   * sizes of a ladder (`fontSize`) and scaled to its own size as it is drawn:
+   * laid out at the size it has in each frame of a zoom, every name on
+   * screen would be shaped and measured anew in every frame.
+   */
+  private font(px: number, family: string, weight = 400) {
+    const size = fontSize(px);
+    this.fontKey = `${weight} ${size}px ${family}`;
+    this.fontScale = px / size;
+    this.ctx.font = this.fontKey;
+  }
+
+  /** The width of `text` in the current font. */
+  private width(text: string): number {
+    const key = `${this.fontKey}|${text}`;
     let w = this.widths.get(key);
     if (w === undefined) {
-      this.ctx.font = font;
       w = this.ctx.measureText(text).width;
       if (this.widths.size > 8000) this.widths.clear();
       this.widths.set(key, w);
     }
-    return w;
+    return w * this.fontScale;
   }
 
-  /** Ellipsizes `text` to `max` pixels in the current font. */
+  /** Draws `text` at (x, y) in the current font: filled, or outlined when `stroke`. */
+  private text(text: string, x: number, y: number, stroke = false) {
+    const ctx = this.ctx;
+    const k = this.fontScale;
+    ctx.save();
+    ctx.scale(k, k);
+    if (stroke) {
+      ctx.lineWidth /= k;
+      ctx.strokeText(text, x / k, y / k);
+    } else ctx.fillText(text, x / k, y / k);
+    ctx.restore();
+  }
+
+  /** Ellipsizes `text` to `max` pixels in the current font. Text sized to
+   * fill `max` fits, whatever the rounding in working out its size. */
   private fit(text: string, max: number): string {
-    const font = this.ctx.font;
     if (max <= 4) return '';
-    if (this.measure(font, text) <= max) return text;
+    const room = max * (1 + 1e-9);
+    if (this.width(text) <= room) return text;
     let lo = 0;
     let hi = text.length;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (this.measure(font, text.slice(0, mid) + '…') <= max) lo = mid;
+      if (this.width(text.slice(0, mid) + '…') <= room) lo = mid;
       else hi = mid - 1;
     }
-    this.ctx.font = font;
     return lo > 0 ? text.slice(0, lo).trimEnd() + '…' : '';
   }
 }
+
+/** The size text of `px` pixels is laid out at: one of a ladder of sizes a
+ * quarter of an octave apart, 10 px among them, so a name passes through a
+ * few of them as the view zooms rather than a new one each frame. */
+export const fontSize = (px: number) => 10 * 2 ** (Math.round(4 * Math.log2(px / 10)) / 4);
 
 function mix(a: string, b: string, t: number): string {
   const pa = parse(a);
