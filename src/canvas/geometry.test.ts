@@ -146,6 +146,11 @@ describe('lines cut to the screen', () => {
     expect(visibleRuns([200, 0, 300, 0, 300, 400], [0, 10, 0], 0, 0, 100, 100)).toEqual([]);
   });
 
+  it('draws nothing of a line running beside the screen, and all of one along its edge', () => {
+    expect(visibleRuns([-20, -5, 120, -5], [0, 0], 0, 0, 100, 100)).toEqual([]);
+    expect(visibleRuns([10, 0, 90, 0], [0, 0], 0, 0, 100, 100)).toEqual([{ pts: [10, 0, 90, 0], radii: [0, 0], at: 0 }]);
+  });
+
   it('goes round a rectangle as roundRect does, its corners no rounder than it fits', () => {
     expect(rectLine({ x: 0, y: 0, w: 40, h: 10 }, 8)).toEqual({ pts: [5, 0, 40, 0, 40, 10, 0, 10, 0, 0, 5, 0], radii: [0, 5, 5, 5, 5, 0] });
   });

@@ -165,14 +165,8 @@ export function visibleRuns(pts: number[], radii: number[], x0: number, y0: numb
     const len = Math.hypot(dx, dy);
     if (k > 0) along -= cornerSaving(pts, k, radii[k]);
     // Liang–Barsky: the part t0..t1 of this segment inside the rectangle.
-    let t0 = 0;
-    let t1 = 1;
-    for (const [p, q] of [[-dx, ax - x0], [dx, x1 - ax], [-dy, ay - y0], [dy, y1 - ay]]) {
-      if (p === 0) {
-        if (q < 0) t0 = 2;
-      } else if (p < 0) t0 = Math.max(t0, q / p);
-      else t1 = Math.min(t1, q / p);
-    }
+    const t0 = Math.max(0, enters(-dx, ax - x0), enters(dx, x1 - ax), enters(-dy, ay - y0), enters(dy, y1 - ay));
+    const t1 = Math.min(1, leaves(-dx, ax - x0), leaves(dx, x1 - ax), leaves(-dy, ay - y0), leaves(dy, y1 - ay));
     if (t0 > t1) {
       along += len;
       continue;
@@ -193,6 +187,14 @@ export function visibleRuns(pts: number[], radii: number[], x0: number, y0: numb
   if (run) runs.push(run);
   return runs;
 }
+
+/** One edge of a rectangle, for cutting a segment to it: the segment's points
+ * at t with p·t ≤ q are on its inner side. Where they begin: −∞ if they do
+ * from the start, ∞ if there are none. */
+const enters = (p: number, q: number) => (p < 0 ? q / p : p === 0 && q < 0 ? Infinity : -Infinity);
+
+/** …and where they end: ∞ if they never do. */
+const leaves = (p: number, q: number) => (p > 0 ? q / p : Infinity);
 
 /** How much shorter rounding corner k by radius r makes a line: the arc
  * replaces the two tangents into the corner. */
