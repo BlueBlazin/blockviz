@@ -1592,7 +1592,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             Stmt::If(x) => self.if_stmt(s, x, later),
             Stmt::For(x) => self.for_stmt(s, x, later),
             Stmt::While(x) => self.while_stmt(s, &x.test, &x.body, later),
-            Stmt::With(x) => self.with_stmt(&x.items, &x.body, later),
+            Stmt::With(x) => self.with_stmt(x, later),
             Stmt::Try(x) => self.try_stmt(s, &x.body, &x.handlers, &x.orelse, &x.finalbody, later),
             Stmt::Match(x) => self.match_stmt(s, x, later),
             Stmt::FunctionDef(_) => self.def_stmt(s),
@@ -2573,7 +2573,8 @@ impl<'c, 'p> Fb<'c, 'p> {
         self.link_condition(&cond, id);
     }
 
-    fn with_stmt(&mut self, items: &'p [ast::WithItem], body: &'p [Stmt], later: &HashSet<String>) {
+    fn with_stmt(&mut self, with: &'p ast::StmtWith, later: &HashSet<String>) {
+        let (items, body) = (&with.items[..], &with.body[..]);
         // Go's `go f()` and `defer f()`: the steps run, marked with when.
         if let ([item], Lang::Go) = (items, self.m.lang) {
             if let Expr::Name(n) = &item.context_expr {
@@ -2609,6 +2610,13 @@ impl<'c, 'p> Fb<'c, 'p> {
             let mut names = vec![];
             if let Some(v) = &item.optional_vars {
                 walk::target_names(v, &mut names);
+            }
+            // `with Session() as s`: calls on `s` reach `Session`, as after `s = Session()`.
+            if let Some(Expr::Name(n)) = item.optional_vars.as_deref() {
+                match self.cx.ix.entered(self.mi, e, with.is_async, &TypesView(&self.types)) {
+                    Ty::Unknown => self.types.remove(&n.id),
+                    ty => self.types.insert(n.id.clone(), ty),
+                };
             }
             if major && !names.is_empty() {
                 let mut g = Gather::default();

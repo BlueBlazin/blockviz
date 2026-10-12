@@ -970,6 +970,32 @@ impl<'p> Index<'p> {
         }
     }
 
+    /// What `with context as name` binds `name` to: what the context
+    /// manager's `__enter__` (`__aenter__` in `async with`) returns, which for
+    /// a project class that does not define one is the instance itself
+    /// (`with Session() as s`: `s` is a `Session`). A library's `__enter__`
+    /// is not read, and returns something else often enough
+    /// (`TemporaryDirectory`, `mock.patch`) that nothing is assumed.
+    pub fn entered(&self, mi: usize, context: &Expr, is_async: bool, locals: &dyn Locals) -> Ty {
+        let Ty::Inst(c) = self.infer(mi, context, locals) else { return Ty::Unknown };
+        match self.method(c, if is_async { "__aenter__" } else { "__enter__" }) {
+            Some(f) => self.return_ty(f),
+            None => Ty::Inst(c),
+        }
+    }
+
+    /// Types the names a `with` statement binds, as assignments do.
+    pub fn bind_entered(&self, mi: usize, with: &ast::StmtWith, locals: &mut HashMap<String, Ty>) {
+        for item in &with.items {
+            if let Some(Expr::Name(n)) = item.optional_vars.as_deref() {
+                match self.entered(mi, &item.context_expr, with.is_async, locals) {
+                    Ty::Unknown => locals.remove(&n.id),
+                    ty => locals.insert(n.id.clone(), ty),
+                };
+            }
+        }
+    }
+
     /// Return type of a project function, when it returns a local built from
     /// a known type, else the class its declared return type names.
     pub fn return_ty(&self, f: usize) -> Ty {
@@ -1030,7 +1056,10 @@ impl<'p> Index<'p> {
                 }
                 Stmt::For(x) => self.scan_returns(mi, &x.body, locals, result),
                 Stmt::While(x) => self.scan_returns(mi, &x.body, locals, result),
-                Stmt::With(x) => self.scan_returns(mi, &x.body, locals, result),
+                Stmt::With(x) => {
+                    self.bind_entered(mi, x, locals);
+                    self.scan_returns(mi, &x.body, locals, result);
+                }
                 Stmt::Try(x) => self.scan_returns(mi, &x.body, locals, result),
                 _ => {}
             }
@@ -1165,7 +1194,10 @@ impl<'p> Index<'p> {
                     }
                 }
                 Stmt::For(x) => self.collect_self_fields(mi, src, &x.body, this, locals, fields),
-                Stmt::With(x) => self.collect_self_fields(mi, src, &x.body, this, locals, fields),
+                Stmt::With(x) => {
+                    self.bind_entered(mi, x, locals);
+                    self.collect_self_fields(mi, src, &x.body, this, locals, fields);
+                }
                 Stmt::Try(x) => self.collect_self_fields(mi, src, &x.body, this, locals, fields),
                 _ => {}
             }

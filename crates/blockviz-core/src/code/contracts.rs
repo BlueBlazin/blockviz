@@ -669,6 +669,7 @@ impl Flows<'_, '_> {
                 for i in &x.items {
                     self.exprs(&i.context_expr, locals);
                 }
+                self.ix.bind_entered(self.mi, x, locals);
                 self.block(&x.body, locals, results);
             }
             Stmt::Match(x) => {

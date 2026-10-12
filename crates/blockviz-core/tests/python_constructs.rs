@@ -327,6 +327,100 @@ def main():
     assert_eq!((lookup[0].subtitle.as_str(), lookup[0].reference), ("MemoryCache or RedisCache", Some(node("Cache", "lookup").id)));
 }
 
+#[test]
+fn with_as_binds_what_entering_returns() {
+    let s = analyze(
+        r#"
+import tempfile
+
+
+class Response:
+    def json(self):
+        return {}
+
+
+class Session:
+    def __exit__(self, *args):
+        self.close()
+
+    def request(self, method, url):
+        return Response()
+
+    def close(self):
+        pass
+
+
+class Pool:
+    def __enter__(self):
+        return self.connect()
+
+    def __exit__(self, *args):
+        pass
+
+    def connect(self):
+        return Session()
+
+
+class AsyncClient:
+    async def __aenter__(self):
+        return self
+
+    async def send(self, url):
+        return Response()
+
+
+def request(method, url):
+    with Session() as session:
+        return session.request(method, url)
+
+
+def pooled(url):
+    with Pool() as conn:
+        return conn.request("get", url)
+
+
+async def fetch(url):
+    async with AsyncClient() as client:
+        return await client.send(url)
+
+
+def scratch():
+    with tempfile.TemporaryDirectory() as d:
+        return d.join("x")
+
+
+def main():
+    r = request("get", "/")
+    return r.json()
+"#,
+    );
+    use blockviz_core::ir::Kind;
+    let def = |class: &str, title: &str| {
+        s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == title && n.parent.is_some_and(|p| s.nodes[p as usize].title == class)).unwrap_or_else(|| panic!("no {class}.{title}")).id
+    };
+    let call = |f: &str, title: &str| {
+        let root = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == f && n.parent.is_some_and(|p| s.nodes[p as usize].kind == Kind::File)).unwrap();
+        let mut stack: Vec<u32> = root.children.clone();
+        while let Some(c) = stack.pop() {
+            let n = &s.nodes[c as usize];
+            if n.title == title && matches!(n.kind, Kind::Call | Kind::Op) {
+                return n;
+            }
+            stack.extend(n.children.iter().copied());
+        }
+        panic!("no {title} in {f}")
+    };
+    // A class without its own `__enter__` is entered as itself.
+    assert_eq!(call("request", "request").reference, Some(def("Session", "request")));
+    // Its `__enter__` (or `__aenter__`) says what is entered.
+    assert_eq!(call("pooled", "request").reference, Some(def("Session", "request")));
+    assert_eq!(call("fetch", "send").reference, Some(def("AsyncClient", "send")));
+    // What comes back out of a `with` is typed too.
+    assert_eq!(call("main", "json").reference, Some(def("Response", "json")));
+    // A library's context manager is not assumed to enter as itself.
+    assert_eq!(call("scratch", "join").reference, None);
+}
+
 /// The operators a function's dataflow passes through, in source order.
 fn operators(s: &blockviz_core::ir::Scene, f: &str) -> Vec<(String, usize)> {
     let f = s.nodes.iter().find(|n| n.title == f && n.kind == blockviz_core::ir::Kind::Function).unwrap();

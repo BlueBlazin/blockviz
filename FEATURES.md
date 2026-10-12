@@ -89,7 +89,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Loops and branches** are drawn inline with repeat counts (`× n_layer`). A lone guarded statement gets an `if …` tag; long switches become a table of their arms.
 - **Every way out is visible**: guarded exits (`return None · if value is None`), errors (`returns error`) and every returned value.
 - **Long scripts** are split into sections at comment headings, and runs of constants become settings tables.
-- **Light type inference** names things: `block` is a `Block`, and `model.configure_optimizers` reaches `GPT.configure_optimizers`.
+- **Light type inference** names things: `block` is a `Block`, `model.configure_optimizers` reaches `GPT.configure_optimizers`, and `with Session() as s` makes `s` what entering returns (a `Session`, unless its `__enter__` says otherwise).
 - **Calls through contracts** (abstract methods, TypeScript interfaces, Rust `dyn Trait`, Go interfaces) go to the implementation when there is one, and name the candidates when there are several. Generic parameters count as the trait or interface they're bound by.
 
 ## Repository level
