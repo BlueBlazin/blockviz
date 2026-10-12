@@ -44,6 +44,8 @@ pub struct LEdge {
     /// Layout-only edges shape layering but are never routed.
     pub draw: bool,
     pub label: bool,
+    /// Width of the label, which sits beside the edge just above its reader.
+    pub label_w: f64,
 }
 
 pub struct LOut {
@@ -574,6 +576,17 @@ fn layered(nodes: &[LNode], edges: &[LEdge]) -> LOut {
         *v -= min_left;
     }
 
+    // Label widths of the segments that end labelled edges.
+    let mut end_label: HashMap<usize, f64> = HashMap::new();
+    for (ei, e) in edges.iter().enumerate() {
+        if e.draw && e.label && !reversed[ei] {
+            if let Some(&si) = chains[ei].last() {
+                let w = end_label.entry(si).or_insert(0.);
+                *w = w.max(e.label_w);
+            }
+        }
+    }
+
     // 6. Ports: one outgoing port per (node, group), one incoming port per segment.
     let left = |v: usize, x: &Vec<f64>| x[v] - vw[v] / 2.;
     let mut out_x = vec![0f64; segs.len()];
@@ -636,14 +649,18 @@ fn layered(nodes: &[LNode], edges: &[LEdge]) -> LOut {
         }
         ins.sort_by(|&a, &b| out_x[a].partial_cmp(&out_x[b]).unwrap_or(std::cmp::Ordering::Equal));
         let free: Vec<usize> = ins.iter().copied().filter(|&si| segs[si].to_x.is_none()).collect();
-        let step = spread(free.len(), vw[v]);
-        let start = x[v] - step * (free.len() as f64 - 1.) / 2.;
+        // Arrows enter far enough apart for the label beside each to fit,
+        // as far as the box is wide.
+        let base = spread(free.len(), vw[v]);
+        let steps: Vec<f64> = free.windows(2).map(|w| base.max(end_label.get(&w[0]).map_or(0., |lw| lw + 12.))).collect();
+        let total: f64 = steps.iter().sum();
+        let fit = if total > vw[v] * 0.92 && total > 0. { (vw[v] * 0.92 / total).min(1.) } else { 1. };
+        let mut px = x[v] - total * fit / 2.;
         for (i, &si) in free.iter().enumerate() {
-            let mut px = start + step * i as f64;
-            if free.len() == 1 && out_x[si] > left(v, &x) + 8. && out_x[si] < left(v, &x) + vw[v] - 8. {
-                px = out_x[si];
+            if i > 0 {
+                px += steps[i - 1] * fit;
             }
-            in_x[si] = px;
+            in_x[si] = if free.len() == 1 && out_x[si] > left(v, &x) + 8. && out_x[si] < left(v, &x) + vw[v] - 8. { out_x[si] } else { px };
         }
         for &si in &ins {
             if let Some(tx) = segs[si].to_x {
@@ -655,11 +672,12 @@ fn layered(nodes: &[LNode], edges: &[LEdge]) -> LOut {
     // 7. Channels: horizontal runs between layers get tracks; buses from one
     // port share a track so a value visibly splits.
     let band_h: Vec<f64> = (0..nlayers).map(|l| layers[l].iter().map(|&v| vh[v]).fold(0., f64::max)).collect();
-    let labeled_port: std::collections::HashSet<(usize, u64)> = edges
+    // Segments that end a labelled edge: their label sits just above the reader.
+    let labeled_end: std::collections::HashSet<usize> = edges
         .iter()
         .enumerate()
-        .filter(|(ei, e)| e.draw && e.label && !reversed[*ei])
-        .map(|(ei, e)| (oriented(ei).0, e.group))
+        .filter(|(ei, e)| e.draw && e.label && !reversed[*ei] && !chains[*ei].is_empty())
+        .map(|(ei, _)| *chains[ei].last().unwrap())
         .collect();
     let mut track_of = vec![0usize; segs.len()];
     let mut channel_h = vec![LAYER_GAP; nlayers];
@@ -705,7 +723,8 @@ fn layered(nodes: &[LNode], edges: &[LEdge]) -> LOut {
             }
         }
         let used = tracks.iter().map(|t| t + 1).max().unwrap_or(0);
-        let has_label = layers[l].iter().any(|&v| !is_dummy(v) && vsucc[v].iter().any(|&si| labeled_port.contains(&(v, segs[si].port))));
+        // Room under the tracks for the labels of branches arriving below.
+        let has_label = layers[l].iter().any(|&v| vsucc[v].iter().any(|&si| labeled_end.contains(&si)));
         channel_label[l] = if has_label { LABEL_H } else { 0. };
         channel_h[l] = (LAYER_GAP + channel_label[l] * 0.6).max(channel_label[l] + (used as f64 + 1.) * TRACK_GAP + 6.);
     }
@@ -724,7 +743,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge]) -> LOut {
     // 8. Routes.
     let track_y = |si: usize| {
         let l = vlayer[segs[si].a];
-        band_y[l] + band_h[l] + channel_label[l] + (track_of[si] as f64 + 1.) * TRACK_GAP + 2.
+        band_y[l] + band_h[l] + (track_of[si] as f64 + 1.) * TRACK_GAP + 2.
     };
     for (ei, chain) in chains.iter().enumerate() {
         if chain.is_empty() {
@@ -767,17 +786,13 @@ fn layered(nodes: &[LNode], edges: &[LEdge]) -> LOut {
         }
         out.routes[ei] = clean;
     }
-    // One label per labelled outgoing port, just under the source.
-    let mut labeled: std::collections::HashSet<(usize, u64)> = std::collections::HashSet::new();
+    // Each branch says what it carries just above the block it reaches.
     for (ei, e) in edges.iter().enumerate() {
         if !e.draw || !e.label || reversed[ei] || chains[ei].is_empty() {
             continue;
         }
-        let (a, _) = oriented(ei);
-        if labeled.insert((a, e.group)) {
-            let si = chains[ei][0];
-            out.labels[ei] = Some((out_x[si] + 4., top(a) + vh[a] + 10.5));
-        }
+        let si = *chains[ei].last().unwrap();
+        out.labels[ei] = Some((in_x[si] + 4., top(segs[si].b) - 4.));
     }
     out
 }
@@ -789,7 +804,7 @@ mod tests {
         LNode { w, h: 40., pin: Pin::Free, order, rank: None, converge: false, pack: 0 }
     }
     fn edge(a: usize, b: usize, group: u64) -> LEdge {
-        LEdge { from: a, to: b, group, from_x: None, to_x: None, weight: 1., draw: true, label: true }
+        LEdge { from: a, to: b, group, from_x: None, to_x: None, weight: 1., draw: true, label: true, label_w: 0. }
     }
     #[test]
     fn chain_is_vertical_and_non_overlapping() {

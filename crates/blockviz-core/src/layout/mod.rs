@@ -145,7 +145,9 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
         // Every arrow says what it carries, unless the port it leaves already shows the name.
         let show_label = !e.label.is_empty() && !(src.is_port() && !src.hints.hidden && src.title == e.label);
         let mut h = DefaultHasher::new();
-        (e.label.as_str(), e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
+        // Every value a block sends leaves on one trunk that branches to its
+        // readers; each branch is labelled where it arrives.
+        (e.kind as u8, from_x.map(|v| v.to_bits())).hash(&mut h);
         ledges.push(LEdge {
             from,
             to,
@@ -158,13 +160,14 @@ fn content(b: &mut Builder, id: Id, st: &mut Vec<State>) {
             },
             draw: true,
             label: show_label,
+            label_w: if show_label { mono_width(&e.label, 11.) } else { 0. },
         });
         edge_map.push(ei);
     }
     for &c in &children {
         for &a in &b.get(c).hints.after.clone() {
             if let (Some(&from), Some(&to)) = (index.get(&a), index.get(&c)) {
-                ledges.push(LEdge { from, to, group: 0, from_x: None, to_x: None, weight: 0.5, draw: false, label: false });
+                ledges.push(LEdge { from, to, group: 0, from_x: None, to_x: None, weight: 0.5, draw: false, label: false, label_w: 0. });
             }
         }
     }
