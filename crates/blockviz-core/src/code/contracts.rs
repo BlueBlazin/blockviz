@@ -28,6 +28,8 @@ pub struct Implementations {
     /// Some type runs a method the project does not define (a Go type's
     /// method from a library type it embeds).
     pub open: bool,
+    /// Some implementations are not known by name.
+    pub partial: bool,
 }
 
 impl<'p> Index<'p> {
@@ -35,8 +37,10 @@ impl<'p> Index<'p> {
         self.implementers = vec![vec![]; self.classes.len()];
         self.implements = vec![vec![]; self.classes.len()];
         self.go_needs = vec![None; self.classes.len()];
+        self.unresolved = vec![false; self.classes.len()];
         self.flows = vec![vec![]; self.classes.len()];
         self.satisfy_go_interfaces();
+        self.declared_implementations();
         if self.go_needs.iter().any(Option::is_some) {
             self.flows = self.go_flows();
         }
@@ -65,6 +69,58 @@ impl<'p> Index<'p> {
         }
         for (k, need) in contracts {
             self.go_needs[k] = Some(need);
+        }
+    }
+
+    /// What other languages say they implement: subclasses of a class
+    /// (Python, JS/TS `extends`), traits a Rust type implements (in its own
+    /// module or in an `impl Trait for Type` elsewhere).
+    fn declared_implementations(&mut self) {
+        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (k, c) in self.classes.iter().enumerate() {
+            by_name.entry(c.name.as_str()).or_default().push(k);
+        }
+        // A base written with a contract's name that did not resolve to it
+        // (an `impl` in an inline module whose `use` is not followed): some
+        // implementation is not known, so none is taken for the only one.
+        let mut unresolved: Vec<usize> = vec![];
+        for c in &self.classes {
+            for (b, text) in c.bases.iter().zip(&c.base_text) {
+                if matches!(b, Ty::Class(_)) {
+                    continue;
+                }
+                let head = text.split('<').next().unwrap_or(text).trim_start_matches(['&', ' ']).trim_start_matches("dyn ");
+                let name = head.rsplit(['.', ':']).next().unwrap_or(head);
+                unresolved.extend(by_name.get(name).into_iter().flatten().copied());
+            }
+        }
+        for k in unresolved {
+            self.unresolved[k] = true;
+        }
+        for c in 0..self.classes.len() {
+            if self.modules[self.classes[c].module].lang == Lang::Go {
+                continue;
+            }
+            let class_bases = |k: usize| self.classes[k].bases.iter().filter_map(|b| if let Ty::Class(p) = b { Some(*p) } else { None }).collect::<Vec<usize>>();
+            let (implementer, mut stack) = match (self.classes[c].def.kind, self.classes[c].bases.first()) {
+                (ast::ClassKind::Extension, Some(Ty::Class(t))) => (*t, class_bases(c).into_iter().skip(1).collect()),
+                (ast::ClassKind::Extension, _) => continue,
+                _ => (c, class_bases(c)),
+            };
+            if self.contract_kind(implementer) {
+                continue;
+            }
+            let mut seen: Vec<usize> = vec![];
+            while let Some(p) = stack.pop() {
+                if p == implementer || seen.contains(&p) || seen.len() > 32 {
+                    continue;
+                }
+                seen.push(p);
+                if !self.implementers[p].contains(&implementer) {
+                    self.implementers[p].push(implementer);
+                }
+                stack.extend(class_bases(p));
+            }
         }
     }
 
@@ -142,7 +198,7 @@ impl<'p> Index<'p> {
         let tests = crate::project::is_test_path(&self.modules[from].path);
         let go = self.modules[self.classes[contract].module].lang == Lang::Go;
         let candidates = if go { self.go_candidates(contract, tests) } else { self.implementers[contract].iter().copied().filter(|&c| tests || !self.is_double(c)).collect() };
-        let mut out = Implementations { contract, types: vec![], funcs: vec![], open: false };
+        let mut out = Implementations { contract, types: vec![], funcs: vec![], open: false, partial: false };
         for c in candidates {
             match self.method(c, name).filter(|&f| !self.is_abstract(f) && self.funcs[f].class.is_some_and(|o| !self.contract_kind(o))) {
                 Some(f) => {
@@ -160,6 +216,10 @@ impl<'p> Index<'p> {
         if !go && !tests && out.types.len() == 1 && !self.named(out.types[0]) {
             out.types.clear();
             out.funcs.clear();
+        }
+        if !go && self.unresolved[contract] && !out.types.is_empty() {
+            out.open = true;
+            out.partial = true;
         }
         Some(out)
     }
@@ -267,10 +327,15 @@ impl<'p> Index<'p> {
     }
 
     /// A type standing in for a real one in tests: declared in test code or
-    /// a mocks directory, or named as a double (`MockStore`, `fakeClock`).
+    /// a test helper (`mocks/`, `testutil.rs`), or named as a double
+    /// (`MockStore`, `fakeClock`).
     fn is_double(&self, c: usize) -> bool {
         let path = &self.modules[self.classes[c].module].path;
-        crate::project::is_test_path(path) || path.split('/').rev().skip(1).any(|d| matches!(d, "mock" | "mocks" | "fake" | "fakes" | "testutil" | "testutils" | "testhelpers")) || crate::naming::is_test_double(&self.classes[c].name)
+        let helper = |p: &str| {
+            let stem = p.split('.').next().unwrap_or(p);
+            matches!(stem, "mock" | "mocks" | "fake" | "fakes" | "testutil" | "testutils" | "test_util" | "test_utils" | "testhelpers" | "test_helpers")
+        };
+        crate::project::is_test_path(path) || path.split('/').any(helper) || crate::naming::is_test_double(&self.classes[c].name)
     }
 
     /// Whether non-test code names class `c` outside its own definition and

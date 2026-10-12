@@ -194,6 +194,8 @@ pub struct Index<'p> {
     /// The types Go code puts where each interface is expected, and whether
     /// in test code.
     pub(super) flows: Vec<Vec<(usize, bool)>>,
+    /// Contracts some type names as a base without it resolving.
+    pub(super) unresolved: Vec<bool>,
     /// Whether non-test code names each class outside its own definition.
     pub(super) named: OnceCell<Vec<bool>>,
 }
@@ -263,6 +265,7 @@ impl<'p> Index<'p> {
             implements: vec![],
             go_needs: vec![],
             flows: vec![],
+            unresolved: vec![],
             named: OnceCell::new(),
         };
         for (mi, m) in modules.iter().enumerate() {

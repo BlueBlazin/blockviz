@@ -231,3 +231,98 @@ def f(path, limit):
     assert_eq!(kind("limit", "store"), Some(EdgeKind::Control));
     assert_eq!(kind("load", "store"), Some(EdgeKind::Data));
 }
+
+#[test]
+fn calls_through_an_abstract_class_reach_its_subclasses() {
+    let s = analyze(
+        r#"
+from abc import ABC, abstractmethod
+import sqlite3
+
+
+class Store(ABC):
+    @abstractmethod
+    def get(self, pid: int) -> str:
+        """The product's name."""
+
+    def describe(self, pid: int) -> str:
+        return f"product {self.get(pid)}"
+
+
+class SqlStore(Store):
+    def __init__(self, path: str):
+        self.conn = sqlite3.connect(path)
+
+    def get(self, pid: int) -> str:
+        return self.conn.execute("SELECT name FROM products WHERE id = ?", (pid,)).fetchone()[0]
+
+
+class Cache(ABC):
+    @abstractmethod
+    def lookup(self, key: str) -> str:
+        raise NotImplementedError
+
+
+class MemoryCache(Cache):
+    def __init__(self):
+        self.items = {}
+
+    def lookup(self, key: str) -> str:
+        return self.items.get(key, "").lower()
+
+
+class RedisCache(Cache):
+    def __init__(self, url: str):
+        self.url = url
+
+    def lookup(self, key: str) -> str:
+        return fetch(self.url, key)
+
+
+class FakeCache(Cache):
+    def lookup(self, key: str) -> str:
+        return key.upper()
+
+
+def fetch(url, key):
+    return url + key
+
+
+def product(store: Store, cache: Cache, pid: int) -> str:
+    hit = cache.lookup(str(pid))
+    if hit:
+        return hit
+    return store.get(pid)
+
+
+def main():
+    print(product(SqlStore("shop.db"), RedisCache("redis://") if fetch("a", "b") else MemoryCache(), 1))
+"#,
+    );
+    use blockviz_core::ir::Kind;
+    let node = |parent: &str, title: &str| {
+        s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == title && n.parent.is_some_and(|p| s.nodes[p as usize].title == parent)).unwrap_or_else(|| panic!("no {parent}.{title}"))
+    };
+    let calls_in = |f: &str, title: &str| -> Vec<&blockviz_core::ir::Node> {
+        let root = s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == f).unwrap();
+        let mut out = vec![];
+        let mut stack: Vec<u32> = root.children.clone();
+        while let Some(c) = stack.pop() {
+            let n = &s.nodes[c as usize];
+            if n.kind == Kind::Call && n.title == title {
+                out.push(n);
+            }
+            stack.extend(n.children.iter().copied());
+        }
+        out
+    };
+    // The one store there is: the abstract method's subclass, from callers
+    // and from the base class's own `describe`.
+    for f in ["product", "describe"] {
+        let get = calls_in(f, "get");
+        assert_eq!((get[0].subtitle.as_str(), get[0].reference), ("SqlStore", Some(node("SqlStore", "get").id)), "{f}");
+    }
+    // Two caches (the fake aside): named, leading to the abstract method.
+    let lookup = calls_in("product", "lookup");
+    assert_eq!((lookup[0].subtitle.as_str(), lookup[0].reference), ("MemoryCache or RedisCache", Some(node("Cache", "lookup").id)));
+}

@@ -555,3 +555,31 @@ export const style = { color: 'red', width: 3 };
     assert_eq!(method("api", "saveUser").inputs, ["u"]);
     assert_eq!(find(&s, "style").kind, Kind::Table);
 }
+
+#[test]
+fn calls_through_interfaces_and_abstract_classes_reach_implementations() {
+    let s = analyze(&[
+        (
+            "src/repo.ts",
+            "/** Where users are kept. */\nexport interface UserRepo {\n  find(id: string): Promise<User | undefined>;\n  save(user: User): Promise<void>;\n}\n\nexport interface User { id: string; name: string }\n\n/** Users in Postgres. */\nexport class PgUserRepo implements UserRepo {\n  constructor(private readonly pool: Pool) {}\n  async find(id: string) {\n    const r = await this.pool.query(\"SELECT * FROM users WHERE id = $1\", [id]);\n    return r.rows[0];\n  }\n  async save(user: User) {\n    await this.pool.query(\"INSERT INTO users VALUES ($1, $2)\", [user.id, user.name]);\n  }\n}\n\n/** A notifier sends one message. */\nexport abstract class Notifier {\n  abstract send(to: string, text: string): Promise<void>;\n  async welcome(user: User) {\n    await this.send(user.id, `Welcome ${user.name}`);\n  }\n}\n\nexport class EmailNotifier extends Notifier {\n  async send(to: string, text: string) { await fetch(`https://mail/${to}`, { method: \"POST\", body: text }); }\n}\n\nexport class SmsNotifier extends Notifier {\n  async send(to: string, text: string) { await fetch(`https://sms/${to}`, { method: \"POST\", body: text }); }\n}\n\ninterface Pool { query(sql: string, args: unknown[]): Promise<{ rows: User[] }> }\n",
+        ),
+        (
+            "src/service.ts",
+            "import { UserRepo, Notifier, PgUserRepo, EmailNotifier, SmsNotifier } from \"./repo\";\n\nexport class UserService {\n  constructor(private repo: UserRepo, private notifier: Notifier) {}\n\n  async register(id: string, name: string) {\n    await this.repo.save({ id, name });\n    await this.notifier.send(id, \"hi\");\n    return this.repo.find(id);\n  }\n}\n\nexport const service = new UserService(new PgUserRepo(pool()), Math.random() > 0.5 ? new EmailNotifier() : new SmsNotifier());\ndeclare function pool(): any;\n",
+        ),
+    ]);
+    let method = |class: &str, name: &str| s.nodes.iter().find(|n| n.kind == Kind::Function && n.title == name && n.parent.is_some_and(|p| s.nodes[p as usize].title == class)).unwrap_or_else(|| panic!("no {class}.{name}"));
+    fn call<'a>(s: &'a Scene, f: &'a Node, title: &str) -> &'a Node {
+        descendants(s, f).into_iter().find(|n| n.kind == Kind::Call && n.title == title).unwrap_or_else(|| panic!("no {title} call in {}", f.title))
+    }
+    let register = method("UserService", "register");
+    // `implements UserRepo`: the one repository, and the class says what it implements.
+    assert_eq!(call(&s, register, "save").reference, Some(method("PgUserRepo", "save").id));
+    assert_eq!(find(&s, "PgUserRepo").subtitle, "UserRepo");
+    // An abstract method: either notifier, from callers and from the base class.
+    for f in [register, method("Notifier", "welcome")] {
+        let send = call(&s, f, "send");
+        assert_eq!((send.subtitle.as_str(), send.reference), ("EmailNotifier or SmsNotifier", Some(method("Notifier", "send").id)));
+    }
+    assert!(method("Notifier", "send").badges.contains(&"abstract".to_string()));
+}

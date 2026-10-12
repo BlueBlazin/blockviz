@@ -980,6 +980,11 @@ impl<'s> Lower<'s> {
                     let prologue: &[Stmt] = if kind == DefKind::Constructor { &fields } else { &[] };
                     let mut f = self.function(&m.value, &mname, m.span, kind, !m.r#static, prologue);
                     f.decorators = self.decorators(&m.decorators);
+                    // `abstract save(): void;` is Python's `@abstractmethod`.
+                    if m.r#type == js::MethodDefinitionType::TSAbstractMethodDefinition {
+                        let at = Span::new(m.span.start, m.span.start);
+                        f.decorators.push(Decorator { expression: name_expr("abstractmethod", at, Ctx::Load), range: r(at) });
+                    }
                     body.push(Stmt::FunctionDef(f));
                 }
                 js::ClassElement::PropertyDefinition(p) => {
@@ -1011,7 +1016,8 @@ impl<'s> Lower<'s> {
         }
         ClassDef {
             name,
-            bases: c.heritage.as_ref().map(|h| vec![self.expr(&h.expression)]).unwrap_or_default(),
+            // What it extends, then the interfaces it implements.
+            bases: c.heritage.as_ref().map(|h| self.expr(&h.expression)).into_iter().chain(c.implements.iter().map(|i| self.type_name(&i.expression))).collect(),
             keywords: vec![],
             body,
             decorators: self.decorators(&c.decorators),

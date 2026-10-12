@@ -130,8 +130,9 @@ struct Gather {
 enum Callee {
     Func(usize),
     /// A method a contract leaves to its implementations, called on a value
-    /// of the contract's type: the types it may be.
-    Dispatch { contract: usize, name: String, types: Vec<usize> },
+    /// of the contract's type: the types it may be, all of them or (`partial`)
+    /// those known by name.
+    Dispatch { contract: usize, name: String, types: Vec<usize>, partial: bool },
     Ctor(usize),
     Instance { class: usize, var: String },
     Component { name: String, ty: Ty },
@@ -3462,7 +3463,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         match (&found.funcs[..], found.open) {
             _ if found.types.is_empty() || accessors => None,
             ([f], false) => Some(Callee::Func(*f)),
-            _ => Some(Callee::Dispatch { contract: found.contract, name: name.into(), types: found.types }),
+            _ => Some(Callee::Dispatch { contract: found.contract, name: name.into(), types: found.types, partial: found.partial }),
         }
     }
 
@@ -3849,17 +3850,13 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
             }
             // `a.Sound()` on an Animal: the types it can be, and the contract.
-            Callee::Dispatch { contract, name, types } => {
-                let mut names: Vec<String> = vec![];
-                for &k in types {
-                    let t = self.cx.ix.classes[k].name.clone();
-                    if !names.contains(&t) {
-                        names.push(t);
-                    }
-                }
-                // A few are named; more are the contract they share.
+            Callee::Dispatch { contract, name, types, partial } => {
+                let names: Vec<&str> = types.iter().map(|&k| self.cx.ix.classes[k].name.as_str()).collect();
+                let distinct = names.iter().enumerate().all(|(i, n)| !names[..i].contains(n));
+                // A few are named; more, or two of one name, are the contract they share.
                 let sub = match &names[..] {
-                    [a] => a.clone(),
+                    _ if !distinct || *partial => self.cx.ix.classes[*contract].name.clone(),
+                    [a] => a.to_string(),
                     [a, b] => format!("{a} or {b}"),
                     [a, b, c] if a.len() + b.len() + c.len() < 30 => format!("{a}, {b} or {c}"),
                     _ => self.cx.ix.classes[*contract].name.clone(),

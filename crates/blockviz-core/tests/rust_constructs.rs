@@ -556,3 +556,30 @@ fn workspace_crates_are_the_project() {
     assert!(!names.contains(&"engine"), "{names:?}");
     assert!(names.contains(&"serde"), "{names:?}");
 }
+
+#[test]
+fn calls_through_trait_objects_reach_their_impls() {
+    let s = analyze(&[
+        ("Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        (
+            "src/main.rs",
+            "mod repo;\n\nuse repo::{Email, InMemoryRepo, Notifier, Repo, Sms};\nuse std::sync::Arc;\n\nstruct App {\n    repo: Arc<dyn Repo>,\n    notifier: Box<dyn Notifier>,\n}\n\nimpl App {\n    fn register(&self, name: &str) -> u64 {\n        let id = self.repo.save(name);\n        self.notifier.notify(name);\n        id\n    }\n}\n\nfn main() {\n    let notifier: Box<dyn Notifier> = if std::env::args().count() > 1 { Box::new(Email) } else { Box::new(Sms) };\n    let app = App { repo: Arc::new(InMemoryRepo::default()), notifier };\n    app.register(\"ann\");\n}\n",
+        ),
+        (
+            "src/repo.rs",
+            "use std::sync::Mutex;\n\npub trait Repo: Send + Sync {\n    fn save(&self, name: &str) -> u64;\n    fn describe(&self, name: &str) -> String {\n        format!(\"{} #{}\", name, self.save(name))\n    }\n}\n\n#[derive(Default)]\npub struct InMemoryRepo {\n    users: Mutex<Vec<String>>,\n}\n\nimpl Repo for InMemoryRepo {\n    fn save(&self, name: &str) -> u64 {\n        let mut users = self.users.lock().unwrap();\n        users.push(name.to_string());\n        users.len() as u64\n    }\n}\n\npub trait Notifier {\n    fn notify(&self, who: &str);\n}\n\npub struct Email;\npub struct Sms;\n\nimpl Notifier for Email {\n    fn notify(&self, who: &str) {\n        println!(\"mail {who}\");\n    }\n}\n\nimpl Notifier for Sms {\n    fn notify(&self, who: &str) {\n        println!(\"sms {who}\");\n    }\n}\n",
+        ),
+    ]);
+    let register = find(&s, "register");
+    fn call<'a>(s: &'a Scene, f: &'a Node, title: &str) -> &'a Node {
+        descendants(s, f).into_iter().find(|n| n.kind == Kind::Call && n.title == title).unwrap_or_else(|| panic!("no {title} call in {}", f.title))
+    }
+    let save = within(&s, find(&s, "InMemoryRepo"), "save");
+    // `Arc<dyn Repo>`: the one repository there is.
+    assert_eq!((call(&s, register, "save").subtitle.as_str(), call(&s, register, "save").reference), ("InMemoryRepo", Some(save.id)));
+    // A provided method calling a required one reaches the same impl.
+    assert_eq!(call(&s, find(&s, "describe"), "save").reference, Some(save.id));
+    // `Box<dyn Notifier>`: either impl, leading to the trait.
+    let notify = call(&s, register, "notify");
+    assert_eq!((notify.subtitle.as_str(), notify.reference), ("Email or Sms", Some(find(&s, "Notifier").id)));
+}
