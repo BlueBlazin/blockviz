@@ -49,8 +49,8 @@ struct FileEntry {
     class: Class,
     language: &'static str,
     node: Id,
-    /// Its text, unless a front end took it to analyze.
-    text: Option<String>,
+    /// What the repository level reads of its text, unless a front end took it.
+    read: Option<Read>,
     /// Written by a tool (migrations, protobuf stubs, generated clients):
     /// shown as a file, never opened, and left out of relations.
     generated: bool,
@@ -58,6 +58,33 @@ struct FileEntry {
     hidden: bool,
     /// A Go `package main` with `func main`.
     program: bool,
+}
+
+/// What the repository level reads of a file's text, read as files are
+/// classified so that the text is not kept through analysis.
+struct Read {
+    len: usize,
+    /// Commands in it that run project files.
+    runs: Vec<crate::invocations::Run>,
+    /// Its outline, with each symbol's first and last line (not for assets).
+    outline: Option<(outline::Outline, Vec<(u32, u32)>)>,
+    /// A compose file's services.
+    services: Vec<crate::compose::Service>,
+}
+
+impl Read {
+    fn new(path: &str, class: Class, language: &'static str, text: &str) -> Self {
+        let line_of = |at: usize| text[..at.min(text.len())].matches('\n').count() as u32 + 1;
+        let outline = (!matches!(class, Class::Asset | Class::Meta | Class::Other)).then(|| {
+            let o = outline::outline(language, text);
+            let lines = o.symbols.iter().map(|s| (line_of(s.start), line_of(s.end))).collect();
+            (o, lines)
+        });
+        let base = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+        let compose = language == "YAML" && base.contains("compose") && (base.ends_with(".yml") || base.ends_with(".yaml"));
+        let services = if compose { crate::compose::services(text) } else { vec![] };
+        Read { len: text.len(), runs: crate::invocations::runs(language, path, text), outline, services }
+    }
 }
 
 pub fn build(name: &str, files: Vec<InFile>) -> Scene {
@@ -141,7 +168,8 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         let generated = text.as_deref().is_some_and(|t| is_generated(&f.path, t));
         let hidden = f.path.rsplit('/').next() == Some("__init__.py") && text.as_deref().is_some_and(is_empty_python);
         let program = f.path.ends_with(".go") && text.as_deref().is_some_and(go_program);
-        // Code is handed to its front end, which keeps the text from here on.
+        // Code is handed to its front end, which keeps the text from here on;
+        // the repository level reads the rest now.
         let mut source = None;
         let mut kept = None;
         let minified = f.path.contains(".min.") || f.path.ends_with(".bundle.js");
@@ -156,9 +184,11 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
                         source = Some(py.clone());
                         py_inputs.push(PyInput { file: i as u32, path: f.path.clone(), text: py, notebook: true });
                     }
-                    None => diagnostics.push(format!("Could not read notebook {}.", f.path)),
+                    None => {
+                        diagnostics.push(format!("Could not read notebook {}.", f.path));
+                        kept = Some(t);
+                    }
                 }
-                kept = Some(t);
             }
             (_, t) => kept = t,
         }
@@ -170,7 +200,8 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
             analyzed,
             source,
         });
-        entries.push(FileEntry { path: f.path, class, language, node: 0, text: kept, generated, hidden, program });
+        let read = kept.map(|t| Read::new(&f.path, class, language, &t));
+        entries.push(FileEntry { path: f.path, class, language, node: 0, read, generated, hidden, program });
     }
 
     let mut b = Builder::default();
@@ -210,7 +241,6 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
             }
             continue;
         }
-        let text = e.text.as_deref();
         let (kind, category) = match e.class {
             Class::Code | Class::Python | Class::Notebook => (Kind::File, "file"),
             Class::Config => (Kind::File, "config"),
@@ -224,21 +254,18 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
             let n = b.get_mut(id);
             n.category = category;
             n.subtitle = e.language.to_string();
-            n.span = text.map(|t| Span { file: i as u32, start: 0, end: t.len() as u32, line: 1, end_line: t.lines().count().max(1) as u32 });
+            n.span = e.read.as_ref().map(|r| Span { file: i as u32, start: 0, end: r.len as u32, line: 1, end_line: metas[i].lines.max(1) });
         }
-        let Some(text) = text else {
+        let Some(read) = e.read.as_mut() else {
             let bytes = metas[i].bytes;
             b.get_mut(id).subtitle = format!("{} · {}", e.language, human_size(bytes));
             continue;
         };
-        let found = crate::invocations::runs(e.language, &e.path, text);
+        let found = std::mem::take(&mut read.runs);
         if !found.is_empty() {
             runs.push((i, found));
         }
-        if matches!(e.class, Class::Asset | Class::Meta | Class::Other) {
-            continue;
-        }
-        let o = outline::outline(e.language, text);
+        let Some((o, lines)) = read.outline.take() else { continue };
         b.get_mut(id).doc = o.doc.clone();
         if !o.imports.is_empty() {
             b.get_mut(id).inputs = o.imports.clone();
@@ -247,10 +274,8 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         if !o.symbols.is_empty() {
             b.get_mut(id).badges.push("outline".into());
             let mut by_name: Map<String, Id> = Map::default();
-            for s in &o.symbols {
+            for (s, &(line, end_line)) in o.symbols.iter().zip(&lines) {
                 let sid = b.add(Some(id), Kind::Symbol, Shape::Box, s.name.clone());
-                let line = text[..s.start].matches('\n').count() as u32 + 1;
-                let end_line = text[..s.end.min(text.len())].matches('\n').count() as u32 + 1;
                 let n = b.get_mut(sid);
                 n.subtitle = s.kind.to_string();
                 n.category = match s.kind {
@@ -258,7 +283,7 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
                     "kernel" => "kernel",
                     _ => "class",
                 };
-                n.span = Some(Span { file: i as u32, start: s.start as u32, end: s.end.min(text.len()) as u32, line, end_line });
+                n.span = Some(Span { file: i as u32, start: s.start as u32, end: s.end.min(read.len) as u32, line, end_line });
                 by_name.entry(s.name.clone()).or_insert(sid);
             }
             for s in &o.symbols {
@@ -441,17 +466,10 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         }
     }
     // Compose files show their services, each zooming into the code it builds.
-    for e in entries.iter().filter(|e| e.language == "YAML" && !e.hidden) {
-        let base = e.path.rsplit('/').next().unwrap_or(&e.path).to_ascii_lowercase();
-        if !(base.contains("compose") && (base.ends_with(".yml") || base.ends_with(".yaml"))) {
-            continue;
-        }
-        let services = crate::compose::services(e.text.as_deref().unwrap_or(""));
-        if services.is_empty() {
-            continue;
-        }
+    for e in entries.iter().filter(|e| !e.hidden) {
+        let Some(read) = e.read.as_ref().filter(|r| !r.services.is_empty()) else { continue };
         let dir = e.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-        compose_services(&mut b, e.node, dir, &services, &dirs, root);
+        compose_services(&mut b, e.node, dir, &read.services, &dirs, root);
     }
     // A directory of generated files (migrations) is one block.
     let generated_nodes: Set<Id> = entries.iter().filter(|e| e.generated).map(|e| e.node).collect();
