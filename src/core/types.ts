@@ -73,4 +73,30 @@ export interface Scene {
 export interface InputFile { path: string; text?: string; bytes: number }
 export interface Project { name: string; files: InputFile[]; source: string; description?: string }
 
+/** How a file differs between the two versions compared. */
+export type FileChange = { path: string; status: 'added' | 'removed' | 'modified' | 'renamed'; previous?: string };
+
+/** What two versions of a repository are: a pull request, or two branches compared. */
+export interface CompareInfo {
+  kind: 'pr' | 'compare';
+  /** `owner/repo`. */
+  repo: string;
+  number?: number;
+  /** The pull request's title, or `base...head`. */
+  title: string;
+  /** The comparison on GitHub. */
+  url: string;
+  /** `open`, `closed` or `merged` for a pull request. */
+  state?: string;
+  baseRef: string;
+  headRef: string;
+  /** The commits compared: where the head branched off the base, and the head. */
+  baseSha: string;
+  headSha: string;
+  files: FileChange[];
+}
+
+/** Two versions of a repository, read as a change from `base` to `head`. */
+export interface Comparison { base: Project; head: Project; info: CompareInfo }
+
 export type AnalysisResult = { ok: true; scene: Scene; elapsed: number } | { ok: false; error: string };

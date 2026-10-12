@@ -1,5 +1,5 @@
 import { browserCache, type RepoCache, type SavedFile, type SavedRepo } from './cache';
-import type { InputFile, Project } from './types';
+import type { CompareInfo, Comparison, FileChange, InputFile, Project } from './types';
 
 // Keep in step with `IGNORED_DIRS` in crates/blockviz-core/src/project.rs.
 const IGNORED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.idea', '.vscode', '.ipynb_checkpoints', 'dist', 'build', 'target', '.next', '.cache', 'site-packages', '.eggs', '.turbo', '.nuxt', '.svelte-kit', '.output', '.vercel', '.parcel-cache', '.yarn', 'bower_components', 'storybook-static']);
@@ -74,10 +74,35 @@ export async function droppedProject(items: DataTransferItemList, progress: Prog
   return { name, files: await readFiles(entries, progress), source: 'dropped files' };
 }
 
-export function parseGitHub(input: string): { owner: string; repo: string; branch?: string; path?: string } | null {
-  const s = input.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\.git$/, '').replace(/\/$/, '');
-  const m = s.match(/^(?:github\.com\/)?([\w.-]+)\/([\w.-]+)(?:\/tree\/([^/]+)(?:\/(.+))?)?$/);
+/** A GitHub location: a repository (a branch, a folder), a pull request, or two versions compared. */
+export interface GitHubRef {
+  owner: string;
+  repo: string;
+  branch?: string;
+  path?: string;
+  /** A pull request's number. */
+  pull?: number;
+  /** Two branches (or commits) compared, `base...head`; no base means the default branch. */
+  compare?: { base?: string; head: string };
+}
+
+export function parseGitHub(input: string): GitHubRef | null {
+  let s = input.trim().replace(/^https?:\/\//, '').replace(/^www\./, '');
+  // `owner/repo#123` names a pull request.
+  const short = s.match(/^(?:github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?#(\d+)$/);
+  if (short) return { owner: short[1], repo: short[2], pull: Number(short[3]) };
+  s = s.replace(/[?#].*$/, '').replace(/\/$/, '');
+  const pull = s.match(/^(?:github\.com\/)?([\w.-]+)\/([\w.-]+)\/pulls?\/(\d+)(?:\/.*)?$/);
+  if (pull) return { owner: pull[1], repo: pull[2], pull: Number(pull[3]) };
+  const cmp = s.match(/^(?:github\.com\/)?([\w.-]+)\/([\w.-]+)\/compare\/(?:(.+?)\.\.\.?)?([^.].*)$/);
+  if (cmp) return { owner: cmp[1], repo: cmp[2], compare: { base: cmp[3], head: cmp[4] } };
+  const m = s.replace(/\.git$/, '').match(/^(?:github\.com\/)?([\w.-]+)\/([\w.-]+)(?:\/tree\/([^/]+)(?:\/(.+))?)?$/);
   return m ? { owner: m[1], repo: m[2], branch: m[3], path: m[4] } : null;
+}
+
+/** Whether a GitHub link names two versions (a pull request or a comparison) rather than one. */
+export function isComparison(ref: GitHubRef | null): boolean {
+  return !!ref && (ref.pull !== undefined || !!ref.compare);
 }
 
 /** How long a saved repository opens without asking GitHub whether it changed. */
@@ -106,7 +131,7 @@ export async function githubProject(input: string, progress: Progress, { cache =
   const saved = await cache.get(key).catch(() => undefined);
   if (saved && !latest && now() - saved.saved < FRESH_FOR) return fromSaved(saved);
   try {
-    const repo = await download(ref, key, saved, progress, now);
+    const repo = await download(ref, key, known(saved), progress, now);
     await cache.put(repo).catch(() => undefined);
     return fromSaved(repo);
   } catch (e) {
@@ -115,43 +140,94 @@ export async function githubProject(input: string, progress: Progress, { cache =
   }
 }
 
-/** GitHub says there is no such repository or branch: a saved copy is no answer. */
+/**
+ * Both versions of a pull request (the head, and the commit it branched off
+ * its base, as GitHub's "Files changed" compares them) or of two branches
+ * compared. Saved like a repository; files the two share, or that a saved
+ * copy of the repository already has, are downloaded once.
+ */
+export async function githubComparison(input: string, progress: Progress, { cache = (shared ??= browserCache()), latest = false, now = Date.now }: GitHubOptions = {}): Promise<Comparison> {
+  const ref = parseGitHub(input);
+  if (!ref || !isComparison(ref)) throw new Error('Enter a pull request like github.com/karpathy/nanoGPT/pull/756.');
+  const key = repoKey(ref);
+  const saved = await cache.get(key).catch(() => undefined);
+  const usable = saved?.compare && saved.base ? saved : undefined;
+  if (usable && !latest && now() - usable.saved < FRESH_FOR) return comparisonOf(usable);
+  try {
+    const plain = await cache.get(repoKey({ owner: ref.owner, repo: ref.repo })).catch(() => undefined);
+    const repo = await downloadComparison(ref, key, known(plain, usable), progress, now);
+    await cache.put(repo).catch(() => undefined);
+    return comparisonOf(repo);
+  } catch (e) {
+    if (usable && !(e instanceof Missing)) return comparisonOf(usable);
+    throw e;
+  }
+}
+
+/** GitHub says there is no such repository, branch or pull request: a saved copy is no answer. */
 class Missing extends Error {}
 
-/** Names a repository (and branch and folder) however its URL was written. */
-function repoKey(ref: NonNullable<ReturnType<typeof parseGitHub>>): string {
-  return `github.com/${ref.owner}/${ref.repo}`.toLowerCase() + (ref.branch ? `/tree/${ref.branch}` : '') + (ref.path ? `/${ref.path.replace(/\/$/, '')}` : '');
+/** Names a repository (and branch and folder), pull request or comparison however its URL was written. */
+function repoKey(ref: GitHubRef): string {
+  const repo = `github.com/${ref.owner}/${ref.repo}`.toLowerCase();
+  if (ref.pull !== undefined) return `${repo}/pull/${ref.pull}`;
+  if (ref.compare) return `${repo}/compare/${ref.compare.base ?? ''}...${ref.compare.head}`;
+  return repo + (ref.branch ? `/tree/${ref.branch}` : '') + (ref.path ? `/${ref.path.replace(/\/$/, '')}` : '');
 }
+
+const plainFiles = (files: SavedFile[]): InputFile[] => files.map(({ path, text, bytes }) => (text === undefined ? { path, bytes } : { path, text, bytes }));
 
 function fromSaved(r: SavedRepo): Project {
-  return { name: r.name, files: r.files.map(({ path, text, bytes }) => (text === undefined ? { path, bytes } : { path, text, bytes })), source: r.source, description: r.description };
+  return { name: r.name, files: plainFiles(r.files), source: r.source, description: r.description };
 }
 
-async function download(ref: NonNullable<ReturnType<typeof parseGitHub>>, key: string, saved: SavedRepo | undefined, progress: Progress, now: () => number): Promise<SavedRepo> {
-  const api = `https://api.github.com/repos/${ref.owner}/${ref.repo}`;
-  progress('Contacting GitHub…');
-  const meta = await fetch(api);
-  if (meta.status === 404) throw new Missing(`GitHub has no public repository ${ref.owner}/${ref.repo}.`);
-  if (meta.status === 403) throw new Error('GitHub rate limit reached. Try again later, or open a local folder.');
-  if (!meta.ok) throw new Error(`GitHub returned ${meta.status}.`);
-  const info = await meta.json() as { default_branch: string; name: string; description?: string | null };
-  const branch = ref.branch ?? info.default_branch;
-  const treeRes = await fetch(`${api}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
-  if (treeRes.status === 404) throw new Missing(`Could not list ${ref.owner}/${ref.repo}@${branch} (404).`);
-  if (!treeRes.ok) throw new Error(`Could not list ${ref.owner}/${ref.repo}@${branch} (${treeRes.status}).`);
-  const tree = await treeRes.json() as { tree: { path: string; type: string; size?: number; sha?: string }[]; truncated: boolean };
-  const prefix = ref.path ? `${ref.path.replace(/\/$/, '')}/` : '';
-  const blobs = tree.tree
+function comparisonOf(r: SavedRepo): Comparison {
+  const head = fromSaved(r);
+  return { head, base: { ...head, files: plainFiles(r.base ?? []) }, info: r.compare! };
+}
+
+/** Texts already downloaded, by the hash GitHub names their content by. */
+function known(...saved: (SavedRepo | undefined)[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of saved) for (const f of [...(r?.files ?? []), ...(r?.base ?? [])]) if (f.sha && f.text !== undefined) out.set(f.sha, f.text);
+  return out;
+}
+
+/** A GitHub API answer; a missing thing is `Missing`, a spent rate limit says so. */
+async function gh<T>(url: string, what: string): Promise<T> {
+  const res = await fetch(url);
+  if (res.status === 404 || res.status === 422) throw new Missing(`GitHub has no ${what}.`);
+  if (res.status === 403 || res.status === 429) throw new Error('GitHub rate limit reached. Try again later, or open a local folder.');
+  if (!res.ok) throw new Error(`GitHub returned ${res.status} for ${what}.`);
+  return res.json() as Promise<T>;
+}
+
+/** A branch or tag name in a URL path, its slashes kept. */
+const refPath = (ref: string) => ref.split('/').map(encodeURIComponent).join('/');
+
+interface Blob { path: string; full: string; size: number; sha?: string }
+
+/** The files of a commit, branch or tree, under `prefix`, that are the project's own. */
+async function listTree(api: string, rev: string, prefix: string, what: string): Promise<Blob[]> {
+  const tree = await gh<{ tree: { path: string; type: string; size?: number; sha?: string }[]; truncated: boolean }>(`${api}/git/trees/${refPath(rev)}?recursive=1`, what);
+  return tree.tree
     .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && !ignoredPath(t.path))
-    .slice(0, MAX_FILES);
-  // Files whose content GitHub names by the same hash as before are not downloaded again.
-  const before = new Map((saved?.files ?? []).filter(f => f.sha && f.text !== undefined).map(f => [`${f.path}\n${f.sha}`, f.text!]));
+    .slice(0, MAX_FILES)
+    .map(t => ({ path: t.path.slice(prefix.length), full: t.path, size: t.size ?? 0, sha: t.sha }));
+}
+
+/** Texts not yet `known` among `blobs` (what downloading them will fetch). */
+const unknown = (blobs: Blob[], known: Map<string, string>) => blobs.filter(b => wantsText(b.path, b.size) && !(b.sha && known.has(b.sha)));
+
+/**
+ * The files of `blobs` from the first of `raws` (raw.githubusercontent.com
+ * prefixes) that has each; texts already `known` by their hash are reused,
+ * and what is downloaded becomes known. `tick` counts each download.
+ */
+async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, string>, tick: () => void): Promise<SavedFile[]> {
   const files: SavedFile[] = [];
   let total = 0;
-  const queue = blobs.map(b => ({ path: b.path.slice(prefix.length), full: b.path, size: b.size ?? 0, sha: b.sha }));
-  const textual = queue.filter(f => wantsText(f.path, f.size));
-  const missing = textual.filter(f => !before.has(`${f.path}\n${f.sha}`)).length;
-  let done = 0;
+  const textual = blobs.filter(f => wantsText(f.path, f.size));
   const worker = async () => {
     for (;;) {
       const f = textual.shift();
@@ -161,24 +237,139 @@ async function download(ref: NonNullable<ReturnType<typeof parseGitHub>>, key: s
         continue;
       }
       total += f.size;
-      const kept = before.get(`${f.path}\n${f.sha}`);
+      const kept = f.sha ? known.get(f.sha) : undefined;
       if (kept !== undefined) {
         files.push({ path: f.path, text: kept, bytes: f.size, sha: f.sha });
         continue;
       }
-      const url = `https://raw.githubusercontent.com/${ref.owner}/${ref.repo}/${encodeURIComponent(branch)}/${f.full.split('/').map(encodeURIComponent).join('/')}`;
-      const res = await fetch(url);
-      files.push(res.ok ? { path: f.path, text: await res.text(), bytes: f.size, sha: f.sha } : { path: f.path, bytes: f.size });
-      done++;
-      if (done % 10 === 0) progress(`Downloading ${done}/${missing} files…`, done / missing);
+      let text: string | undefined;
+      for (const raw of raws) {
+        const res = await fetch(`${raw}/${f.full.split('/').map(encodeURIComponent).join('/')}`);
+        if (res.ok) {
+          text = await res.text();
+          break;
+        }
+      }
+      files.push(text === undefined ? { path: f.path, bytes: f.size } : { path: f.path, text, bytes: f.size, sha: f.sha });
+      if (text !== undefined && f.sha) known.set(f.sha, text);
+      tick();
     }
   };
-  if (missing) progress(`Downloading ${missing} files…`, 0);
   await Promise.all(Array.from({ length: 12 }, worker));
-  for (const f of queue) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size, sha: f.sha });
-  files.sort((a, b) => a.path.localeCompare(b.path));
+  for (const f of blobs) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size, sha: f.sha });
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Reports downloads of `missing` files as they finish. */
+function counter(missing: number, progress: Progress): () => void {
+  let done = 0;
+  if (missing) progress(`Downloading ${missing} files…`, 0);
+  return () => {
+    done++;
+    if (done % 10 === 0) progress(`Downloading ${done}/${missing} files…`, done / missing);
+  };
+}
+
+async function download(ref: GitHubRef, key: string, known: Map<string, string>, progress: Progress, now: () => number): Promise<SavedRepo> {
+  const repo = `${ref.owner}/${ref.repo}`;
+  const api = `https://api.github.com/repos/${repo}`;
+  progress('Contacting GitHub…');
+  const info = await gh<{ default_branch: string; name: string; description?: string | null }>(api, `public repository ${repo}`);
+  const branch = ref.branch ?? info.default_branch;
+  const prefix = ref.path ? `${ref.path.replace(/\/$/, '')}/` : '';
+  const blobs = await listTree(api, branch, prefix, `branch ${branch} in ${repo}`);
+  const files = await fetchFiles([`https://raw.githubusercontent.com/${repo}/${refPath(branch)}`], blobs, known, counter(unknown(blobs, known).length, progress));
   const name = ref.path ? ref.path.split('/').pop()! : info.name;
-  return { key, name, files, source: `github.com/${ref.owner}/${ref.repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined, saved: now() };
+  return { key, name, files, source: `github.com/${repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined, saved: now() };
+}
+
+interface PullJson {
+  number: number;
+  title: string;
+  html_url: string;
+  state: string;
+  merged_at?: string | null;
+  base: { ref: string; sha: string; repo?: { name: string; description?: string | null } | null };
+  head: { ref: string; label?: string; sha: string; repo?: { full_name: string } | null };
+}
+
+interface CompareJson {
+  merge_base_commit: { sha: string };
+  total_commits: number;
+  commits: { sha: string }[];
+  files?: { filename: string; status: string; previous_filename?: string | null }[];
+}
+
+async function downloadComparison(ref: GitHubRef, key: string, known: Map<string, string>, progress: Progress, now: () => number): Promise<SavedRepo> {
+  const repo = `${ref.owner}/${ref.repo}`;
+  const api = `https://api.github.com/repos/${repo}`;
+  progress('Contacting GitHub…');
+  let info: CompareInfo;
+  let name = ref.repo;
+  let description: string | undefined;
+  let baseRev: string;
+  let headRev: string;
+  // A pull request from a fork has its commits in the base repository too; its own is a fallback.
+  const raws = (sha: string, fork?: string | null) => [`https://raw.githubusercontent.com/${repo}/${sha}`, ...(fork && fork !== repo ? [`https://raw.githubusercontent.com/${fork}/${sha}`] : [])];
+  let fork: string | null | undefined;
+  if (ref.pull !== undefined) {
+    const pr = await gh<PullJson>(`${api}/pulls/${ref.pull}`, `pull request #${ref.pull} in ${repo}`);
+    baseRev = pr.base.sha;
+    headRev = pr.head.sha;
+    fork = pr.head.repo?.full_name;
+    name = pr.base.repo?.name ?? ref.repo;
+    description = pr.base.repo?.description ?? undefined;
+    info = { kind: 'pr', repo, number: pr.number, title: pr.title, url: pr.html_url, state: pr.merged_at ? 'merged' : pr.state, baseRef: pr.base.ref, headRef: pr.head.label ?? pr.head.ref, baseSha: '', headSha: pr.head.sha, files: [] };
+  } else {
+    let base = ref.compare!.base;
+    if (!base) {
+      const meta = await gh<{ default_branch: string; description?: string | null }>(api, `public repository ${repo}`);
+      base = meta.default_branch;
+      description = meta.description ?? undefined;
+    }
+    baseRev = base;
+    headRev = ref.compare!.head;
+    info = { kind: 'compare', repo, title: `${base}...${headRev}`, url: `https://github.com/${repo}/compare/${base}...${headRev}`, baseRef: base, headRef: headRev, baseSha: '', headSha: '', files: [] };
+  }
+  // Compared from where the head branched off, as GitHub's "Files changed" is.
+  const cmp = await gh<CompareJson>(`${api}/compare/${refPath(baseRev)}...${refPath(headRev)}`, `comparison ${baseRev}...${headRev} in ${repo}`);
+  info.baseSha = cmp.merge_base_commit.sha;
+  if (!info.headSha) {
+    info.headSha = cmp.total_commits === 0 ? info.baseSha
+      : cmp.commits.length >= cmp.total_commits ? cmp.commits[cmp.commits.length - 1].sha
+      : (await gh<{ sha: string }>(`${api}/commits/${refPath(headRev)}`, `commit ${headRev} in ${repo}`)).sha;
+  }
+  const [baseBlobs, headBlobs] = await Promise.all([
+    listTree(api, info.baseSha, '', `commit ${info.baseSha.slice(0, 7)} in ${repo}`),
+    listTree(api, info.headSha, '', `commit ${info.headSha.slice(0, 7)} in ${repo}`),
+  ]);
+  const headShas = new Set(headBlobs.map(b => b.sha));
+  const missing = unknown(headBlobs, known).length + unknown(baseBlobs, known).filter(b => !headShas.has(b.sha)).length;
+  const tick = counter(missing, progress);
+  const head = await fetchFiles(raws(info.headSha, fork), headBlobs, known, tick);
+  const base = await fetchFiles(raws(info.baseSha), baseBlobs, known, tick);
+  info.files = fileChanges(baseBlobs, headBlobs, cmp.files ?? []);
+  const source = ref.pull !== undefined ? `github.com/${repo}/pull/${ref.pull}` : `github.com/${repo}/compare/${info.title}`;
+  return { key, name, description, source, files: head, base, compare: info, saved: now() };
+}
+
+/** How each file differs between the two versions, by content hash; GitHub's
+ * own list (which stops at 300 files) says which were renamed. */
+export function fileChanges(base: { path: string; sha?: string }[], head: { path: string; sha?: string }[], listed: { filename: string; status: string; previous_filename?: string | null }[]): FileChange[] {
+  const before = new Map(base.map(b => [b.path, b.sha]));
+  const after = new Map(head.map(h => [h.path, h.sha]));
+  const out = new Map<string, FileChange>();
+  for (const [path, sha] of after) {
+    if (!before.has(path)) out.set(path, { path, status: 'added' });
+    else if (before.get(path) !== sha) out.set(path, { path, status: 'modified' });
+  }
+  for (const path of before.keys()) if (!after.has(path)) out.set(path, { path, status: 'removed' });
+  for (const f of listed) {
+    if (f.status !== 'renamed' || !f.previous_filename || !after.has(f.filename) || !before.has(f.previous_filename) || after.has(f.previous_filename)) continue;
+    out.set(f.filename, { path: f.filename, status: 'renamed', previous: f.previous_filename });
+    out.delete(f.previous_filename);
+  }
+  return [...out.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export function pastedProject(filename: string, text: string): Project {

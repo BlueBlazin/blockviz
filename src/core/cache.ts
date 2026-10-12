@@ -1,15 +1,18 @@
-import type { InputFile } from './types';
+import type { CompareInfo, InputFile } from './types';
 
 /** A file as downloaded, with the hash GitHub names its content by. */
 export interface SavedFile extends InputFile { sha?: string }
 
-/** A downloaded repository, kept so it opens again without downloading. */
+/** A downloaded repository, kept so it opens again without downloading. A
+ * comparison (a pull request) keeps both versions: `files` is the head. */
 export interface SavedRepo {
   key: string;
   name: string;
   description?: string;
   source: string;
   files: SavedFile[];
+  base?: SavedFile[];
+  compare?: CompareInfo;
   /** When it was downloaded or last checked against GitHub (ms since the epoch). */
   saved: number;
 }
