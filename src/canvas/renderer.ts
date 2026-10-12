@@ -106,7 +106,8 @@ export class Renderer {
       const placed: Box[] = [];
       const quiet = this.quiet(owner);
       // Labels of lit edges are placed first, so they are the ones shown.
-      const order = [...(owner.edges ?? [])].sort((a, b) => Number(!!lit(b)) - Number(!!lit(a)));
+      const all = owner.edges ?? [];
+      const order = focused || traced || p.hoverEdge ? [...all].sort((a, b) => Number(!!lit(b)) - Number(!!lit(a))) : all;
       for (const e of order) {
         if (quiet.has(e) && !lit(e)) continue;
         this.edgeLabel(e, t, p, edgeAlpha * smoothstep(4.5, 7, t.s * 11), lit(e), placed);
@@ -494,7 +495,8 @@ export class Renderer {
     const ctx = this.ctx;
     const lit = state === true;
     const dim = state === false;
-    if (alpha > 0.3 && (x1 - x0 + y1 - y0) * t.s > 6) {
+    // Edges can be pointed at once their diagram is legible.
+    if (alpha > 0.3 && t.s * 11 >= 6 && (x1 - x0 + y1 - y0) * t.s > 6) {
       const screen = new Array<number>(pts.length);
       for (let i = 0; i < pts.length; i += 2) {
         screen[i] = t.x + pts[i] * t.s;
