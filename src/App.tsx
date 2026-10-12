@@ -387,13 +387,15 @@ export default function App() {
             <header><h1>Reading the diagram</h1><button className="icon" aria-label="Close" onClick={() => setDialog(null)}><X size={16} /></button></header>
             <p>Every level is a dataflow diagram read top to bottom: inputs enter at the top, results leave at the bottom, and arrows show what flows into what. Zooming into a block reveals the diagram inside it: repository → files → classes and functions → the steps inside them → the code they call.</p>
             <div className="keys">
-              {[['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, two-finger scroll, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Esc'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K']].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
+              {[['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, two-finger scroll, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Esc'], ['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
             </div>
+            <h2>Finding your way</h2>
+            <p>Hover a block to see what it is. The details panel shows a step's code inside its function with its lines marked; click a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
             <h2>What becomes a block</h2>
             <p>Calls into your own code, sub-modules, library operations and I/O. Glue such as reshapes and arithmetic on sizes is folded into the step it feeds; prints and asserts become side-effect tags. Comment-headed paragraphs in long scripts become sections, and runs of constants become settings tables.</p>
             <h2>Limits</h2>
             {loaded?.scene.diagnostics.map((d, i) => <p key={i} className="dim">{d}</p>)}
-            <p className="dim">Python, JavaScript and TypeScript are analyzed for dataflow; other files are outlined (definitions, keys, headings).</p>
+            <p className="dim">Python, JavaScript, TypeScript, Rust and Go are analyzed for dataflow; other files are outlined (definitions, keys, headings).</p>
           </section>
         </div>
       )}
