@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SceneNode } from '../core/types';
-import { childXf, frame, frameAround, frameReadable, NO_INSETS, parentXf, READABLE, smoothPath, viewOf, xfOf, zoomAt } from './geometry';
+import { childXf, frame, frameAround, frameReadable, NO_INSETS, parentXf, READABLE, rectLine, smoothPath, viewOf, visibleRuns, xfOf, zoomAt } from './geometry';
 
 const box = (over: Partial<SceneNode> = {}): SceneNode => ({
   id: 1, kind: 'function', shape: 'box', category: 'function', title: 'f',
@@ -113,5 +113,40 @@ describe('camera', () => {
     // Its diagram's names read at a comfortable size; the block stays small.
     expect(c.s * 0.1).toBeCloseTo(READABLE * 1.15);
     expect(20 * c.s).toBeLessThan(1000 * 0.55);
+  });
+});
+
+describe('lines cut to the screen', () => {
+  it('keeps a line on screen whole', () => {
+    expect(visibleRuns([10, 10, 50, 10, 50, 80], [0, 6, 0], 0, 0, 100, 100)).toEqual([{ pts: [10, 10, 50, 10, 50, 80], radii: [0, 6, 0], at: 0 }]);
+  });
+
+  it('starts a long line where it comes on screen, as far along as it is there', () => {
+    const [run, ...rest] = visibleRuns([-1000, 0, 50, 0, 50, 300], [0, 10, 0], 0, -10, 100, 200);
+    expect(rest).toEqual([]);
+    expect(run.pts).toEqual([0, 0, 50, 0, 50, 200]);
+    expect(run.radii).toEqual([0, 10, 0]);
+    expect(run.at).toBe(1000);
+  });
+
+  it('counts the corners passed off screen as drawn, rounded', () => {
+    // Down 500, round a right angle of radius 10 (an arc of 5π for 20 of tangents), across 500.
+    const [run] = visibleRuns([-500, -500, -500, 0, 1000, 0], [0, 10, 0], 0, -10, 100, 10);
+    expect(run.pts).toEqual([0, 0, 100, 0]);
+    expect(run.at).toBeCloseTo(1000 - (20 - 5 * Math.PI), 9);
+  });
+
+  it('leaves the screen and comes back as two runs', () => {
+    const runs = visibleRuns([10, 5, 200, 5, 200, 50, 10, 50], [0, 0, 0, 0], 0, 0, 100, 100);
+    expect(runs.map(r => r.pts)).toEqual([[10, 5, 100, 5], [100, 50, 10, 50]]);
+    expect(runs[1].at).toBe(190 + 45 + 100);
+  });
+
+  it('draws nothing of a line off screen', () => {
+    expect(visibleRuns([200, 0, 300, 0, 300, 400], [0, 10, 0], 0, 0, 100, 100)).toEqual([]);
+  });
+
+  it('goes round a rectangle as roundRect does, its corners no rounder than it fits', () => {
+    expect(rectLine({ x: 0, y: 0, w: 40, h: 10 }, 8)).toEqual({ pts: [5, 0, 40, 0, 40, 10, 0, 10, 0, 0, 5, 0], radii: [0, 5, 5, 5, 5, 0] });
   });
 });

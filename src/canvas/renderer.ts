@@ -1,5 +1,5 @@
 import type { Edge, SceneNode } from '../core/types';
-import { boxOf, clamp, intersects, smoothstep, type Box, type Xf } from './geometry';
+import { boxOf, clamp, intersects, rectLine, smoothstep, visibleRuns, type Box, type Xf } from './geometry';
 import type { RemovedEdge, SceneDiff, Status } from './diff';
 import type { SceneModel } from './model';
 import { changeColor, swatch, theme } from './theme';
@@ -48,6 +48,9 @@ const OPEN_TO = 0.075;
 
 /** The smallest name, in pixels, a reader can make out. */
 const LEGIBLE = 7;
+
+/** How far past the screen a line is kept: far enough that the corners of what is cut off stay out of sight. */
+const CUT = 24;
 
 const CODE_KINDS = new Set(['op', 'loop', 'branch']);
 /** Boxes whose names are navigation landmarks and stay readable longest. */
@@ -205,12 +208,10 @@ export class Renderer {
       ctx.stroke();
     } else if (p.related?.has(n.id)) {
       // A use of the block in focus: outlined so the reader sees where it is used.
-      ctx.beginPath();
-      ctx.roundRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6, radius + 3);
       ctx.strokeStyle = theme.accent;
       ctx.lineWidth = 1.6;
       ctx.setLineDash([5, 3]);
-      ctx.stroke();
+      this.outline({ x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 }, radius + 3, p);
       ctx.setLineDash([]);
     }
     const me = this.hit(n, b, parentHit);
@@ -234,7 +235,7 @@ export class Renderer {
       this.seen(me, n, size, shown);
     }
     this.effectsMark(n, b, t, alpha);
-    if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status);
+    if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status, p);
     if (fade) this.faded--;
     ctx.globalAlpha = 1;
   }
@@ -245,7 +246,7 @@ export class Renderer {
    * leads into changed code (a call of a changed function) gets a dashed ring
    * and an arrowed count, drawn even where its surroundings are faded.
    */
-  private changeMarks(n: SceneNode, b: Box, t: Xf, alpha: number, unfaded: number, diff: SceneDiff, status: Status | null) {
+  private changeMarks(n: SceneNode, b: Box, t: Xf, alpha: number, unfaded: number, diff: SceneDiff, status: Status | null, p: Paint) {
     const inside = diff.inside(n.id);
     const through = inside || status === 'added' ? 0 : diff.through(n.id);
     // In a thumbnail the tint shows where changes are; the closed block's badge counts them.
@@ -255,12 +256,10 @@ export class Renderer {
     const radius = clamp(6 * t.s, 1.2, 10) + 3;
     if (!status || through) {
       ctx.globalAlpha = through ? unfaded : alpha;
-      ctx.beginPath();
-      ctx.roundRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6, radius);
       ctx.strokeStyle = ink;
       ctx.lineWidth = 1.5;
       if (through) ctx.setLineDash([4, 3]);
-      ctx.stroke();
+      this.outline({ x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 }, radius, p);
       ctx.setLineDash([]);
     }
     const count = inside || through;
@@ -435,9 +434,11 @@ export class Renderer {
     ctx.fill();
     ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
     ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? changeColor[status].ink : lane ? theme.laneOutline : theme.regionOutline;
-    if (lane) ctx.setLineDash([4 * t.s, 3 * t.s]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    if (lane) {
+      ctx.setLineDash([4 * t.s, 3 * t.s]);
+      this.outline(b, radius, p);
+      ctx.setLineDash([]);
+    } else ctx.stroke();
     const me = this.hit(n, b, parentHit);
     const size = 11.5 * t.s;
     if (n.title) this.seen(me, n, size, alpha * smoothstep(4.2, 7, size));
@@ -462,7 +463,7 @@ export class Renderer {
     }
     const inner = pathPos >= 0 ? p.xfs[pathPos] : this.model.interior(t, n, n);
     if (inner) this.interior(n, inner, me, pathPos, p, chain, alpha);
-    if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status);
+    if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status, p);
     if (fade) this.faded--;
     ctx.globalAlpha = 1;
   }
@@ -583,15 +584,13 @@ export class Renderer {
     const ctx = this.ctx;
     const lit = state === true;
     const dim = state === false;
-    // Edges can be pointed at once their diagram is legible.
-    if (alpha > 0.3 && t.s * 11 >= 6 && (x1 - x0 + y1 - y0) * t.s > 6) {
-      const screen = new Array<number>(pts.length);
-      for (let i = 0; i < pts.length; i += 2) {
-        screen[i] = t.x + pts[i] * t.s;
-        screen[i + 1] = t.y + pts[i + 1] * t.s;
-      }
-      this.edgeHits.push({ edge: e, owner, container, pts: screen });
+    const screen = new Array<number>(pts.length);
+    for (let i = 0; i < pts.length; i += 2) {
+      screen[i] = t.x + pts[i] * t.s;
+      screen[i + 1] = t.y + pts[i + 1] * t.s;
     }
+    // Edges can be pointed at once their diagram is legible.
+    if (alpha > 0.3 && t.s * 11 >= 6 && (x1 - x0 + y1 - y0) * t.s > 6) this.edgeHits.push({ edge: e, owner, container, pts: screen });
     // Settings and sizes are faint; conditions are dotted: neither is the data itself.
     const control = e.kind === 'control';
     let color = control ? theme.context : e.kind === 'artifact' ? theme.artifact : e.kind === 'exec' ? theme.faintEdge : theme.edge;
@@ -615,27 +614,26 @@ export class Renderer {
     ctx.lineJoin = 'round';
     ctx.setLineDash(e.kind === 'exec' ? [5, 4] : e.kind === 'artifact' ? [6, 3] : control ? [1.5, 2.5].map(d => d * Math.max(width, 1)) : []);
     const n = pts.length / 2;
-    const X = (i: number) => t.x + pts[i * 2] * t.s;
-    const Y = (i: number) => t.y + pts[i * 2 + 1] * t.s;
     const head = e.open ? 0 : clamp(7 * Math.sqrt(t.s), 3, 8) * (control ? 0.8 : 1);
-    // Shorten the last segment so the line ends at the arrow's base.
-    const ex = X(n - 1);
-    const ey = Y(n - 1);
-    const dx = ex - X(n - 2);
-    const dy = ey - Y(n - 2);
+    const ex = screen[2 * n - 2];
+    const ey = screen[2 * n - 1];
+    const dx = ex - screen[2 * n - 4];
+    const dy = ey - screen[2 * n - 3];
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len;
     const uy = dy / len;
     const r = clamp(7 * t.s, 0, 10);
-    ctx.beginPath();
-    ctx.moveTo(X(0), Y(0));
+    const radii = new Array<number>(n).fill(0);
     for (let i = 1; i < n - 1; i++) {
-      const lenIn = Math.hypot(X(i) - X(i - 1), Y(i) - Y(i - 1));
-      const lenOut = Math.hypot(X(i + 1) - X(i), Y(i + 1) - Y(i));
-      ctx.arcTo(X(i), Y(i), X(i + 1), Y(i + 1), Math.min(r, lenIn / 2, lenOut / 2));
+      const lenIn = Math.hypot(screen[2 * i] - screen[2 * i - 2], screen[2 * i + 1] - screen[2 * i - 1]);
+      const lenOut = Math.hypot(screen[2 * i + 2] - screen[2 * i], screen[2 * i + 3] - screen[2 * i + 1]);
+      radii[i] = Math.min(r, lenIn / 2, lenOut / 2);
     }
-    ctx.lineTo(ex - ux * head * 0.8, ey - uy * head * 0.8);
-    ctx.stroke();
+    // Shorten the last segment so the line ends at the arrow's base.
+    const line = screen.slice();
+    line[2 * n - 2] = ex - ux * head * 0.8;
+    line[2 * n - 1] = ey - uy * head * 0.8;
+    this.line(line, radii, p);
     ctx.setLineDash([]);
     if (head > 0) {
       ctx.beginPath();
@@ -689,10 +687,16 @@ export class Renderer {
     ctx.fillStyle = changeColor.removed.ink;
     ctx.lineWidth = lw + 0.3;
     ctx.setLineDash([5, 4]);
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.bezierCurveTo(x0, y0 + bend, x1, y1 - bend, x1, y1 - head * 0.8);
-    ctx.stroke();
+    // The curve in steps fine enough to look smooth, so it can be cut to the screen.
+    const ye = y1 - head * 0.8;
+    const k = clamp(Math.ceil((Math.abs(x1 - x0) + Math.abs(ye - y0) + 2 * bend) / 8), 12, 512);
+    const pts: number[] = [];
+    for (let i = 0; i <= k; i++) {
+      const u = i / k;
+      const v = 1 - u;
+      pts.push((v * v * v + 3 * v * v * u) * x0 + (3 * v * u * u + u * u * u) * x1, v * v * v * y0 + 3 * v * v * u * (y0 + bend) + 3 * v * u * u * (y1 - bend) + u * u * u * ye);
+    }
+    this.line(pts, new Array<number>(k + 1).fill(0), p);
     ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(x1, y1);
@@ -711,6 +715,28 @@ export class Renderer {
       ctx.fillText(r.label, mx + 4, my);
     }
     ctx.globalAlpha = 1;
+  }
+
+  /** Strokes a line with rounded corners where it is on screen: a canvas dashes
+   * the whole of a line, and one many screens long costs a dash every few pixels. */
+  private line(pts: number[], radii: number[], p: Paint) {
+    const ctx = this.ctx;
+    for (const run of visibleRuns(pts, radii, -CUT, -CUT, p.width + CUT, p.height + CUT)) {
+      const q = run.pts;
+      ctx.beginPath();
+      ctx.moveTo(q[0], q[1]);
+      for (let i = 2; i < q.length - 2; i += 2) ctx.arcTo(q[i], q[i + 1], q[i + 2], q[i + 3], run.radii[i / 2]);
+      ctx.lineTo(q[q.length - 2], q[q.length - 1]);
+      ctx.lineDashOffset = run.at;
+      ctx.stroke();
+    }
+    ctx.lineDashOffset = 0;
+  }
+
+  /** Strokes a rounded rectangle's outline where it is on screen. */
+  private outline(b: Box, radius: number, p: Paint) {
+    const r = rectLine(b, radius);
+    this.line(r.pts, r.radii, p);
   }
 
   // ----- text ------------------------------------------------------------------------

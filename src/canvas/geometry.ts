@@ -139,6 +139,82 @@ export function smoothPath(a: View, b: View, rho = 1.35) {
   return { length: Number.isFinite(S) ? S : 0, at };
 }
 
+/** A stretch of a line kept on screen: its points, the corner radius at each,
+ * and how far along the whole line it starts (so a dash pattern stays in step). */
+export interface Run { pts: number[]; radii: number[]; at: number }
+
+/**
+ * The parts of a line with rounded corners (`radii`, one per point; the ends'
+ * are ignored) inside a rectangle. A canvas dashes a line along its whole
+ * length, on screen or not, so a line many screens long (an outer diagram's
+ * arrow, seen from deep inside) is cut to the screen before it is drawn. A run
+ * goes round a corner only when the corner is inside the rectangle, so the
+ * rectangle should reach far enough past the screen to hide corners cut off.
+ */
+export function visibleRuns(pts: number[], radii: number[], x0: number, y0: number, x1: number, y1: number): Run[] {
+  const runs: Run[] = [];
+  let run: Run | null = null;
+  // Length of the drawn line up to point k, its corner there included.
+  let along = 0;
+  const n = pts.length / 2;
+  for (let k = 0; k < n - 1; k++) {
+    const ax = pts[2 * k];
+    const ay = pts[2 * k + 1];
+    const dx = pts[2 * k + 2] - ax;
+    const dy = pts[2 * k + 3] - ay;
+    const len = Math.hypot(dx, dy);
+    if (k > 0) along -= cornerSaving(pts, k, radii[k]);
+    // Liang–Barsky: the part t0..t1 of this segment inside the rectangle.
+    let t0 = 0;
+    let t1 = 1;
+    for (const [p, q] of [[-dx, ax - x0], [dx, x1 - ax], [-dy, ay - y0], [dy, y1 - ay]]) {
+      if (p === 0) {
+        if (q < 0) t0 = 2;
+      } else if (p < 0) t0 = Math.max(t0, q / p);
+      else t1 = Math.min(t1, q / p);
+    }
+    if (t0 > t1) {
+      along += len;
+      continue;
+    }
+    // A run open here ended at this point, inside: it carries on round the corner.
+    if (!run) run = { pts: [ax + dx * t0, ay + dy * t0], radii: [0], at: along + len * t0 };
+    if (t1 < 1) {
+      run.pts.push(ax + dx * t1, ay + dy * t1);
+      run.radii.push(0);
+      runs.push(run);
+      run = null;
+    } else {
+      run.pts.push(ax + dx, ay + dy);
+      run.radii.push(k + 2 < n ? radii[k + 1] : 0);
+    }
+    along += len;
+  }
+  if (run) runs.push(run);
+  return runs;
+}
+
+/** How much shorter rounding corner k by radius r makes a line: the arc
+ * replaces the two tangents into the corner. */
+function cornerSaving(pts: number[], k: number, r: number): number {
+  const ix = pts[2 * k] - pts[2 * k - 2];
+  const iy = pts[2 * k + 1] - pts[2 * k - 1];
+  const ox = pts[2 * k + 2] - pts[2 * k];
+  const oy = pts[2 * k + 3] - pts[2 * k + 1];
+  const li = Math.hypot(ix, iy);
+  const lo = Math.hypot(ox, oy);
+  if (!r || !li || !lo) return 0;
+  const turn = Math.acos(clamp((ix * ox + iy * oy) / (li * lo), -1, 1));
+  return turn > Math.PI - 1e-6 ? 0 : 2 * r * Math.tan(turn / 2) - r * turn;
+}
+
+/** A rounded rectangle as a line round it, starting where `roundRect` starts. */
+export function rectLine(b: Box, radius: number): { pts: number[]; radii: number[] } {
+  const r = Math.max(0, Math.min(radius, b.w / 2, b.h / 2));
+  const { x, y, w, h } = b;
+  return { pts: [x + r, y, x + w, y, x + w, y + h, x, y + h, x, y, x + r, y], radii: [0, r, r, r, r, 0] };
+}
+
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 export const smoothstep = (a: number, b: number, v: number) => {
   const t = clamp((v - a) / (b - a), 0, 1);
