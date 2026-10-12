@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubProject, pastedProject } from './core/loaders';
@@ -15,6 +15,7 @@ import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Tooltip } from './ui/Tooltip';
 import { Minimap } from './ui/Minimap';
+import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation } from './ui/navigation';
 
 interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights: Highlights; elapsed: number }
@@ -271,14 +272,9 @@ export default function App() {
         </span>
         {crumbs.length <= 1 && <span className="crumb-root">{loaded?.scene.title}</span>}
         {view.path.length <= 1 && loaded?.scene.description && <span className="tagline" title={loaded.scene.description}>{loaded.scene.description}</span>}
-        <div className="crumbs">
-          {crumbs.length > 1 && crumbs.map((c, k) => (
-            <span key={`${c.id}-${c.i}`} className="crumb">
-              {k > 0 && <ChevronRight size={13} />}
-              <button onClick={() => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 'fit', 0.06)}>{c.title}</button>
-            </span>
-          ))}
-        </div>
+        {crumbs.length > 1 && (
+          <Breadcrumbs crumbs={crumbs} onGo={c => engine.current?.flyTo(view.path.slice(0, c.i + 1).length > 1 ? view.path.slice(0, c.i + 1) : [view.path[0]], 'fit', 0.06)} />
+        )}
       </nav>
       {borrowed && loaded && (
         <button className="defined-in" title="Go to where this code is defined" onClick={() => goTo(borrowed.id)}>
