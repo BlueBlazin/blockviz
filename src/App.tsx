@@ -134,6 +134,14 @@ export default function App() {
     }
   }, []);
 
+  /** Stops the load in progress: the project on screen, if any, stays. */
+  const cancel = useCallback(() => {
+    loading.current?.abort();
+    setBusy(null);
+    nav.current?.resume();
+    if (!engine.current) setDialog(d => d ?? 'open');
+  }, []);
+
   const open = useCallback((r: OpenRequest) => {
     // The URL names the project only when a link can load it again.
     if (r.kind !== 'github') pushProject(nav.current, location.pathname + location.search);
@@ -514,7 +522,7 @@ export default function App() {
         />
       )}
 
-      {busy && <div className="busy" role="status"><span className="spinner" />{busy}</div>}
+      {busy && <div className="busy"><span className="spinner" /><span role="status">{busy}</span><button className="link" onClick={cancel}>Cancel</button></div>}
       {error && !dialog && <div className="toast" role="alert">{error}<button className="icon" aria-label="Dismiss" onClick={() => setError(null)}><X size={14} /></button></div>}
       {dragging && <div className="drop-hint">Drop a folder to visualize it</div>}
 
