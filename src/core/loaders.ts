@@ -221,6 +221,25 @@ async function listTree(api: string, rev: string, prefix: string, what: string, 
 /** Texts not yet `known` among `blobs` (what downloading them will fetch). */
 const unknown = (blobs: Blob[], known: Map<string, string>) => blobs.filter(b => wantsText(b.path, b.size) && !(b.sha && known.has(b.sha)));
 
+/** How long to wait before trying a failed download again (twice). */
+const RETRY_MS = [250, 1000];
+
+/** A file's text, or undefined if `url` has none. A network or server
+ * error is tried again; one that persists leaves the file without text. */
+async function fetchText(url: string, signal?: AbortSignal): Promise<string | undefined> {
+  for (const wait of [0, ...RETRY_MS]) {
+    if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+    try {
+      const res = await fetch(url, { signal });
+      if (res.ok) return await res.text();
+      if (res.status < 500) return undefined;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+    }
+  }
+  return undefined;
+}
+
 /**
  * The files of `blobs` from the first of `raws` (raw.githubusercontent.com
  * prefixes) that has each; texts already `known` by their hash are reused,
@@ -246,18 +265,16 @@ async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, stri
       }
       let text: string | undefined;
       for (const raw of raws) {
-        const res = await fetch(`${raw}/${f.full.split('/').map(encodeURIComponent).join('/')}`, { signal });
-        if (res.ok) {
-          text = await res.text();
-          break;
-        }
+        text = await fetchText(`${raw}/${f.full.split('/').map(encodeURIComponent).join('/')}`, signal);
+        if (text !== undefined) break;
       }
       files.push(text === undefined ? { path: f.path, bytes: f.size } : { path: f.path, text, bytes: f.size, sha: f.sha });
       if (text !== undefined && f.sha) known.set(f.sha, text);
       tick();
     }
   };
-  await Promise.all(Array.from({ length: 12 }, worker));
+  // A worker that fails (or is aborted) leaves the others nothing more to fetch.
+  await Promise.all(Array.from({ length: 12 }, () => worker().catch(e => { textual.length = 0; throw e; })));
   for (const f of blobs) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size, sha: f.sha });
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }

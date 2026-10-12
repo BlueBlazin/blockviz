@@ -41,12 +41,13 @@ describe('ignored paths', () => {
 });
 
 describe('GitHub repositories', () => {
-  /** A fake GitHub serving `files` (path → text); `sha` names each file's content. */
+  /** A fake GitHub serving `files` (path → text); `sha` names each file's content.
+   * `drops[path]` downloads of a file fail with a network error. */
   function github(files: Record<string, string>) {
     const calls: string[] = [];
     let status = 200;
     const sha = (text: string) => `sha-${text}`;
-    const fake = { calls, files, fail: (s: number) => { status = s; }, onFetch: () => {} };
+    const fake = { calls, files, fail: (s: number) => { status = s; }, onFetch: () => {}, drops: {} as Record<string, number> };
     const fetch = vi.fn(async (url: string, init?: RequestInit) => {
       init?.signal?.throwIfAborted();
       calls.push(url);
@@ -57,6 +58,7 @@ describe('GitHub repositories', () => {
         return Response.json({ truncated: false, tree: Object.entries(files).map(([path, text]) => ({ path, type: 'blob', size: text.length, sha: sha(text) })) });
       }
       const path = url.replace('https://raw.githubusercontent.com/o/r/main/', '');
+      if (fake.drops[path]-- > 0) throw new TypeError('Failed to fetch');
       return path in files ? new Response(files[path]) : new Response('', { status: 404 });
     });
     vi.stubGlobal('fetch', fetch);
@@ -64,7 +66,10 @@ describe('GitHub repositories', () => {
   }
   const texts = (p: { files: { path: string; text?: string }[] }) => Object.fromEntries(p.files.map(f => [f.path, f.text]));
   const day = 24 * 60 * 60 * 1000;
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 
   it('opens again from the saved copy without downloading', async () => {
     const gh = github({ 'a.py': 'x = 1', 'b.py': 'y = 2' });
@@ -102,6 +107,20 @@ describe('GitHub repositories', () => {
     // A repository GitHub says is gone is not opened from the saved copy.
     gh.fail(404);
     await expect(githubProject('o/r', () => {}, { cache, now: () => 3 * day })).rejects.toThrow('no public repository');
+  });
+
+  it('tries a failed download again, and keeps a file it cannot get without its text', async () => {
+    vi.useFakeTimers();
+    const gh = github(Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`m${i}.py`, `x = ${i}`])));
+    gh.drops = { 'm7.py': 1, 'm9.py': Infinity };
+    const cache = memoryCache();
+    const loading = githubProject('o/r', () => {}, { cache, now: () => 0 });
+    await vi.runAllTimersAsync();
+    const files = texts(await loading);
+    expect(files['m7.py']).toBe('x = 7');
+    expect(Object.keys(files).filter(path => files[path] === undefined)).toEqual(['m9.py']);
+    expect(gh.calls.filter(u => u.endsWith('/m9.py'))).toHaveLength(3);
+    expect(cache.repos.size).toBe(1);
   });
 
   it('stops downloading when the load is abandoned, and keeps nothing', async () => {
