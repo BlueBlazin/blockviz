@@ -40,6 +40,9 @@ const HEADING_H = 22;
 const OPEN_FROM = 0.028;
 const OPEN_TO = 0.075;
 
+/** The smallest name, in pixels, a reader can make out. */
+const LEGIBLE = 7;
+
 const CODE_KINDS = new Set(['op', 'loop', 'branch']);
 /** Boxes whose names are navigation landmarks and stay readable longest. */
 const NAMED_KINDS = new Set(['file', 'notebook', 'dir', 'class', 'function', 'section', 'artifact', 'doc', 'table']);
@@ -53,6 +56,8 @@ const NAMED_KINDS = new Set(['file', 'notebook', 'dir', 'class', 'function', 'se
 export class Renderer {
   hits: Hit[] = [];
   edgeHits: EdgeHit[] = [];
+  /** How many closed blocks the one being drawn is in the thumbnail of. */
+  private thumbnails = 0;
   private widths = new Map<string, number>();
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
 
@@ -64,6 +69,7 @@ export class Renderer {
     ctx.fillRect(0, 0, p.width, p.height);
     this.hits = [];
     this.edgeHits = [];
+    this.thumbnails = 0;
     const root = this.model.node(this.model.root);
     this.interior(root, p.xfs[0], -1, 0, p, [root.id], 1);
   }
@@ -132,7 +138,7 @@ export class Renderer {
   /** Marks the hit just recorded for `n` as one the reader can make out. */
   private seen(at: number, n: SceneNode, size: number, alpha: number) {
     const h = this.hits[at];
-    if (h?.id === n.id && size >= 7 && alpha >= 0.5) h.clear = true;
+    if (h?.id === n.id && size >= LEGIBLE && alpha >= 0.5) h.clear = true;
   }
 
   private box(n: SceneNode, b: Box, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {
@@ -188,12 +194,15 @@ export class Renderer {
     // pill over the faint interior; it moves to the header once legible.
     const legible = smoothstep(9, 10.5, 13 * t.s);
     const faceAlpha = Math.max(1 - open, open * (1 - legible));
-    if (this.hits[me]?.id === n.id) this.hits[me].face = faceAlpha >= 0.5;
+    const thumbnail = faceAlpha >= 0.5;
+    if (this.hits[me]?.id === n.id) this.hits[me].face = thumbnail;
     if (open > 0.01 && inner && owner) {
       this.seen(me, n, Math.min(13 * t.s, 19), alpha * open * legible * smoothstep(4.2, 7, Math.min(13 * t.s, 19)));
       this.header(n, b, t, alpha * open * legible);
       const shown = owner.rows?.length ? alpha * open * legible : alpha * open;
+      if (thumbnail) this.thumbnails++;
       this.interior(owner, inner, me, pathPos, p, owner === n ? chain : [...chain, owner.id], shown);
+      if (thumbnail) this.thumbnails--;
     }
     if (faceAlpha > 0.01) {
       const [size, shown] = this.face(n, b, t, alpha * faceAlpha, !!owner && !recursive, open > 0.2);
@@ -212,19 +221,18 @@ export class Renderer {
     // Names of boxes big enough to hold them stay readable at any zoom.
     const natural = (code ? 12 : 13) * t.s;
     const named = NAMED_KINDS.has(n.kind);
-    const prominent = b.w >= (named ? 44 : 70) && b.h >= 18 && t.s >= (named ? 0.08 : 0.14);
     const fontAt = (px: number) => (code ? `${px}px ${theme.mono}` : `${n.kind === 'call' || n.kind === 'symbol' ? 500 : 600} ${px}px ${theme.sans}`);
     // Readable minimum, but never larger than what fits the box.
     const room = b.w - 14 * Math.min(t.s, 1);
     const sizeFor = (text: string, share: number) => {
       const fits = room / Math.max(this.measure(fontAt(10), text) / 10, 1);
-      return prominent ? clamp(natural, Math.min(11.5, b.h * share, Math.max(fits, natural)), 18) : natural;
+      return clamp(natural, Math.min(11.5, b.h * share, Math.max(fits, natural)), 18);
     };
     let lines = [n.title];
     let size = sizeFor(n.title, 0.55);
     // A name of several words too long for a narrow box goes on two lines
     // rather than shrinking out of sight.
-    if (prominent && size < 10 && n.title.includes(' ')) {
+    if (size < 10 && n.title.includes(' ')) {
       const split = splitTitle(n.title);
       const longer = this.measure(fontAt(10), split[0]) >= this.measure(fontAt(10), split[1]) ? split[0] : split[1];
       const two = sizeFor(longer, 0.3);
@@ -232,6 +240,18 @@ export class Renderer {
         lines = split;
         size = two;
       }
+    }
+    // A box with room keeps a readable name; so does a landmark (a file, a
+    // class, a file on disk) whose name still fits it at a legible size,
+    // however narrow it is, unless it is in the thumbnail of a closed block
+    // (whose own name is the landmark there). Other names grow and shrink
+    // with the zoom.
+    const roomy = b.w >= (named ? 44 : 70) && b.h >= 18;
+    const landmark = named && !this.thumbnails && b.h >= 14 && size >= LEGIBLE;
+    const prominent = t.s >= (named ? 0.08 : 0.14) && (roomy || landmark);
+    if (!prominent) {
+      lines = [n.title];
+      size = natural;
     }
     if (size < 4.2) return [0, 0];
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
