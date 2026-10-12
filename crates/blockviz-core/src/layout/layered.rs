@@ -497,8 +497,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     let mut keyed: Vec<(usize, f64)> = vec![];
     let mut best = layers.clone();
     let mut best_cross = crossings(&layers, &pos);
+    // Sweeps in a row that moved nothing: after one each way, none would.
+    let mut still = 0;
     for iter in 0..16 {
+        if best_cross == 0 || still == 2 {
+            break;
+        }
         let down = iter % 2 == 0;
+        let mut moved = false;
         for k in 1..nlayers {
             let l = if down { k } else { nlayers - 1 - k };
             keyed.clear();
@@ -514,17 +520,20 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             for (i, &(v, _)) in keyed.iter().enumerate() {
+                moved |= layers[l][i] != v;
                 layers[l][i] = v;
                 pos[v] = i as f64;
             }
         }
+        if !moved {
+            still += 1;
+            continue;
+        }
+        still = 0;
         let c = crossings(&layers, &pos);
         if c < best_cross {
             best_cross = c;
             best.clone_from(&layers);
-        }
-        if best_cross == 0 {
-            break;
         }
     }
     layers = best;
@@ -592,8 +601,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
     // the pooled blocks (weight, weighted sum, count); reused by every sweep.
     let mut offs: Vec<f64> = vec![];
     let mut blocks: Vec<(f64, f64, usize)> = vec![];
+    // As in ordering, once a sweep each way moves nothing, only the last one can.
+    let mut still = 0;
     for iter in 0..12 {
         let mode = if iter == 11 { 2 } else { iter % 2 };
+        if mode != 2 && still == 2 {
+            continue;
+        }
+        let mut moved = false;
         for k in 0..nlayers {
             let l = &layers[if mode == 1 { nlayers - 1 - k } else { k }];
             offs.clear();
@@ -619,11 +634,14 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool) -> LOut {
             let mut i = 0;
             for &(w, s, c) in &blocks {
                 for _ in 0..c {
-                    x[l[i]] = s / w + offs[i];
+                    let nx = s / w + offs[i];
+                    moved |= nx.to_bits() != x[l[i]].to_bits();
+                    x[l[i]] = nx;
                     i += 1;
                 }
             }
         }
+        still = if moved { 0 } else { still + 1 };
     }
     let min_left = (0..nv).map(|v| x[v] - vw[v] / 2.).fold(f64::INFINITY, f64::min);
     for v in x.iter_mut() {
