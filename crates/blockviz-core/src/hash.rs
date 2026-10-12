@@ -31,10 +31,14 @@ impl Hasher for FxHasher {
         for w in &mut words {
             self.add(u64::from_le_bytes(w.try_into().unwrap()));
         }
-        let mut rest = [0u8; 8];
+        // The last bytes, little-endian as if padded with zeros, read in
+        // place: copying them out cost a call to memmove for every name.
         let tail = words.remainder();
-        rest[..tail.len()].copy_from_slice(tail);
-        self.add(u64::from_le_bytes(rest) ^ tail.len() as u64);
+        let mut rest = 0u64;
+        for (i, &b) in tail.iter().enumerate() {
+            rest |= (b as u64) << (8 * i);
+        }
+        self.add(rest ^ tail.len() as u64);
     }
 
     #[inline]
