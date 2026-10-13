@@ -54,7 +54,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Touch**: pinch to zoom, drag to pan, tap to select, double-tap to open a block, tap an arrow to follow its value, tap a line of source to select its block.
 - **Layout**: on a phone the brand, history and tools share the top row and the breadcrumbs get the row below; the details panel is a bottom sheet you can drag taller.
 - **Finger-sized** buttons, and fields large enough that the page never zooms into them. Pinching the diagram zooms the diagram, not the page.
-- Help lists the touch gestures instead of keys. Phones can't pick folders, so "Local folder…" picks files.
+- Phones can't pick folders, so "Local folder…" picks files.
 
 ## Details panel (click a block)
 
@@ -97,7 +97,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Dark mode** follows the system's setting, and switches with it while the page is open: the diagram keeps each role's hue, its lightness turned over, and the panels, code and downloads follow.
 - **Text stays readable**: names stay legible at any zoom, long names wrap onto two lines, and table rows never grow past the size of names. A file, folder, class or file on disk keeps its name however narrow its box, as long as the name fits it legibly (except inside the thumbnail of a closed block).
 - **Tidy arrows** (the switch beside the home button, off by default, remembered): all the values a block sends share one line that branches to each reader, each branch labelled where it arrives. Off, each value has its own line, labelled where it leaves.
-- **Legend**, **help** (keys, how to read, analysis notes) and **footer stats** (files, lines, blocks, analysis time).
+- **Legend** and **footer stats** (files, lines, blocks, analysis time).
 
 ## What becomes a block (all languages)
 

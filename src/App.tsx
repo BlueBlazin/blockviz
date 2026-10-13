@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, GitPullRequest, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Download, FolderOpen, GitPullRequest, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubComparison, githubProject, isComparison, MAX_FILES, MAX_TOTAL, parseGitHub, pastedProject, type Progress } from './core/loaders';
@@ -19,7 +19,7 @@ import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
-import { DARK_SCHEME, NARROW, TOUCH, useMedia } from './ui/media';
+import { DARK_SCHEME, NARROW, useMedia } from './ui/media';
 import { Store } from './ui/store';
 
 /** A change being read: both versions of the code and how the head (on screen) differs from the base. */
@@ -81,8 +81,6 @@ function overlayInsets(panelOpen: boolean, panel: PanelSize): Insets {
   };
 }
 
-const KEYS = [['Zoom', 'Scroll, pinch, + / −'], ['Pan', 'Drag, arrows'], ['Zoom into a block', 'Double-click, or Enter'], ['Back out', 'Click a breadcrumb'], ['Close the details', 'Esc'], ['Back / forward', 'Alt+← / Alt+→'], ['Fit view', 'F'], ['Whole project', 'H'], ['Search', '/ or ⌘K'], ['Follow a value', 'Click an arrow'], ['Find a line\'s block', 'Click the line']];
-const TOUCH_KEYS = [['Zoom', 'Pinch, + / −'], ['Pan', 'Drag'], ['Select a block', 'Tap'], ['Zoom into a block', 'Double-tap'], ['Back out', 'Tap a breadcrumb'], ['Back / forward', '← / →'], ['Whole project', 'Home button'], ['Follow a value', 'Tap an arrow'], ['Find a line\'s block', 'Tap the line']];
 
 export default function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -91,7 +89,7 @@ export default function App() {
   const [view, setView] = useState<ViewState>({ path: [] });
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedPath, setSelectedPath] = useState<number[] | null>(null);
-  const [dialog, setDialog] = useState<'open' | 'search' | 'help' | null>(null);
+  const [dialog, setDialog] = useState<'open' | 'search' | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const [dragging, setDragging] = useState(false);
   /** A value being followed (an edge clicked). */
@@ -127,7 +125,6 @@ export default function App() {
     storage.set('blockviz.trunks', on ? '1' : '');
   };
   const [copied, setCopied] = useState(false);
-  const touch = useMedia(TOUCH);
   // The diagram is drawn in the system's light or dark mode, as the page's CSS is.
   const theme = useMedia(DARK_SCHEME) ? DARK : LIGHT;
   const themeRef = useRef(theme);
@@ -365,7 +362,6 @@ export default function App() {
       else if (e.key === '-' || e.key === '_') eng.zoomBy(1 / 1.5);
       else if (e.key === 'Enter' && selectedPath) eng.flyTo(selectedPath);
       else if ((e.key === 'n' || e.key === 'p') && loaded?.compare) stepChange(e.key === 'n' ? 1 : -1);
-      else if (e.key === '?') setDialog('help');
       else if (e.key.startsWith('Arrow')) {
         e.preventDefault();
         const d = 90;
@@ -468,7 +464,6 @@ export default function App() {
             PNG
           </button>
         </div>
-        <button className="icon" title="Help (?)" aria-label="Help" onClick={() => setDialog('help')}><CircleHelp size={17} /></button>
       </div>
 
       <div className="zoombar">
@@ -596,31 +591,6 @@ export default function App() {
       )}
       {dialog === 'open' && error && <div className="toast over" role="alert">{error}</div>}
       {dialog === 'search' && loaded && <Search model={loaded.model} onPick={id => { setDialog(null); goTo(id); }} onClose={() => setDialog(null)} />}
-      {dialog === 'help' && (
-        <div className="scrim" onMouseDown={e => { if (e.target === e.currentTarget) setDialog(null); }}>
-          <section className="help" role="dialog" aria-modal="true" aria-label="Help">
-            <header><h1>Reading the diagram</h1><button className="icon" aria-label="Close" onClick={() => setDialog(null)}><X size={16} /></button></header>
-            <p>Every level is a dataflow diagram read top to bottom: inputs enter at the top, results leave at the bottom, and arrows show what flows into what. Zooming into a block reveals the diagram inside it: repository → files → classes and functions → the steps inside them → the code they call.</p>
-            <div className="keys">
-              {[...(touch ? TOUCH_KEYS : KEYS), ...(compare && !touch ? [['Next / previous change', 'N / P']] : [])].map(([a, b]) => <div key={a}><span>{a}</span><kbd>{b}</kbd></div>)}
-            </div>
-            {compare && (
-              <>
-                <h2>Reading a change</h2>
-                <p>This is the code after {compare.comparison.info.kind === 'pr' ? `pull request #${compare.comparison.info.number}` : 'the comparison'}, coloured by what it did: green blocks were added, amber ones changed, and what it did not touch is faded. A badge counts the changes inside a block; a dashed ring marks a call into changed code. Green arrows are new connections, dashed red curves removed ones. The details panel lists the changes ({touch ? 'tap one to go to it' : <>press <kbd>N</kbd> and <kbd>P</kbd> to step through them</>}) and shows a block's code as it changed.</p>
-              </>
-            )}
-            <h2>Finding your way</h2>
-            <p>The details panel shows a step's code inside its function with its lines marked; {touch ? 'tap' : 'click'} a line to select its block. <em>Used by</em> lists every place a definition or component is used, and those places are outlined in the diagram. Inside code reached through a call, the line under the breadcrumbs says where it is defined. The address bar always names the current view, so a link reopens it.</p>
-            <h2>What becomes a block</h2>
-            <p>Calls into your own code, sub-modules, library operations and I/O. Glue such as reshapes and arithmetic on sizes is folded into the step it feeds; prints and asserts become side-effect tags. Comment-headed paragraphs in long scripts become sections, and runs of constants become settings tables.</p>
-            <h2>Limits</h2>
-            {cut && <p>This project is larger than blockviz reads in a browser, {LIMITS}: {cut}. Its code was read first, then its tests, then its documentation; open a folder of it to see more of what is left out.</p>}
-            {loaded?.scene.diagnostics.map((d, i) => <p key={i} className="dim">{d}</p>)}
-            <p className="dim">Python, JavaScript, TypeScript, Rust and Go are analyzed for dataflow; other files are outlined (definitions, keys, headings).</p>
-          </section>
-        </div>
-      )}
     </main>
   );
 }
