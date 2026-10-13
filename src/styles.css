@@ -98,6 +98,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .legend-toggle { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,0.94); color: var(--muted); }
 .legend-toggle:hover, .legend-toggle.on { color: var(--ink); border-color: var(--line-strong); }
 .stats { background: rgba(255,255,255,0.85); padding: 3px 6px; border-radius: 6px; }
+.partial { background: var(--changed-bg); color: var(--changed); padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
 
 .legend { position: absolute; left: 12px; bottom: 52px; width: min(300px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; }
 .legend header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }

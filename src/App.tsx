@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, FolderOpen, GitPullRequest, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
-import { droppedProject, exampleProject, folderProject, githubComparison, githubProject, isComparison, parseGitHub, pastedProject, type Progress } from './core/loaders';
+import { droppedProject, exampleProject, folderProject, githubComparison, githubProject, isComparison, MAX_FILES, MAX_TOTAL, parseGitHub, pastedProject, type Progress } from './core/loaders';
 import type { Comparison, Project, Scene } from './core/types';
 import { SceneDiff } from './canvas/diff';
 import { Engine, type EdgeRef, type ViewState } from './canvas/engine';
@@ -29,6 +29,16 @@ interface Loaded { project: Project; scene: Scene; model: SceneModel; highlights
 function fromGitHub(url: string, progress: Progress, signal: AbortSignal, latest = false): Promise<Project | Comparison> {
   return isComparison(parseGitHub(url)) ? githubComparison(url, progress, { latest, signal }) : githubProject(url, progress, { latest, signal });
 }
+
+/** What a large project's limits left out, said briefly (null: nothing). */
+function partial(p: Project): string | null {
+  const left = p.leftOut;
+  if (!left) return null;
+  const n = (k: number) => k.toLocaleString();
+  return [left.files ? `${n(p.files.length)} of ${n(p.files.length + left.files)} files` : '', left.texts ? `${n(left.texts)} without code` : ''].filter(Boolean).join(' · ');
+}
+
+const LIMITS = `${MAX_FILES.toLocaleString()} files and ${MAX_TOTAL / 1e6} MB of text`;
 
 const storage = {
   get(key: string) { try { return localStorage.getItem(key) ?? ''; } catch { return ''; } },
@@ -344,6 +354,7 @@ export default function App() {
 
   const node = loaded && selected !== null ? loaded.model.node(selected) : null;
   const stats = loaded?.scene.stats;
+  const cut = loaded ? partial(loaded.project) : null;
   // Inside code reached through a call (… › block › attn): where that code is defined.
   const borrowed = useMemo(() => (loaded ? loaded.model.borrowedDefinition(view.path) : null), [loaded, view.path]);
 
@@ -447,6 +458,7 @@ export default function App() {
           <Info size={13} /><span>Legend</span>
         </button>
         {stats && <span className="stats">{stats.files} files · {stats.lines.toLocaleString()} lines · {stats.nodes.toLocaleString()} blocks · {Math.round(loaded!.elapsed)} ms</span>}
+        {cut && <span className="partial" title={`Larger than blockviz reads in a browser (${LIMITS}): its code was read first, then its tests, then its documentation.`}>Partly shown: {cut}</span>}
       </div>
 
       {showLegend && (
@@ -562,6 +574,7 @@ export default function App() {
             <h2>What becomes a block</h2>
             <p>Calls into your own code, sub-modules, library operations and I/O. Glue such as reshapes and arithmetic on sizes is folded into the step it feeds; prints and asserts become side-effect tags. Comment-headed paragraphs in long scripts become sections, and runs of constants become settings tables.</p>
             <h2>Limits</h2>
+            {cut && <p>This project is larger than blockviz reads in a browser, {LIMITS}: {cut}. Its code was read first, then its tests, then its documentation; open a folder of it to see more of what is left out.</p>}
             {loaded?.scene.diagnostics.map((d, i) => <p key={i} className="dim">{d}</p>)}
             <p className="dim">Python, JavaScript, TypeScript, Rust and Go are analyzed for dataflow; other files are outlined (definitions, keys, headings).</p>
           </section>

@@ -5,8 +5,8 @@ import type { CompareInfo, Comparison, FileChange, InputFile, LeftOut, Project }
 const IGNORED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.idea', '.vscode', '.ipynb_checkpoints', 'dist', 'build', 'target', '.next', '.cache', 'site-packages', '.eggs', '.turbo', '.nuxt', '.svelte-kit', '.output', '.vercel', '.parcel-cache', '.yarn', 'bower_components', 'storybook-static']);
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|tiff?|pdf|zip|tar|gz|tgz|7z|bz2|xz|pt|pth|bin|ckpt|safetensors|onnx|h5|pkl|npy|npz|parquet|arrow|mp3|wav|flac|ogg|mp4|mov|webm|ttf|otf|woff2?|so|dylib|dll|exe|o|a|class|jar|pyc|db|sqlite)$/i;
 const MAX_FILE = 2_000_000;
-const MAX_FILES = 4000;
-const MAX_TOTAL = 40_000_000;
+export const MAX_FILES = 4000;
+export const MAX_TOTAL = 40_000_000;
 
 export function ignoredPath(path: string): boolean {
   const parts = path.split('/');
