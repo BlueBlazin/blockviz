@@ -105,6 +105,17 @@ describe('GitHub repositories', () => {
     expect((await githubProject('github.com/o/r', () => {}, { cache, now: () => 1 })).leftOut).toEqual({ files: 5, texts: 0 });
   });
 
+  it('download again, the next time it opens, a saved copy missing a text it should have', async () => {
+    const gh = github({ 'a.py': 'x = 1', 'b.py': 'y = 2' });
+    gh.drops['b.py'] = 3;
+    const cache = memoryCache();
+    expect(texts(await githubProject('github.com/o/r', () => {}, { cache, now: () => 0 }))).toEqual({ 'a.py': 'x = 1', 'b.py': undefined });
+    gh.calls.length = 0;
+    // A reload within the day would open the saved copy; this one lacks b.py's text, so only that is fetched.
+    expect(texts(await githubProject('github.com/o/r', () => {}, { cache, now: () => 1 }))).toEqual({ 'a.py': 'x = 1', 'b.py': 'y = 2' });
+    expect(gh.calls.filter(u => u.startsWith('https://raw'))).toEqual(['https://raw.githubusercontent.com/o/r/main/b.py']);
+  });
+
   it('opens again from the saved copy without downloading', async () => {
     const gh = github({ 'a.py': 'x = 1', 'b.py': 'y = 2' });
     const cache = memoryCache();

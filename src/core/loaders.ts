@@ -185,7 +185,7 @@ export async function githubProject(input: string, progress: Progress, { cache =
   if (!ref) throw new Error('Enter a GitHub repository like github.com/karpathy/nanoGPT.');
   const key = repoKey(ref);
   const saved = await cache.get(key).catch(() => undefined);
-  if (saved && !latest && now() - saved.saved < FRESH_FOR) return fromSaved(saved);
+  if (saved && !latest && now() - saved.saved < FRESH_FOR && complete(saved.files)) return fromSaved(saved);
   try {
     const repo = await download(ref, key, known(saved), progress, now, signal);
     await cache.put(repo).catch(() => undefined);
@@ -208,7 +208,7 @@ export async function githubComparison(input: string, progress: Progress, { cach
   const key = repoKey(ref);
   const saved = await cache.get(key).catch(() => undefined);
   const usable = saved?.compare && saved.base ? saved : undefined;
-  if (usable && !latest && now() - usable.saved < FRESH_FOR) return comparisonOf(usable);
+  if (usable && !latest && now() - usable.saved < FRESH_FOR && complete(usable.files) && complete(usable.base!)) return comparisonOf(usable);
   try {
     const plain = await cache.get(repoKey({ owner: ref.owner, repo: ref.repo })).catch(() => undefined);
     const repo = await downloadComparison(ref, key, known(plain, usable), progress, now, signal);
@@ -229,6 +229,13 @@ function repoKey(ref: GitHubRef): string {
   if (ref.pull !== undefined) return `${repo}/pull/${ref.pull}`;
   if (ref.compare) return `${repo}/compare/${ref.compare.base ?? ''}...${ref.compare.head}`;
   return repo + (ref.branch ? `/tree/${ref.branch}` : '') + (ref.path ? `/${ref.path.replace(/\/$/, '')}` : '');
+}
+
+/** Whether saved files have every text the limits read: they may have grown
+ * since, or a download failed. If not, the missing texts are downloaded. */
+function complete(files: SavedFile[]): boolean {
+  const { first } = firstFiles(files);
+  return [...readable(first.map(f => ({ ...f, size: f.bytes }))).read].every(f => f.text !== undefined);
 }
 
 const plainFiles = (files: SavedFile[]): InputFile[] => files.map(({ path, text, bytes }) => (text === undefined ? { path, bytes } : { path, text, bytes }));
