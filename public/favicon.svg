@@ -1,1 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="2" y="2" width="12" height="12" rx="2" fill="#6e8660"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#b6c6a8"/><rect x="18" y="18" width="12" height="12" rx="2" fill="#8ca37c"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The logo beside the name (.logo in src/styles.css): two blocks over a wide one. -->
+  <style>
+    rect { stroke: #17191d; stroke-width: 2.5; }
+    .a { fill: #fbdcbc; }
+    .b { fill: #c6e5f5; }
+    .c { fill: #eff3c4; }
+    @media (prefers-color-scheme: dark) {
+      rect { stroke: #e6e8eb; }
+      .a { fill: #5d462e; }
+      .b { fill: #314854; }
+      .c { fill: #545734; }
+    }
+  </style>
+  <rect class="a" x="1.25" y="1.25" width="11.5" height="11.5" rx="3" />
+  <rect class="b" x="19.25" y="1.25" width="11.5" height="11.5" rx="3" />
+  <rect class="c" x="1.25" y="19.25" width="29.5" height="11.5" rx="3" />
+</svg>
