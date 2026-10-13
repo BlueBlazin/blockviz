@@ -83,9 +83,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .search-button span { flex: 1; text-align: left; }
 .search-button:hover { border-color: var(--line-strong); color: var(--muted); }
 /* Download: a menu under the toolbar. */
-.menu { position: fixed; inset: 56px 12px auto auto; margin: 0; padding: 4px; width: 250px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
-.menu button { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 10px; border-radius: 7px; font-weight: 600; text-align: left; }
-.menu button span { font-weight: 400; font-size: 12px; color: var(--muted); }
+.menu { position: fixed; inset: 56px 12px auto auto; margin: 0; padding: 4px; min-width: 120px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+.menu button { display: block; width: 100%; padding: 7px 10px; border-radius: 7px; font-weight: 600; text-align: left; }
 .menu button:hover { background: var(--hover); }
 
 /* Bottom bars */

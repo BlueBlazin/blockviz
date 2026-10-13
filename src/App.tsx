@@ -457,10 +457,10 @@ export default function App() {
         <button className="icon" title="Download this view" aria-label="Download this view" popoverTarget="download-menu"><Download size={17} /></button>
         <div id="download-menu" className="menu" popover="auto">
           <button popoverTarget="download-menu" popoverTargetAction="hide" onClick={() => engine.current && downloadSvg(engine.current.svg(), loaded?.scene.title ?? 'diagram')}>
-            SVG<span>Sharp at any size, its text kept as text</span>
+            SVG
           </button>
           <button popoverTarget="download-menu" popoverTargetAction="hide" onClick={() => void engine.current?.png().then(b => download(b, `${loaded?.scene.title ?? 'diagram'}.png`))}>
-            PNG<span>An image of the screen</span>
+            PNG
           </button>
         </div>
         <button className="icon" title="Help (?)" aria-label="Help" onClick={() => setDialog('help')}><CircleHelp size={17} /></button>
