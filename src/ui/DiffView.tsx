@@ -7,19 +7,19 @@ import { NO_LINES, useLineEvents, useRuns, within, type LineRange } from './Code
 import { diffLines, fold, type Gap, type LineOp } from './linediff';
 import { useSource, type Source } from './store';
 
-/** One version of a block's code: where it is, and how to colour it. */
+/** One version of a block's code: where it is, and how to color it. */
 export interface Version { model: SceneModel; highlights: Highlights; span: Span }
 
 /** Longer diffs fold unchanged stretches away. */
 const FOLD_OVER = 40;
 
-/** A version's lines, in the colours of `runs` (null: plain). */
+/** A version's lines, in the colors of `runs` (null: plain). */
 const linesOf = (v: Version | null, runs: Uint32Array | null): CodeLine[] => {
   const bytes = v?.model.fileBytes(v.span.file);
   return v && bytes ? codeLines(bytes, runs, v.span, 4000, true).lines : [];
 };
 
-/** A version's lines as shown, in its syntax colours, and their text, which is what is compared. */
+/** A version's lines as shown, in its syntax colors, and their text, which is what is compared. */
 function useLines(v: Version | null): { lines: CodeLine[]; text: string[] } {
   const runs = useRuns(v?.highlights, v?.span.file);
   const lines = useMemo(() => linesOf(v, runs ?? null), [v?.model, v?.span.file, v?.span.start, v?.span.end, runs]);
@@ -29,7 +29,7 @@ function useLines(v: Version | null): { lines: CodeLine[]; text: string[] } {
 
 /**
  * A block's code as it changed: lines removed from the base version and
- * added in the head, among the ones kept, with syntax colours from each
+ * added in the head, among the ones kept, with syntax colors from each
  * version. Without a base the code is all new; without a head, all removed.
  * Long stretches of unchanged lines fold away (click to unfold), never the
  * `marked` lines (the selected step's, scrolled into view). Clicking or
@@ -49,7 +49,7 @@ export function DiffView({ base, head, marked, hovered = NO_LINES, onLine, onLin
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLPreElement>(null);
   const events = useLineEvents(onLine, onLineHover);
-  // Diffed by text alone: neither colours arriving nor the marked lines moving compute it again.
+  // Diffed by text alone: neither colors arriving nor the marked lines moving compute it again.
   const ops = useMemo(() => diffLines(before.text, after.text), [before.text, after.text]);
   const { oldLines, newLines } = useMemo(() => {
     // Both versions lose the same indentation, so moved code shows its new depth.

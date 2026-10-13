@@ -88,7 +88,7 @@ fn comments(text: &str, list: &[oxc_ast::ast::Comment]) -> (Vec<(TextRange, Stri
     (lines, docs)
 }
 
-/// The comment block that opens a file, minus licence and tool headers.
+/// The comment block that opens a file, minus license and tool headers.
 pub(crate) fn header(src: &Source, first_code_line: u32) -> String {
     // Comment lines before the code, in blocks of consecutive lines.
     let mut blocks: Vec<Vec<(u32, &str)>> = vec![];
@@ -102,7 +102,7 @@ pub(crate) fn header(src: &Source, first_code_line: u32) -> String {
     }
     let mut lines = vec![];
     for block in blocks {
-        // A licence header is not a description, its first line (the package name) included.
+        // A license header is not a description, its first line (the package name) included.
         if block.iter().any(|(_, t)| {
             let lower = t.to_ascii_lowercase();
             lower.contains("copyright") || lower.contains("license") || lower.contains("licence")

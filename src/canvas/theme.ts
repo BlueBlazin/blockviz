@@ -1,15 +1,15 @@
 import type { Status } from './diff';
 
 /**
- * Visual language, modelled on classic architecture figures: pastel fills by
- * role, hairline outlines, grey regions for repeated or conditional
+ * Visual language, modeled on classic architecture figures: pastel fills by
+ * role, hairline outlines, gray regions for repeated or conditional
  * structure, and monochrome arrows. On a dark page the same, its lightness
  * turned over.
  */
 
 export interface Swatch { fill: string; tint: string; ink?: string }
 
-/** The colours a diagram is drawn in. */
+/** The colors a diagram is drawn in. */
 export interface Theme {
   /** The page under the diagram. */
   background: string;
@@ -39,12 +39,12 @@ export interface Theme {
   mono: string;
   /** Fills by a block's role (see `swatch`). */
   swatches: Record<string, Swatch>;
-  /** Colours of a change being read (a pull request): outlines and text (`ink`), and the fill blocks are tinted with. */
+  /** Colors of a change being read (a pull request): outlines and text (`ink`), and the fill blocks are tinted with. */
   change: Record<Status, { ink: string; tint: string }>;
 }
 
 const swatches: Record<string, Swatch> = {
-  // Neural-network vocabulary (matches the colours of the Transformer figure).
+  // Neural-network vocabulary (matches the colors of the Transformer figure).
   attention: { fill: '#fbdcbc', tint: '#fef6ee' },
   mlp: { fill: '#c6e5f5', tint: '#f1f9fd' },
   norm: { fill: '#eff3c4', tint: '#fbfcef' },
@@ -151,8 +151,8 @@ export function swatch(theme: Theme, category: string): Swatch {
 }
 
 /**
- * A light theme's colour on the dark page: the same hue, as far above the
- * page in lightness as it was below white, and about as colourful (its
+ * A light theme's color on the dark page: the same hue, as far above the
+ * page in lightness as it was below white, and about as colorful (its
  * chroma, not its saturation, which near white overstates a faint tint).
  * White is the page itself.
  */
@@ -161,12 +161,12 @@ function night(hex: string): string {
   const max = Math.max(r, g, b);
   const c = max - Math.min(r, g, b);
   const h = !c ? 0 : max === r ? ((g - b) / c + 6) % 6 : max === g ? (b - r) / c + 2 : (r - g) / c + 4;
-  // A grey is the page's own grey: its hue and chroma.
+  // A gray is the page's own gray: its hue and chroma.
   const [hue, chroma] = c ? [h, c * 0.75] : [11 / 3, 6 / 255];
   return rgb(hue, chroma, PAGE_L + (1 - (max - c / 2)) * 1.25);
 }
 
-/** The colour of hue `h` (0 to 6), chroma `c` and lightness `l`. */
+/** The color of hue `h` (0 to 6), chroma `c` and lightness `l`. */
 function rgb(h: number, c: number, l: number): string {
   const x = c * (1 - Math.abs((h % 2) - 1));
   const [r, g, b] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
@@ -185,7 +185,7 @@ export const legend: [string, string][] = [
   ['data', 'File on disk'],
   ['attention', 'Attention'],
   ['mlp', 'Feed-forward'],
-  ['norm', 'Normalisation'],
+  ['norm', 'Normalization'],
   ['embed', 'Embedding'],
   ['linear', 'Linear / projection'],
   ['activation', 'Activation'],

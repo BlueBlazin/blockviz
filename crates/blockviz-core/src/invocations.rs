@@ -128,7 +128,7 @@ fn strip_comment(line: &str) -> String {
     line.to_string()
 }
 
-/// Splits a command line into simple commands of words, honouring quotes.
+/// Splits a command line into simple commands of words, honoring quotes.
 fn commands(line: &str) -> Vec<Vec<String>> {
     let mut out: Vec<Vec<String>> = vec![vec![]];
     let mut word = String::new();

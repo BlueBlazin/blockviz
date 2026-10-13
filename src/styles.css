@@ -1,6 +1,6 @@
 :root {
   /* Light or dark as the system is set, unless the reader chose (`data-scheme`,
-     src/ui/scheme.ts): every colour is light-dark(its light value, its dark value). */
+     src/ui/scheme.ts): every color is light-dark(its light value, its dark value). */
   color-scheme: light dark;
   /* The page and the diagram's background (keep in step with `background` in src/canvas/theme.ts). */
   --bg: light-dark(#ffffff, #16181c);
@@ -20,7 +20,7 @@
   --accent-bg-strong: light-dark(#e1eafd, #22365a);
   --chip: light-dark(#f3f4f6, #272b31);
   --chip-ink: light-dark(#343840, #c9cdd3);
-  /* Text on a strong colour: a file's mark, a count. */
+  /* Text on a strong color: a file's mark, a count. */
   --on-strong: light-dark(#ffffff, #101215);
   /* A table's headings, as the diagram draws them. */
   --heading: light-dark(#8a6d1f, #d1ae55);
@@ -34,7 +34,7 @@
   --error-bg: light-dark(#fff4f2, #3a1d1b);
   --error-line: light-dark(#f3cbc5, #6b2b26);
   --error-ink: light-dark(#8a2a1d, #ffb4a9);
-  /* The logo's blocks, in the diagram's colours. */
+  /* The logo's blocks, in the diagram's colors. */
   --logo-1: light-dark(#fbdcbc, #5d462e);
   --logo-2: light-dark(#c6e5f5, #314854);
   --logo-3: light-dark(#eff3c4, #545734);

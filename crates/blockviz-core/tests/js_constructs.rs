@@ -425,7 +425,7 @@ export class Store {
 "#,
     )]);
     assert_eq!(find(&s, "isRef").doc, "Checks if a value is a ref object.");
-    // A file's description is neither its licence nor its first statement's documentation.
+    // A file's description is neither its license nor its first statement's documentation.
     let s2 = analyze(&[
         ("lib/router.js", "/*!\n * router\n * Copyright(c) 2013 Roman Shtylman\n * MIT Licensed\n */\n\n/**\n * Module dependencies.\n */\nvar debug = require('debug');\nexports.route = function route(path) { debug(path); };\n"),
         ("lib/util.js", "/**\n * @file Helpers shared by the router.\n */\n\nexports.noop = function noop() {};\n"),

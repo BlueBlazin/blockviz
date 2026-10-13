@@ -31,7 +31,7 @@ export interface Paint {
   trace?: Trace | null;
   /** The edge under the pointer. */
   hoverEdge?: Edge | null;
-  /** How the code differs from a base version (a pull request): what changed is coloured, the rest faded. */
+  /** How the code differs from a base version (a pull request): what changed is colored, the rest faded. */
   diff?: SceneDiff | null;
 }
 
@@ -52,7 +52,7 @@ const LEGIBLE = 7;
 /** The most lines a name is broken over. */
 const MAX_LINES = 4;
 
-/** The shortest side, in pixels, of a block drawn as more than a spot of its colour. */
+/** The shortest side, in pixels, of a block drawn as more than a spot of its color. */
 const SPECK = 2;
 
 /** How far past the screen a line is kept: far enough that the corners of what is cut off stay out of sight. */
@@ -198,7 +198,7 @@ export class Renderer {
     const radius = clamp(6 * t.s, 1.2, 10);
     const selected = p.selected === n.id;
     const hovered = p.hover === n.id;
-    // A change colours what it added or changed; what it did not touch fades.
+    // A change colors what it added or changed; what it did not touch fades.
     const diff = p.diff;
     const status = diff?.status(n.id) ?? null;
     const unfaded = this.faded ? Math.min(1, alpha / UNTOUCHED) : alpha;
@@ -208,7 +208,7 @@ export class Renderer {
       this.faded++;
     }
     const fill = fillOf(this.theme, n, status);
-    // Opened, a changed block keeps its colour on the header band; the diagram inside stays plain.
+    // Opened, a changed block keeps its color on the header band; the diagram inside stays plain.
     const tint = status ? mix(sw.tint, this.theme.change[status].tint, 0.12) : sw.tint;
 
     ctx.globalAlpha = alpha;
@@ -234,7 +234,7 @@ export class Renderer {
     this.ring(n, b, radius, p);
     const me = this.hit(n, b, parentHit);
 
-    // While the header is too small to read, the name stays centred on a
+    // While the header is too small to read, the name stays centered on a
     // pill over the faint interior; it moves to the header once legible.
     const legible = smoothstep(9, 10.5, 13 * t.s);
     const faceAlpha = Math.max(1 - open, open * (1 - legible));
@@ -277,7 +277,7 @@ export class Renderer {
     }
   }
 
-  /** A block too small to make out: a spot of its colour, with no outline, name,
+  /** A block too small to make out: a spot of its color, with no outline, name,
    * marks or interior; ringed while it is in focus, so it can still be found. */
   private speck(n: SceneNode, b: Box, t: Xf, alpha: number, p: Paint) {
     const ctx = this.ctx;
@@ -567,7 +567,7 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
     this.font(size, this.theme.mono);
-    // A new input or result is named in the colour of what was added.
+    // A new input or result is named in the color of what was added.
     ctx.fillStyle = status ? this.theme.change[status].ink : this.theme.muted;
     ctx.textAlign = 'center';
     this.text(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
@@ -578,7 +578,7 @@ export class Renderer {
   private rows(owner: SceneNode, t: Xf, p: Paint, alpha: number) {
     const ctx = this.ctx;
     // Rows read at most at the size names do, however far the table is
-    // zoomed or however few rows give it a large scale beside its neighbours.
+    // zoomed or however few rows give it a large scale beside its neighbors.
     const size = Math.min(11.5 * t.s, ROW_MAX);
     if (size < 3) return;
     const f = size / 11.5;
@@ -890,13 +890,13 @@ export const fontSize = (px: number) => 10 * 2 ** (Math.round(4 * Math.log2(px /
 /** Whether a block's side effects are marked with a dot: ones that reach outside it. */
 const marked = (n: SceneNode) => !!n.effects?.some(e => /write|network|exec|mutat|distributed|process|raises|reads|filesystem|state/.test(e));
 
-/** What a scene draws, for its legend: the roles blocks are coloured by, the kinds of arrow, and whether there are residual adds and marked side effects. */
+/** What a scene draws, for its legend: the roles blocks are colored by, the kinds of arrow, and whether there are adds and marked side effects. */
 export interface Drawn { roles: Set<string>; edges: Set<EdgeKind>; add: boolean; effects: boolean }
 
 export function drawnIn(nodes: SceneNode[]): Drawn {
   const out: Drawn = { roles: new Set(), edges: new Set(), add: false, effects: false };
   for (const n of nodes) {
-    // As `fillOf` colours them: boxes by their role, tables as settings.
+    // As `fillOf` colors them: boxes by their role, tables as settings.
     if (n.shape === 'box') out.roles.add(n.category);
     else if (n.shape === 'region' && n.kind === 'table') out.roles.add('config');
     if (n.shape === 'glyph' && n.title === '+') out.add = true;
@@ -906,7 +906,7 @@ export function drawnIn(nodes: SceneNode[]): Drawn {
   return out;
 }
 
-/** A block's colour, tinted by how a change touched it. */
+/** A block's color, tinted by how a change touched it. */
 function fillOf(theme: Theme, n: SceneNode, status: Status | null): string {
   if (n.shape === 'glyph') return theme.paper;
   if (n.shape === 'region') {
@@ -920,7 +920,7 @@ function fillOf(theme: Theme, n: SceneNode, status: Status | null): string {
 function mix(a: string, b: string, t: number): string {
   const pa = parse(a);
   const pb = parse(b);
-  // Hex, so a mixed colour can be mixed again.
+  // Hex, so a mixed color can be mixed again.
   return `#${pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')}`;
 }
 

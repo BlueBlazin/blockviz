@@ -170,7 +170,7 @@ export default function App() {
       setChangesOpen(true);
       setView({ path: [] });
       setLoaded({ project, scene: result.scene, model, highlights: new Highlights(analyzer.current, model), elapsed, compare });
-      // Only now: a re-layout cancelled or failed leaves the switch as the diagram on screen is.
+      // Only now: a re-layout canceled or failed leaves the switch as the diagram on screen is.
       chooseTrunks(sharedTrunks);
       setDialog(null);
       const info = comparison?.info;
@@ -510,7 +510,7 @@ export default function App() {
             {drawn.edges.has('control') && <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke={theme.context} strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill={theme.context} /></svg>decides whether it runs</span>}
             {drawn.edges.has('artifact') && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.artifact} strokeWidth="1.4" strokeDasharray="6 3" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.artifact} /></svg>file written → read</span>}
             {drawn.edges.has('exec') && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.faintEdge} strokeWidth="1.4" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.faintEdge} /></svg>code executed</span>}
-            {drawn.add && <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill={theme.paper} stroke={theme.outline} /><path d="M13.5 7h7M17 3.5v7" stroke={theme.outline} /></svg>add (residual)</span>}
+            {drawn.add && <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill={theme.paper} stroke={theme.outline} /><path d="M13.5 7h7M17 3.5v7" stroke={theme.outline} /></svg>add</span>}
             {drawn.effects && <span><svg width="34" height="14"><circle cx="17" cy="7" r="3.5" fill={theme.effect} /></svg>has side effects</span>}
           </div>
           {compare && compare.diff.changes.length > 0 && (

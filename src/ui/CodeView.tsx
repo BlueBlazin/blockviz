@@ -65,7 +65,7 @@ export function CodeView({ model, highlights, span, marked, hovered = NO_LINES, 
 /**
  * A file's syntax runs, asked for when it is first shown: undefined until
  * the core has classified it, then read with the file, so code is never
- * coloured by another file's runs.
+ * colored by another file's runs.
  */
 export function useRuns(highlights: Highlights | undefined, file: number | undefined): Uint32Array | null | undefined {
   useEffect(() => { if (file !== undefined) highlights?.request(file); }, [highlights, file]);

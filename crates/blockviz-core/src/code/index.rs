@@ -466,13 +466,13 @@ impl<'p> Index<'p> {
             let tail = b.rsplit('.').next().unwrap_or(b);
             matches!(tail, "NamedTuple" | "TypedDict" | "BaseModel" | "Enum" | "IntEnum" | "StrEnum" | "BaseSettings")
         });
-        let behaviour = methods.iter().any(|(n, _)| !n.starts_with("__"));
+        let behavior = methods.iter().any(|(n, _)| !n.starts_with("__"));
         // Interfaces, enums and traits without methods describe data, as does
         // a class of field declarations only (a DTO, a Rust struct).
         let lang = self.modules[mi].lang;
         let fields_only = lang.declares_fields() && methods.is_empty() && c.kind == ast::ClassKind::Class && c.body.iter().any(|s| matches!(s, Stmt::AnnAssign(_) | Stmt::Assign(_)));
         let declared = matches!(c.kind, ast::ClassKind::Interface | ast::ClassKind::Enum | ast::ClassKind::Trait) && methods.is_empty() || fields_only || contract;
-        self.classes[cid].data = declared || (data_decorator || data_base) && !behaviour;
+        self.classes[cid].data = declared || (data_decorator || data_base) && !behavior;
         self.classes[cid].methods = methods;
         cid
     }

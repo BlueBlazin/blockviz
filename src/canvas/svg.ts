@@ -102,7 +102,7 @@ export class SvgPen implements Pen {
     }
   }
 
-  /** A corner of radius `radius` from where the path is, towards (x1, y1), turning towards (x2, y2). */
+  /** A corner of radius `radius` from where the path is, toward (x1, y1), turning toward (x2, y2). */
   arcTo(x1: number, y1: number, x2: number, y2: number, radius: number) {
     const k = this.k;
     const [px, py] = [x1 * k, y1 * k];
@@ -148,7 +148,7 @@ export class SvgPen implements Pen {
 
   fillRect(x: number, y: number, w: number, h: number) {
     const k = this.k;
-    // A canvas fills a rectangle of negative size towards its other side.
+    // A canvas fills a rectangle of negative size toward its other side.
     if (w < 0) [x, w] = [x + w, -w];
     if (h < 0) [y, h] = [y + h, -h];
     this.out.push(`<rect x="${num(x * k)}" y="${num(y * k)}" width="${num(w * k)}" height="${num(h * k)}" fill="${color(this.fillStyle)}"${this.alpha()}/>`);
@@ -205,7 +205,7 @@ export class SvgPen implements Pen {
 /** A number as written into the SVG: to a hundredth of a pixel. */
 const num = (v: number) => String(Math.round(v * 100) / 100);
 
-/** The renderer paints in colours only. */
+/** The renderer paints in colors only. */
 const color = (c: string | CanvasGradient | CanvasPattern) => escape(c as string);
 
 /** Text as XML takes it: its markup escaped, and without the control characters XML cannot hold. */
@@ -226,7 +226,7 @@ const LARGEST = 4096;
 const MARGIN = 12;
 
 /**
- * Block `id` alone as SVG in `theme`'s colours, with its diagram at the size
+ * Block `id` alone as SVG in `theme`'s colors, with its diagram at the size
  * names are read at on screen; `paint` adds a change being read, or a value
  * being followed.
  */

@@ -25,7 +25,7 @@ pub struct LNode {
     pub order: f64,
     /// Forces left-to-right order within a layer (branch lanes).
     pub rank: Option<u32>,
-    /// All edges meet at the centre (operator glyphs).
+    /// All edges meet at the center (operator glyphs).
     pub converge: bool,
     /// Packing priority for disconnected pieces (lower first).
     pub pack: i32,
@@ -564,7 +564,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     vsucc.fill(nv, segs.iter().enumerate().map(|(si, s)| (s.a, si)));
     vpred.fill(nv, segs.iter().enumerate().map(|(si, s)| (s.b, si)));
 
-    // 4. Ordering by barycentre sweeps, keeping the best crossing count.
+    // 4. Ordering by barycenter sweeps, keeping the best crossing count.
     layers.fill(nlayers, (0..nv).map(|v| (vlayer[v], v)));
     for l in 0..nlayers {
         layers[l].sort_by(|&a, &b| (vrank[a].unwrap_or(u32::MAX), vorder[a]).partial_cmp(&(vrank[b].unwrap_or(u32::MAX), vorder[b])).unwrap_or(std::cmp::Ordering::Equal));
@@ -682,7 +682,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     }
     x.clone_from(offs);
     // Each segment as a spring that straightens it: its stiffness, and where
-    // it attaches above and below, from the centres of its vertices.
+    // it attaches above and below, from the centers of its vertices.
     springs.clear();
     springs.extend(segs.iter().map(|s| {
         let k = match (is_dummy(s.a), is_dummy(s.b)) {
@@ -693,7 +693,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         let off = |at: Option<f64>, v: usize| at.map(|p| p - vw[v] / 2.).unwrap_or(0.);
         (s.weight * k, off(s.from_x, s.a), off(s.to_x, s.b))
     }));
-    // Where a vertex would sit to straighten its segments: (target centre, weight).
+    // Where a vertex would sit to straighten its segments: (target center, weight).
     let desired = |v: usize, x: &[f64], mode: usize| -> (f64, f64) {
         let mut sum = 0.;
         let mut wsum = 0.;
@@ -764,7 +764,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     }
     let x = &*x;
 
-    // Label widths of the segments that end labelled edges (labelled where they arrive).
+    // Label widths of the segments that end labeled edges (labeled where they arrive).
     refill(end_label, segs.len(), None);
     for (ei, e) in edges.iter().enumerate() {
         if arrive && e.draw && e.label && !reversed[ei] {
@@ -930,7 +930,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     for l in 1..nlayers {
         band_y[l] = band_y[l - 1] + band_h[l - 1] + channel_h[l - 1];
     }
-    // Lanes hang from the top of their band; everything else is centred.
+    // Lanes hang from the top of their band; everything else is centered.
     let top = |v: usize| band_y[vlayer[v]] + if vrank[v].is_some() { 0. } else { (band_h[vlayer[v]] - vh[v]) / 2. };
     for v in 0..n {
         out.pos[v] = (x[v] - vw[v] / 2., top(v));

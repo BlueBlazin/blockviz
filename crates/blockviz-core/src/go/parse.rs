@@ -1925,7 +1925,7 @@ impl<'s> Parser<'s> {
         (init, cond)
     }
 
-    /// An `if` and its `else if`s, parsed in a loop and nested afterwards.
+    /// An `if` and its `else if`s, parsed in a loop and nested afterward.
     fn parse_if_stmt(&mut self) -> Stmt {
         let mut heads = vec![];
         let mut else_ = None;

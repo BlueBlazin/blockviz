@@ -30,7 +30,7 @@ Every level is a dataflow diagram read top to bottom: inputs enter at the top, r
 | Repository | folders, programs, files on disk | imports, `exec`, files written by one program and read by another |
 | File | classes, functions, sections of a script, settings tables | which definition uses which; values between sections |
 | Class | its sub-components (`h: Block × n_layer`) and methods | method calls |
-| Function | calls into project code, sub-module calls, library operations, I/O | the values passed, labelled with variable names |
+| Function | calls into project code, sub-module calls, library operations, I/O | the values passed, labeled with variable names |
 
 In nanoGPT this gives `prepare.py → train.bin → train.py → ckpt.pt → sample.py` at the top, `LayerNorm, CausalSelfAttention, MLP → Block → GPT` inside `model.py`, and `x → ln_1 → attn → ⊕ → ln_2 → mlp → ⊕` inside `Block.forward`, the same structure as the Transformer figure, with each block zoomable into its own diagram.
 
@@ -38,7 +38,7 @@ In nanoGPT this gives `prepare.py → train.bin → train.py → ckpt.pt → sam
 
 A reader sees one small part at a time, so every part says where it fits.
 
-* Opening a block (double-click, double-tap, Enter, search) zooms until its diagram is readable; a block with nothing inside is shown among its neighbours, not alone.
+* Opening a block (double-click, double-tap, Enter, search) zooms until its diagram is readable; a block with nothing inside is shown among its neighbors, not alone.
 * The details panel shows a step's code inside the function around it, its lines marked. Clicking a line selects the block drawn for it; pointing at a block or a line points out the other.
 * *Used by* lists every place a definition is used (callers of a function, constructions and components of a class, calls of a component), each a link, and outlines them in the diagram while it is in focus.
 * Clicking an arrow follows its value through the function: every edge carrying that name, through the steps that re-bind it and into its branches and loops, with where it comes from and what reads it listed.
@@ -47,7 +47,7 @@ A reader sees one small part at a time, so every part says where it fits.
 
 ### Reading a pull request
 
-Open a pull request (`github.com/owner/repo/pull/123`) or a comparison (`…/compare/main...feature`) and the diagram is the code after the change, drawn the same way, coloured by what the change did: added blocks green, changed ones amber, what it did not touch faded, with new connections in green and removed ones as dashed red curves. Every block counts the changes inside it, so from the whole project down you see which parts of the architecture the change touches; the details panel lists the changes in diagram order (`N`/`P` step through them) and shows a block's code as it changed.
+Open a pull request (`github.com/owner/repo/pull/123`) or a comparison (`…/compare/main...feature`) and the diagram is the code after the change, drawn the same way, colored by what the change did: added blocks green, changed ones amber, what it did not touch faded, with new connections in green and removed ones as dashed red curves. Every block counts the changes inside it, so from the whole project down you see which parts of the architecture the change touches; the details panel lists the changes in diagram order (`N`/`P` step through them) and shows a block's code as it changed.
 
 Both versions are analyzed (the head and the commit it branched off its base) and matched block by block: files by path through renames, folders by name or contents, blocks by kind and title, code moved within a file followed to its new place. Only files the change touched have changes, and a dependency still implied through others is neither new nor removed.
 
@@ -62,18 +62,18 @@ The goal is blocks a reader would name, not a syntax tree.
 * `if __name__ == "__main__"` is an entry-point marker plus a "Main" section, never a box containing `__name__`.
 * Small loops and branches are drawn inline, like the "N×" box of an architecture figure, with repeat counts inferred from the code (`× n_layer` from `ModuleList([... for _ in range(config.n_layer)])`). A lone guarded statement gets an `if …` tag instead of a box.
 * Every way out is visible. A guarded exit is a step tagged with its condition (`return None · if value is None`, `continue · if not line`); every returned value reaches the function's result; `if c: …; return x` followed by more code is an if/else. No branch arm is drawn empty: one that only sets or returns a value shows that step.
-* Every value is a solid arrow labelled with what it carries, whatever the value is: no arrow is hidden or drawn lighter because of its name. Dotted: a condition that decides whether the step runs.
+* Every value is a solid arrow labeled with what it carries, whatever the value is: no arrow is hidden or drawn lighter because of its name. Dotted: a condition that decides whether the step runs.
 * Long scripts are split into sections at comment-headed paragraphs (`# model init`, `# training loop`); runs of constants become a settings table.
 * Light types name things the way a reader would: `self.transformer.wte(idx)` is an `Embedding`, `block` is a `Block`, `model.configure_optimizers` is `GPT.configure_optimizers`.
 * Dependency diagrams are transitively reduced so their layering shows; a file's full import list is in the inspector.
-* Framework code says what it is: `@router.get("/{id}")` on a router with `prefix="/items"` is the endpoint `GET /items/{id}`; click and Typer commands, Celery tasks and request hooks are labelled the same way, and Django `urlpatterns` become a route table.
+* Framework code says what it is: `@router.get("/{id}")` on a router with `prefix="/items"` is the endpoint `GET /items/{id}`; click and Typer commands, Celery tasks and request hooks are labeled the same way, and Django `urlpatterns` become a route table.
 * Files get roles a reader would use: app (creates `FastAPI()`, `Flask()`, a WSGI app), routes, script, tests, config (Django settings, Sphinx `conf.py`), module. Entry points come from main guards, `__main__.py`, app objects, and anything a script, Dockerfile, CI workflow, Makefile, compose file or `pyproject.toml`/`setup.cfg` console script runs.
 * A shell script that runs several programs is a pipeline: zoom into `speedrun.sh` to see its steps in order, and into a step to see the program it runs.
 * Library modules show their definitions. `__all__` lists, type aliases, loggers and optional or type-checking imports are not blocks; constants gather into one table. Runs of statements on one subject are one block or table: calls (`session` · add → commit → refresh, which opens to each call in order), `parser.add_argument` × 12, fields set one after another (`smtp_options` · set × 3) and repeated `text += …`.
 * Generated code (migrations, protobuf stubs, files marked "auto-generated") is a single block, and empty `__init__.py` files are not drawn.
 * A Docker Compose file is the system diagram: its services, what each depends on, what the proxy routes to, and, for services built from the repository, the code they are built from (zoom in).
 * Database access (sessions, cursors, ORM managers) is marked as I/O, ORM models are tagged as tables, and views link to the templates they render.
-* Meanings guessed from names apply only where the code shows the domain: architecture-figure colours (attention, norm, linear…) in modules that import an ML framework, database access in modules that use a database library (directly or through a project module). Names match by whole words from the head noun back, so `attn_dropout` is a dropout and `headers` is not a projection head.
+* Meanings guessed from names apply only where the code shows the domain: architecture-figure colors (attention, norm, linear…) in modules that import an ML framework, database access in modules that use a database library (directly or through a project module). Names match by whole words from the head noun back, so `attn_dropout` is a dropout and `headers` is not a projection head.
 
 ### JavaScript and TypeScript
 
@@ -84,7 +84,7 @@ The same rules apply, read through JavaScript's idioms.
 * A function handed to a call is drawn inside that call: `router.get("/:id", …)` is the endpoint `GET /v1/users/:id` (mount prefixes from `app.use("/v1/users", router)` included), `addEventListener("click", …)` is `click`. Short arrows registered under a name count too.
 * Promise chains pass values on the way `await` does: `fetch(url).then(r => r.json()).then(onData)` is `fetch → onData`, with no block for the chain.
 * Blocks inside callbacks say when they run: `each` for `map`, `forEach` and `filter`; `on click` for an `onClick` handler, even inside a list.
-* React: a capitalised function that returns JSX is a component and `useX` is a hook; elements are named by tag (`<Dialog.Root>`) and library elements given only literal props are decoration; `"use client"` modules are tagged. Next.js files get their roles (page, layout, route handler), NestJS controllers their `@Controller` prefixes, and Express apps their route tables.
+* React: a capitalized function that returns JSX is a component and `useX` is a hook; elements are named by tag (`<Dialog.Root>`) and library elements given only literal props are decoration; `"use client"` modules are tagged. Next.js files get their roles (page, layout, route handler), NestJS controllers their `@Controller` prefixes, and Express apps their route tables.
 * Schemas (zod, yup, joi, valibot, TypeBox, Mongoose) and DTO classes are tables of fields; interfaces, enums and type aliases are data; a namespace groups its functions; overload signatures are one function.
 * Imports resolve the way bundlers and `tsc` do: `tsconfig`/`jsconfig` paths, `baseUrl` and `extends`, the `@/` alias, workspace packages by name, `.js` specifiers that name `.ts` files, `index` files, `require()` and `import()`. Node builtins are not listed as packages, and stylesheet imports link to their files.
 * Database access is found by where an object comes from: a model defined next to Mongoose, a query through a service that extends `PrismaClient`.
@@ -96,7 +96,7 @@ The same rules apply, read through JavaScript's idioms.
 The same rules again, read through Rust's idioms.
 
 * A struct or enum is drawn with the methods of its `impl` blocks; an `impl` in another module is drawn where it is written and leads to its type, and its methods are found from calls anywhere. The traits a type implements are its subtitle, and each trait method says which trait it belongs to (`fmt — Display`, `from — From<io::Error>`). A trait lists its required methods and draws its provided ones.
-* Fields typed by project or library types are components (`blocks: Block × n_layer`, `listener: TcpListener`); wrappers are looked through (`Arc<Mutex<Db>>` is a `Db`), and standard types and synchronisation primitives are state, not components. `self.ln_1.forward(x)` calls the component, as `self.ln_1(x)` does in PyTorch, so a candle or burn model reads like nanoGPT.
+* Fields typed by project or library types are components (`blocks: Block × n_layer`, `listener: TcpListener`); wrappers are looked through (`Arc<Mutex<Db>>` is a `Db`), and standard types and synchronization primitives are state, not components. `self.ln_1.forward(x)` calls the component, as `self.ln_1(x)` does in PyTorch, so a candle or burn model reads like nanoGPT.
 * Values computed by `if`, `match` and blocks go where they are sent: `let x = match …` is a match whose arms set `x`, and a function's last expression is its result. `Ok(x)` and `Some(x)` are `x`; an `Err` handed back is an exit tagged `returns error`; `?` passes values on. `let … else` is a guard (`return · unless Some(path)`).
 * Match arms are their patterns, with their guards (`Mode::Search(mode) if threads == 1`); names a pattern binds come from the matched value, and a value unpacked from an enum variant has the variant's type, so `match self { Get(cmd) => cmd.apply(…) }` reaches `Get::apply`. `_ => {}` arms are not drawn.
 * Macros are what they stand for: `format!` and `println!` are formatted text (prints), `vec![x; n]` is `[x] * n`, `assert!` an assertion, `panic!`, `bail!` and `unreachable!` exits; logging macros are effects; a macro whose body is not Rust (`json!`) reads the variables it names.
@@ -162,7 +162,7 @@ src/
 
 **One uniform scene model.** Every node lives in its parent's interior coordinates. A node with an interior (children, a table, or a `ref` to another node's interior) draws it inside its `inner` rectangle, scaled to fit. That single rule is what makes zoom unbounded: the renderer never needs to know what a node is to descend into it. A call borrows its callee's interior by reference, so the same definition appears wherever it is called without being duplicated.
 
-**Layout** happens once, in Rust, bottom-up: an interior is laid out before the box that contains it is sized. Edges carrying the same value share a trunk so one line visibly splits into its consumers, labelled under the block it leaves; with "Tidy arrows" (the switch beside the home button, or `--trunks` on the command line) all values a block sends share one trunk that branches to each reader, every branch labelled just above the block it reaches. Node positions are solved per layer as weighted isotonic regression, which keeps long edges straight.
+**Layout** happens once, in Rust, bottom-up: an interior is laid out before the box that contains it is sized. Edges carrying the same value share a trunk so one line visibly splits into its consumers, labeled under the block it leaves; with "Tidy arrows" (the switch beside the home button, or `--trunks` on the command line) all values a block sends share one trunk that branches to each reader, every branch labeled just above the block it reaches. Node positions are solved per layer as weighted isotonic regression, which keeps long edges straight.
 
 **Rendering** is immediate-mode Canvas 2D, driven only by invalidation. Each frame walks what is visible; boxes open smoothly as their interior becomes large enough to show something; text fades in by on-screen size. The camera is anchored to the deepest container that fills the viewport and every transform is derived from it, so precision does not degrade however deep you zoom.
 

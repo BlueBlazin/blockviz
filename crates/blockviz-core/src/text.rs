@@ -96,7 +96,7 @@ pub fn clip(s: &str, max: usize) -> String {
 }
 
 /// Turns a comment like `# model init` or `# helps estimate the loss, ...` into
-/// a heading: first letter capitalised, trimmed to a readable length at a
+/// a heading: first letter capitalized, trimmed to a readable length at a
 /// natural boundary. Returns `None` for decorative rulers and code-like comments.
 pub fn heading(comment: &str) -> Option<String> {
     let t = comment.trim().trim_start_matches('#').trim();

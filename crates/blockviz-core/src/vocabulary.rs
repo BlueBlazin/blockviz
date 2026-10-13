@@ -10,7 +10,7 @@
 /// imports) uses.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Domains {
-    /// Neural networks: architecture-figure colours apply.
+    /// Neural networks: architecture-figure colors apply.
     pub ml: bool,
     /// A database: `session.commit()` and `.objects.filter()` are queries.
     pub database: bool,

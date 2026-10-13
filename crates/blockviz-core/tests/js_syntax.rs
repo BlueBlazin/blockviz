@@ -63,7 +63,7 @@ fn modern_javascript() {
     let stream = find(&s, "stream");
     assert!(has(stream, "async") && has(stream, "generator"), "{:?}", stream.badges);
     find(&s, "#bump");
-    // A labelled loop nest keeps its loops and exits.
+    // A labeled loop nest keeps its loops and exits.
     let outer = s.nodes.iter().find(|n| n.kind == Kind::Loop && n.title.starts_with("for x of")).expect("outer loop");
     assert!(descendants(&s, outer).iter().any(|n| n.kind == Kind::Loop && n.title == "for i < x"));
     // Code is named, never shown cut off, and never in Python's words.

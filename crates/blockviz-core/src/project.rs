@@ -1263,7 +1263,7 @@ fn aggregate_effects(b: &mut Builder, id: Id) -> Vec<String> {
     let out: Vec<String> = all.into_iter().filter(|e| !e.starts_with("__")).collect();
     let n = b.get_mut(id);
     if n.has_interior() || n.kind == Kind::Repo || n.kind == Kind::Dir {
-        // Containers summarise: "reads files" rather than every file name.
+        // Containers summarize: "reads files" rather than every file name.
         let mut generic: Vec<String> = out.iter().map(|e| generic_effect(e)).collect();
         generic.sort();
         generic.dedup();

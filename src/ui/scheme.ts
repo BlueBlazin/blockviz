@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 /**
  * Light or dark: the reader's choice, remembered, or else the system's
- * setting, followed as it changes. The page's colours follow the root's
+ * setting, followed as it changes. The page's colors follow the root's
  * `color-scheme` (styles.css writes each as `light-dark()`), which a choice
  * sets through its `data-scheme`; index.html sets that from the remembered
  * choice before the page is first drawn.

@@ -38,8 +38,8 @@ enum State {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
     /// All values a block sends leave on one trunk that branches to each
-    /// reader, every branch labelled where it arrives. Off: one line per
-    /// value, labelled under the block it leaves.
+    /// reader, every branch labeled where it arrives. Off: one line per
+    /// value, labeled under the block it leaves.
     pub shared_trunks: bool,
 }
 
@@ -383,7 +383,7 @@ fn box_size(b: &mut Builder, id: Id, cw: f64, ch: f64) {
         s = MAX_INNER_H / ch;
     }
     // Keep tiny interiors from dominating their parent, and very tall ones
-    // from becoming slivers (the interior is centred in a wider frame).
+    // from becoming slivers (the interior is centered in a wider frame).
     let ih = (ch * s).max(26.);
     let iw = (cw * s).max(min_inner_w).max((ih * 0.62).min(260.));
     let n = b.get_mut(id);

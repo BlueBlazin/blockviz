@@ -18,10 +18,10 @@ describe('placement', () => {
     expect(back.s).toBeCloseTo(t.s, 12);
   });
 
-  it('fits content inside the inner rect, centred', () => {
+  it('fits content inside the inner rect, centered', () => {
     const n = box();
     const c = childXf({ x: 0, y: 0, s: 1 }, n, 368, 112);
-    // Width-limited: 184 / 368 = 0.5, content height 56 centred in 112.
+    // Width-limited: 184 / 368 = 0.5, content height 56 centered in 112.
     expect(c.s).toBeCloseTo(0.5);
     expect(c.x).toBeCloseTo(48);
     expect(c.y).toBeCloseTo(60 + 30 + 28);
@@ -69,7 +69,7 @@ describe('camera', () => {
     expect(s.w).toBeCloseTo(a.w);
     expect(e.cx).toBeCloseTo(b.cx, 3);
     expect(e.w).toBeCloseTo(b.w, 3);
-    // Zooms out on the way when travelling far.
+    // Zooms out on the way when traveling far.
     expect(Math.max(...[0.25, 0.5, 0.75].map(t => p.at(t).w))).toBeGreaterThan(a.w);
   });
 
@@ -130,7 +130,7 @@ describe('camera', () => {
     expect(4 * wide.s).toBeCloseTo(1000 / 1.06);
   });
 
-  it('shows a block with nothing inside among its neighbours', () => {
+  it('shows a block with nothing inside among its neighbors', () => {
     const b = { x: 100, y: 100, w: 20, h: 10 };
     const v = frameAround(b, 0.1, 1000, 800, NO_INSETS);
     const c = screen(v, 110, 105);

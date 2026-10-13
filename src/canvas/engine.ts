@@ -110,7 +110,7 @@ export class Engine {
     this.invalidate();
   }
 
-  /** Draws in `theme`'s colours. */
+  /** Draws in `theme`'s colors. */
   setTheme(theme: Theme) {
     this.renderer.theme = theme;
     this.invalidate();
@@ -223,7 +223,7 @@ export class Engine {
 
   /**
    * The anchor path extended into the container that dominates the view:
-   * it contains the centre of what the overlays leave visible, and fills a
+   * it contains the center of what the overlays leave visible, and fills a
    * good part of it, or all of it in one direction (as fitting it does).
    */
   private findFocus(): number[] {

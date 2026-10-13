@@ -1,6 +1,6 @@
 //! Side-effect classification of calls, and file names they touch.
 //!
-//! These are syntactic heuristics: they recognise common library entry points
+//! These are syntactic heuristics: they recognize common library entry points
 //! (torch/numpy/pickle I/O, requests, subprocess, ...) and literal file names
 //! so the repo view can connect a writer of `train.bin` to its readers.
 

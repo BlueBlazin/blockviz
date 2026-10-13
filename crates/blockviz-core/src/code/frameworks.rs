@@ -1,5 +1,5 @@
 //! What framework code means to a reader: an HTTP route, a CLI command, a
-//! background task, an event handler. Recognised by shape (`@<router>.get("/path")`,
+//! background task, an event handler. Recognized by shape (`@<router>.get("/path")`,
 //! `@Get(":id")` in a `@Controller("users")`, `router.get("/", …)`, a Next.js
 //! `route.ts` exporting `GET`) rather than by import, so one rule covers FastAPI,
 //! Flask, Starlette, Litestar, NestJS, Express, Koa, Hono and their routers.

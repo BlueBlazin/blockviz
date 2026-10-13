@@ -29,11 +29,11 @@ describe('highlights', () => {
     expect(heard).toBe(1);
   });
 
-  it('asks again after a failure, rather than keeping the file uncoloured', async () => {
+  it('asks again after a failure, rather than keeping the file uncolored', async () => {
     const { calls, analyzer, model } = core();
     const h = new Highlights(analyzer, model);
     h.request(0);
-    calls[0].reject(new Error('cancelled'));
+    calls[0].reject(new Error('canceled'));
     await settle();
     expect(h.peek(0)).toBeUndefined();
     h.request(0);

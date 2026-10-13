@@ -22,7 +22,7 @@ import type { SceneModel } from './model';
 export class Camera {
   path: number[];
   xf: Xf = { x: 0, y: 0, s: 1 };
-  /** Overlays covering the screen's edges; framing centres in what is left. */
+  /** Overlays covering the screen's edges; framing centers in what is left. */
   insets: Insets = NO_INSETS;
 
   constructor(private model: SceneModel) {
@@ -177,7 +177,7 @@ export class Camera {
       return frameReadable({ x: 0, y: 0, w: owner.cw ?? 1, h: owner.ch ?? 1 }, 1, width, height, pad, this.insets);
     }
     const { node, box, outer, inner } = this.place(target, lca);
-    // A block with nothing inside is shown among its neighbours, not blown up alone.
+    // A block with nothing inside is shown among its neighbors, not blown up alone.
     if (!this.model.owner(node)) return frameAround(box, outer, width, height, this.insets);
     if (how === 'open' && inner) return frameReadable(box, inner, width, height, pad, this.insets);
     return frameIn(box, width, height, pad, this.insets);

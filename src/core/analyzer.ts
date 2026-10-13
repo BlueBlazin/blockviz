@@ -39,7 +39,7 @@ export class Analyzer {
     return (r as Extract<Response, { kind: 'highlight' }>).runs;
   }
 
-  cancel(reason = new Error('cancelled')) {
+  cancel(reason = new Error('canceled')) {
     this.worker?.terminate();
     this.worker = null;
     for (const p of this.pending.values()) p.reject(reason);

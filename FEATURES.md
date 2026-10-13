@@ -36,7 +36,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - scroll or pinch to zoom; `+` and `−` keys
   - drag or the arrow keys to pan
   - buttons for zoom, fit and whole project
-- **Open a block** (double-click, double-tap or Enter): zooms until the diagram inside is readable, starting from its top. A block with nothing inside is centred among its neighbours.
+- **Open a block** (double-click, double-tap or Enter): zooms until the diagram inside is readable, starting from its top. A block with nothing inside is centered among its neighbors.
 - **Go to a definition** by double-clicking or double-tapping a block that has nothing inside but is defined elsewhere.
 - **Back out** with a breadcrumb or by scrolling out. Esc closes a dialog, or else the details panel; it never moves the view. `F` shows all of the block the breadcrumbs end at, its title included; `H`, `0` or the home button shows the whole project. Framing keeps blocks clear of the top bar and the details panel.
 - **Breadcrumbs** show the containers you're in; click one to go back out to it. Long paths fold their middle into a "…" menu, as far as the width needs.
@@ -79,25 +79,25 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - every edge carrying that name, through steps that re-bind it (`q = q.view(…)`) and into and out of branches and loops
   - the rest of the function fades
   - a panel lists where the value comes from and what reads it, each a link
-- Every arrow is labelled with what it carries, including arrows into and inside branches and loops.
+- Every arrow is labeled with what it carries, including arrows into and inside branches and loops.
 
 ## Reading the diagram
 
-- **Read top to bottom**: inputs enter at the top, results leave at the bottom, and arrows are labelled with variable names.
+- **Read top to bottom**: inputs enter at the top, results leave at the bottom, and arrows are labeled with variable names.
 - **Arrow styles**:
-  - solid: a value, labelled with its name (every value, none hidden)
+  - solid: a value, labeled with its name (every value, none hidden)
   - dotted: a condition
   - dashed red: a file one program writes and another reads
   - dashed: code that runs other code
 - **Marks**:
-  - ⊕: residual adds
+  - ⊕: adds
   - orange dot: a side effect
   - corner mark: there is more inside
-- **Colours by role**: function, route or command, class, sub-module, library call, I/O, settings, file on disk. Architecture-figure colours (attention, norm, linear, embedding…) apply only in code that builds neural networks.
+- **Colors by role**: function, route or command, class, sub-module, library call, I/O, settings, file on disk. Architecture-figure colors (attention, norm, linear, embedding…) apply only in code that builds neural networks.
 - **Dark mode** follows the system's setting, and switches with it while the page is open, unless you pick light or dark with the toolbar's switch (remembered; picking the system's own goes back to following it). The diagram keeps each role's hue, its lightness turned over, and the panels, code and downloads follow.
 - **Text stays readable**: names stay legible at any zoom, long names wrap onto two lines, and table rows never grow past the size of names. A file, folder, class or file on disk keeps its name however narrow its box, as long as the name fits it legibly (except inside the thumbnail of a closed block).
-- **Tidy arrows** (the switch beside the home button, off by default, remembered): all the values a block sends share one line that branches to each reader, each branch labelled where it arrives. Off, each value has its own line, labelled where it leaves.
-- **Legend** of what the project's diagram draws (its colours, kinds of arrow and marks; a change's colours when reading one), and **footer stats** (files, lines, blocks, analysis time).
+- **Tidy arrows** (the switch beside the home button, off by default, remembered): all the values a block sends share one line that branches to each reader, each branch labeled where it arrives. Off, each value has its own line, labeled where it leaves.
+- **Legend** of what the project's diagram draws (its colors, kinds of arrow and marks; a change's colors when reading one), and **footer stats** (files, lines, blocks, analysis time).
 
 ## What becomes a block (all languages)
 
@@ -125,7 +125,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - READMEs describe their folder
   - external packages are listed in one table
 
-## Frameworks recognised
+## Frameworks recognized
 
 - **Routes, with their full paths**:
   - Python: FastAPI, Flask, Django `urlpatterns`

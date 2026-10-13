@@ -76,7 +76,7 @@ pub struct Ctx<'p> {
 
 impl Ctx<'_> {
     /// The architecture-figure category of the first name that has one, in
-    /// modules that build neural networks; elsewhere names carry no colour.
+    /// modules that build neural networks; elsewhere names carry no color.
     pub fn category(&self, mi: usize, names: &[&str]) -> Option<&'static str> {
         if !self.domains[mi].ml {
             return None;
@@ -230,11 +230,11 @@ const MINOR_EXT: &[&str] = &[
     "os.path.", "math.", "operator.", "typing.", "functools.", "itertools.", "collections.", "copy.", "inspect.", "string.", "re.", "builtins.", "dataclasses.", "time.", "sys.exit",
     // JavaScript: language globals and helpers are glue, like Python builtins.
     "globals.", "path.", "url.", "util.", "lodash", "clsx", "classnames", "tailwind-merge",
-    // Rust: the standard library, and synchronisation and byte-buffer plumbing.
+    // Rust: the standard library, and synchronization and byte-buffer plumbing.
     "std.", "core.", "alloc.", "tokio.sync.", "parking_lot.", "crossbeam", "once_cell.", "bytes.", "anyhow.", "thiserror.",
     // Query builders are part of the query that runs them (`.fetch_one(&pool)`).
     "sqlx.", "diesel.", "sea_orm.",
-    // Go: the standard library's text, sorting, synchronisation, context and
+    // Go: the standard library's text, sorting, synchronization, context and
     // error plumbing; formatting builds values (`fmt.Sprintf`).
     "context.", "errors.", "strings.", "strconv.", "unicode.", "sort.", "slices.", "maps.", "cmp.", "sync.", "sync/atomic.", "path/filepath.", "math/", "reflect.", "regexp.", "fmt.Sprint", "fmt.Errorf", "flag.", "encoding/binary.", "container/", "iter.", "unicode/",
     // Method routers (`get(handler)`) are parts of the route they register.
@@ -3063,7 +3063,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         if role.is_none() && js && info.class.is_none() {
             role = frameworks::file_route(&self.m.path, def.name).map(|label| frameworks::Role { label, kind: Handler::Route });
         }
-        // React: a capitalised function that returns JSX is a component; `useX` a hook.
+        // React: a capitalized function that returns JSX is a component; `useX` a hook.
         let component = js && def.name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) && returns_jsx(def.body);
         if js && def.name.len() > 3 && def.name.starts_with("use") && def.name[3..].starts_with(|c: char| c.is_ascii_uppercase()) {
             badges.push("hook".into());

@@ -13,7 +13,7 @@ export const intersects = (b: Box, w: number, h: number, margin = 0) => b.x < w 
 
 export const covers = (b: Box, w: number, h: number) => b.x <= 0 && b.y <= 0 && b.x + b.w >= w && b.y + b.h >= h;
 
-/** Interior placement of a box: the content (cw×ch) fitted and centred inside `inner`. */
+/** Interior placement of a box: the content (cw×ch) fitted and centered inside `inner`. */
 export function placement(n: SceneNode, cw: number, ch: number) {
   const inner = n.inner!;
   const k = Math.min(inner.w / Math.max(cw, 1e-9), inner.h / Math.max(ch, 1e-9));
@@ -55,7 +55,7 @@ export function frame(b: Box, width: number, height: number, pad = 0.12): View {
 export interface Insets { top: number; right: number; bottom: number; left: number }
 export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
-/** Like `frame`, but centres the box in the part of the screen overlays leave visible. */
+/** Like `frame`, but centers the box in the part of the screen overlays leave visible. */
 export function frameIn(b: Box, width: number, height: number, pad: number, i: Insets): View {
   const vw = Math.max(width - i.left - i.right, width * 0.3);
   const vh = Math.max(height - i.top - i.bottom, height * 0.3);
@@ -98,7 +98,7 @@ export function frameReadable(b: Box, k: number, width: number, height: number, 
 }
 
 /**
- * Frames a block with nothing inside among its neighbours: centred, at the
+ * Frames a block with nothing inside among its neighbors: centered, at the
  * size its diagram reads at (`k`: one unit of the diagram it sits in, in frame
  * units), and never filling more than about half the screen.
  */

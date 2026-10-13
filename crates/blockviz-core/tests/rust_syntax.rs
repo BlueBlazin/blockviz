@@ -91,7 +91,7 @@ fn every_target_has_its_role() {
 fn modern_syntax() {
     let (s, _) = tour();
     let modern = file(&s, "src/modern.rs");
-    // An enum with methods is a type with behaviour; trait impls name their trait.
+    // An enum with methods is a type with behavior; trait impls name their trait.
     let shape = within(&s, modern, "Shape");
     assert_eq!(shape.kind, Kind::Class);
     assert_eq!(shape.subtitle, "Display");
