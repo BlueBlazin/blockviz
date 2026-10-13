@@ -2,7 +2,8 @@ import { Camera, type CameraState, type Framing, type Plan } from './camera';
 import { clamp, type Insets, type Xf } from './geometry';
 import type { SceneDiff } from './diff';
 import type { SceneModel } from './model';
-import { Renderer, type EdgeHit, type Trace } from './renderer';
+import { Renderer, type EdgeHit, type Paint, type Trace } from './renderer';
+import { svgOf } from './svg';
 import { distanceToPolyline } from './trace';
 
 /** An edge, as its container and its index among the container's edges. */
@@ -262,16 +263,14 @@ export class Engine {
     return [this.model.root, ...out];
   }
 
-  exportPng(name: string) {
-    this.canvas.toBlob(blob => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${name}.png`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+  /** The view as a PNG image. */
+  png(): Promise<Blob | null> {
+    return new Promise(done => this.canvas.toBlob(done));
+  }
+
+  /** The view as SVG, drawn as it is on screen. */
+  svg(): string {
+    return svgOf(this.width, this.height, pen => new Renderer(pen, this.model).draw(this.paint()));
   }
 
   // ----- frame loop ------------------------------------------------------------------
@@ -320,16 +319,10 @@ export class Engine {
     if (!this.frame && !this.disposed) this.frame = requestAnimationFrame(this.draw);
   }
 
-  private draw = (now: number) => {
-    this.frame = 0;
-    if (this.flight) {
-      const t = clamp((now - this.flight.start) / this.flight.duration, 0, 1);
-      this.flight.step(ease(t));
-      if (t >= 1) this.flight = null;
-    }
-    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+  /** What is drawn: the view, and what is in focus, followed or changed in it. */
+  private paint(): Paint {
     const focus = this.hover ?? this.peeked ?? this.selected;
-    this.renderer.draw({
+    return {
       width: this.width,
       height: this.height,
       hover: this.hover ?? this.peeked,
@@ -340,7 +333,18 @@ export class Engine {
       path: this.camera.path,
       xfs: this.camera.transforms(),
       diff: this.diff,
-    });
+    };
+  }
+
+  private draw = (now: number) => {
+    this.frame = 0;
+    if (this.flight) {
+      const t = clamp((now - this.flight.start) / this.flight.duration, 0, 1);
+      this.flight.step(ease(t));
+      if (t >= 1) this.flight = null;
+    }
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.renderer.draw(this.paint());
     if (now - this.lastEmit > 120 || !this.flight) {
       this.lastEmit = now;
       // Reported only when it changes: not on every frame of a pan or zoom.

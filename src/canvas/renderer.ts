@@ -62,6 +62,12 @@ const CODE_KINDS = new Set(['op', 'loop', 'branch']);
 /** Boxes whose names are navigation landmarks and stay readable longest. */
 const NAMED_KINDS = new Set(['file', 'notebook', 'dir', 'class', 'function', 'section', 'artifact', 'doc', 'table']);
 
+/** What the renderer draws with: a canvas's 2D context, or what draws as one does (an SVG, see `SvgPen`). */
+export type Pen = Pick<CanvasRenderingContext2D,
+  'fillStyle' | 'strokeStyle' | 'globalAlpha' | 'lineWidth' | 'lineJoin' | 'lineDashOffset' | 'font' | 'textAlign'
+  | 'save' | 'restore' | 'scale' | 'setLineDash' | 'beginPath' | 'moveTo' | 'lineTo' | 'arc' | 'arcTo' | 'roundRect' | 'closePath'
+  | 'fill' | 'stroke' | 'clip' | 'fillRect' | 'fillText' | 'strokeText'> & { measureText(text: string): { width: number } };
+
 /**
  * Immediate-mode renderer for nested diagrams. Every frame walks only what is
  * visible: containers are culled against the viewport, interiors are entered
@@ -84,7 +90,7 @@ export class Renderer {
   private fontScale = 1;
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
 
-  constructor(private ctx: CanvasRenderingContext2D, private model: SceneModel) {}
+  constructor(private ctx: Pen, private model: SceneModel) {}
 
   draw(p: Paint) {
     const ctx = this.ctx;

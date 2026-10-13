@@ -46,7 +46,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Search** (`/` or ⌘K): files, classes, functions and blocks, by name or by a name inside another (`Block.forward`, `block forward`, `api.py get`, `Db::get`), definitions before the steps that mention them. Picking one flies there and selects it.
 - **Smooth flights** that zoom out, pan and zoom back in. Motion is reduced when the system asks for it.
 - **Clicks land on what you can see**: a block too small to make out is passed over for the one around it.
-- **Export** the current view as a PNG.
+- **Download** the current view as SVG, sharp at any size with its text kept as text, or as PNG. It is drawn by the same code as the screen, so it shows exactly what you see.
 
 ## Phones and tablets
 

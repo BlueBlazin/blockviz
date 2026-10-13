@@ -40,6 +40,23 @@ function partial(p: Project): string | null {
 
 const LIMITS = `${MAX_FILES.toLocaleString()} files and ${MAX_TOTAL / 1e6} MB of text`;
 
+/** Saves `blob` as a file called `name`. */
+function download(blob: Blob | null, name: string) {
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Saves an SVG, named for what it shows. */
+function downloadSvg(svg: string, title: string) {
+  const name = title.replace(/[\\/:*?"<>|\0-\x1f]+/g, '-').trim().slice(0, 80) || 'diagram';
+  download(new Blob([svg], { type: 'image/svg+xml' }), `${name}.svg`);
+}
+
 const storage = {
   get(key: string) { try { return localStorage.getItem(key) ?? ''; } catch { return ''; } },
   set(key: string, value: string) { try { localStorage.setItem(key, value); } catch { /* optional */ } },
@@ -429,7 +446,15 @@ export default function App() {
           }}
         >{copied ? <Check size={17} /> : <Link size={17} />}</button>
         <button className="icon" title="Open a codebase" aria-label="Open a codebase" onClick={() => setDialog('open')}><FolderOpen size={17} /></button>
-        <button className="icon" title="Export PNG" aria-label="Export PNG" onClick={() => engine.current?.exportPng(loaded?.scene.title ?? 'diagram')}><Download size={17} /></button>
+        <button className="icon" title="Download this view" aria-label="Download this view" popoverTarget="download-menu"><Download size={17} /></button>
+        <div id="download-menu" className="menu" popover="auto">
+          <button popoverTarget="download-menu" popoverTargetAction="hide" onClick={() => engine.current && downloadSvg(engine.current.svg(), loaded?.scene.title ?? 'diagram')}>
+            SVG<span>Sharp at any size, its text kept as text</span>
+          </button>
+          <button popoverTarget="download-menu" popoverTargetAction="hide" onClick={() => void engine.current?.png().then(b => download(b, `${loaded?.scene.title ?? 'diagram'}.png`))}>
+            PNG<span>An image of the screen</span>
+          </button>
+        </div>
         <button className="icon" title="Help (?)" aria-label="Help" onClick={() => setDialog('help')}><CircleHelp size={17} /></button>
       </div>
 
