@@ -43,6 +43,21 @@ impl Lang {
     pub fn resolves_paths(self) -> bool {
         self != Lang::Python
     }
+    /// An assignment in a function makes a local name, unless the function
+    /// declares it `global` or `nonlocal`. Elsewhere `x = …` may write a
+    /// variable of the code around the function (`let` and `:=` declare,
+    /// but the shared tree does not keep them apart from assignments).
+    pub fn assignment_declares(self) -> bool {
+        self == Lang::Python
+    }
+    /// The compiler rejects a local that is never used (Go) or warns of
+    /// one, and of a value assigned and never read (Rust). A value that
+    /// looks unread there is one whose reads the shared tree leaves out:
+    /// an error check, a deferred call, a named result handed back by a
+    /// bare `return`, a write through a reference (`*x = v`).
+    pub fn warns_of_unused(self) -> bool {
+        matches!(self, Lang::Go | Lang::Rust)
+    }
     /// The receiver of a method: `self` or `this`.
     pub fn receiver(self) -> &'static str {
         if self.is_js() {

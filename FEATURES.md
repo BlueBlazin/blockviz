@@ -91,6 +91,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - dashed: code that runs other code
 - **Marks**:
   - ⊕: adds
+  - a short faint line ending in a bar over "unused": a value the code makes and never reads (Python, JavaScript and TypeScript; the Go and Rust compilers already flag these)
   - orange dot: a side effect
   - corner mark: there is more inside
 - **Colors by role**: function, route or command, class, sub-module, library call, I/O, settings, file on disk. Architecture-figure colors (attention, norm, linear, embedding…) apply only in code that builds neural networks.

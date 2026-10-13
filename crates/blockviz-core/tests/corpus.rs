@@ -299,3 +299,28 @@ fn titles_are_names_not_cut_code() {
         }
     }
 }
+
+#[test]
+fn values_nothing_reads_end_in_a_stop() {
+    // Each stop hangs straight under a block with no other line out, and
+    // these are the only values the corpus assigns and never reads.
+    let mut found = vec![];
+    for name in ["fastapi-template", "httpx", "nanochat", "flask", "bakerydemo", "httpie"] {
+        let s = scene(name);
+        for n in &s.nodes {
+            for e in n.edges.iter().filter(|e| s.nodes[e.to as usize].kind == Kind::Unused) {
+                let block = &s.nodes[e.from as usize];
+                assert_eq!(n.edges.iter().filter(|o| o.from == block.id).count(), 1, "{name}: {} has other lines out", block.title);
+                assert!(e.open && e.points.len() == 4 && e.points[0] == e.points[2], "{name}: {:?}", e.points);
+                let mut f = n;
+                while f.kind != Kind::Function {
+                    f = &s.nodes[f.parent.unwrap() as usize];
+                }
+                found.push(format!("{}: {}", f.title, e.label));
+            }
+        }
+    }
+    found.sort();
+    // `user` is made again only when missing; `parse_known_args` hands back extra arguments nobody looks at.
+    assert_eq!(found, ["init_db: user", "parse_args: no_options"]);
+}

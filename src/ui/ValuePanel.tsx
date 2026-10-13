@@ -36,8 +36,9 @@ export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, 
   onDownload: (id: number) => void;
 }) {
   const list = [...edges];
-  // Ports and branches only pass the value on; the steps are what read and make it.
-  const step = (id: number) => { const n = model.node(id); return n.shape !== 'region' && !(n.kind === 'input' && n.parent !== undefined && model.node(n.parent).shape === 'region') && !(n.kind === 'output' && n.parent !== undefined && model.node(n.parent).shape === 'region'); };
+  // Ports and branches only pass the value on, and a stop is where nothing reads it;
+  // the steps are what read and make it.
+  const step = (id: number) => { const n = model.node(id); return n.shape !== 'region' && n.kind !== 'unused' && !(n.kind === 'input' && n.parent !== undefined && model.node(n.parent).shape === 'region') && !(n.kind === 'output' && n.parent !== undefined && model.node(n.parent).shape === 'region'); };
   const targets = new Set(list.map(e => e.to));
   // Where it comes from: steps that send it but are not sent it under this name.
   const sources = [...new Set(list.map(e => e.from))].filter(id => !targets.has(id) && step(id));
@@ -67,7 +68,7 @@ export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, 
         </div>
         <div className="insp-field">
           <label>Flows into <span className="count">{readers.length}</span></label>
-          <div className="uses" onMouseLeave={() => onPeek(null)}>{readers.map(row)}</div>
+          {readers.length ? <div className="uses" onMouseLeave={() => onPeek(null)}>{readers.map(row)}</div> : <p className="insp-doc">Nothing reads it.</p>}
         </div>
       </div>
     </aside>

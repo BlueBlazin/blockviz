@@ -3,7 +3,9 @@
 export type Kind =
   | 'repo' | 'dir' | 'file' | 'notebook' | 'doc' | 'asset'
   | 'class' | 'function' | 'section' | 'loop' | 'branch' | 'lane' | 'group'
-  | 'call' | 'op' | 'glyph' | 'table' | 'artifact' | 'symbol' | 'input' | 'output';
+  | 'call' | 'op' | 'glyph' | 'table' | 'artifact' | 'symbol' | 'input' | 'output'
+  /** Where a value nothing reads ends, under the block that makes it. */
+  | 'unused';
 
 export type Shape = 'box' | 'region' | 'glyph' | 'port';
 export type EdgeKind = 'data' | 'control' | 'uses' | 'exec' | 'artifact';

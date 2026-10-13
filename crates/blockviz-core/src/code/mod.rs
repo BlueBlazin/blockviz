@@ -199,7 +199,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
     }
     let mounts = frameworks::mounts(&modules, &ix);
     let routes = frameworks::routes(&modules, &ix);
-    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes, components: HashMap::new(), component_calls: vec![], reads: HashMap::new() };
+    let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes, components: HashMap::new(), component_calls: vec![], reads: HashMap::new(), scopes: vec![] };
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }

@@ -293,3 +293,15 @@ fn layouts_are_sound_and_analysis_deterministic() {
     let b = serde_json::to_string(&scene("nextjs-app")).unwrap();
     assert_eq!(a, b);
 }
+
+#[test]
+fn closure_reads_are_reads() {
+    // ky's `delay` clears its timeout in an abort handler written above it,
+    // and an editor's `onReady` callback reads the editor it is built with:
+    // neither value is unread, though no statement after it reads it.
+    for name in ["express-api", "ky", "nestjs-cats", "nextjs-app", "react-vite", "serve", "turborepo-basic"] {
+        let s = scene(name);
+        let stops: Vec<&str> = s.nodes.iter().flat_map(|n| n.edges.iter()).filter(|e| s.nodes[e.to as usize].kind == Kind::Unused).map(|e| e.label.as_str()).collect();
+        assert!(stops.is_empty(), "{name}: {stops:?}");
+    }
+}

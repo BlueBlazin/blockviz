@@ -186,6 +186,28 @@ describe('scene diff', () => {
     expect([...d.added].map(e => `${head.node(e.from).title}→${head.node(e.to).title}`)).toEqual([]);
   });
 
+  it('pairs a stop with the stop of the block it hangs under', () => {
+    // A value of `make` is now unread too; that of `take` was before. Only
+    // the first stop's line is new, though the new stop comes first.
+    const files = { 'f.py': 'def f():\n    a = make()\n    b = take()\n' };
+    const stop: Spec = { kind: 'unused', title: 'unused' };
+    const spec = (stops: number): Spec => ({ kind: 'repo', title: 'repo', children: [{ kind: 'file', title: 'f.py', file: 'f.py', children: [
+      fn('f', 'def f():\n    a = make()\n    b = take()', [step('make', 'make()'), step('take', 'take()'), ...Array.from({ length: stops }, () => stop)]),
+    ] }] });
+    const wire = (m: SceneModel, lines: [string, number][]) => {
+      const f = m.node(id(m, 'f'));
+      const stops = (f.children ?? []).filter(c => m.node(c).kind === 'unused');
+      f.edges = lines.map(([from, i]) => ({ from: id(m, from), to: stops[i], kind: 'data', label: from, points: [] }));
+    };
+    const b = model(files, spec(1));
+    const h = model(files, spec(2));
+    wire(b, [['take', 0]]);
+    wire(h, [['make', 0], ['take', 1]]);
+    const r = new SceneDiff(b, h, [{ path: 'f.py', status: 'modified' }]);
+    expect([...r.added].map(e => h.node(e.from).title)).toEqual(['make']);
+    expect(r.removed.size).toBe(0);
+  });
+
   it('says when a call leads into changed code', () => {
     const bf = { 'm.py': 'def g():\n    old()\n\ndef f():\n    g()\n' };
     const hf = { 'm.py': 'def g():\n    new()\n\ndef f():\n    g()\n' };

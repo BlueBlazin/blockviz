@@ -102,3 +102,26 @@ describe('a block as SVG', () => {
     expect(svg).toContain('<path d="M18 12H');
   });
 });
+
+describe('a value nothing reads, as SVG', () => {
+  it('ends in a bar over "unused", its line faint and without an arrowhead', () => {
+    const n = (id: number, extra: Partial<SceneNode>): SceneNode => ({ id, kind: 'glyph', shape: 'glyph', category: 'op', title: '×', x: 0, y: 0, w: 10, h: 10, ...extra });
+    const nodes = [
+      n(0, { kind: 'function', shape: 'box', category: 'function', title: 'params', children: [1, 2], w: 200, h: 100, cw: 200, ch: 100,
+        edges: [{ from: 1, to: 2, kind: 'data', label: 'embeddings', points: [52, 34, 52, 56], labelAt: [56, 46], open: true }] }),
+      n(1, { parent: 0, x: 40, y: 10, w: 24, h: 24 }),
+      n(2, { parent: 0, kind: 'unused', shape: 'port', category: 'port', title: 'unused', x: 35, y: 56, w: 34, h: 14 }),
+    ];
+    const scene: Scene = { version: 1, title: 'repo', root: 0, nodes, files: [], diagnostics: [], stats: { files: 0, pythonFiles: 0, lines: 0, nodes: 3, maxDepth: 1 } };
+    const project: Project = { name: 'repo', source: 'test', files: [] };
+    const p = pen();
+    new Renderer(p, new SceneModel(scene, project), LIGHT).draw({ width: 200, height: 100, hover: null, selected: null, path: [0], xfs: [{ x: 0, y: 0, s: 1 }] });
+    const svg = p.svg(200, 100);
+    // The line runs all the way to the bar: no arrowhead is filled or shortens it.
+    expect(svg).toContain('<path d="M52 34L52 56" fill="none" stroke="#7c838e"');
+    expect(svg).not.toContain('fill="#7c838e"');
+    expect(svg).toContain('<path d="M46 56L58 56" fill="none" stroke="#7c838e"');
+    expect(svg).toMatch(/fill="#8b929c">unused<\/text>/);
+    expect(svg).toMatch(/fill="#5b626d">embeddings<\/text>/);
+  });
+});

@@ -13,7 +13,7 @@ export interface Change { status: Status; id: number; at: number }
 /** A connection the base drew between two blocks the head still has, side by side, but no longer draws. */
 export interface RemovedEdge { from: number; to: number; kind: EdgeKind; label?: string }
 
-const PORTS = new Set(['input', 'output']);
+const PORTS = new Set(['input', 'output', 'unused']);
 
 /**
  * How the head of a pull request differs from its base, block by block.
@@ -56,6 +56,7 @@ export class SceneDiff {
     this.pairTree(head.root, base.root);
     this.pairFolders(head.root);
     this.pairMoved();
+    this.pairStops();
     this.mark(head.root);
     this.findRemoved();
     this.count(head.root);
@@ -140,7 +141,8 @@ export class SceneDiff {
   /** Pairs head blocks with base blocks of the same kind and title: identical code first, then in order. */
   private pairAmong(heads: number[], bases: number[]) {
     const groups = new Map<string, number[]>();
-    for (const b of bases) if (!this.back.has(b)) push(groups, keyOf(this.base.node(b)), b);
+    // Stops all look alike: each is paired through its block (`pairStops`).
+    for (const b of bases) if (!this.back.has(b) && this.base.node(b).kind !== 'unused') push(groups, keyOf(this.base.node(b)), b);
     const left: number[] = [];
     for (const h of heads) {
       if (this.match.has(h)) continue;
@@ -202,6 +204,21 @@ export class SceneDiff {
     let most = 0;
     for (const [p, v] of votes) if (v > most) [best, most] = [p, v];
     if (best !== undefined && most * 2 >= matched) this.pairTree(h, best);
+  }
+
+  /** A stop is the base's stop under the block its own block was, if that had one. */
+  private pairStops() {
+    const stopOf = (model: SceneModel, block: number): number | undefined => {
+      const p = model.node(block).parent;
+      return p === undefined ? undefined : model.node(p).edges?.find(e => e.from === block && model.node(e.to).kind === 'unused')?.to;
+    };
+    for (const n of this.head.nodes) {
+      if (n.kind !== 'unused' || n.parent === undefined || this.match.has(n.id)) continue;
+      const block = this.head.node(n.parent).edges?.find(e => e.to === n.id)?.from;
+      const was = block === undefined ? undefined : this.match.get(block);
+      const stop = was === undefined ? undefined : stopOf(this.base, was);
+      if (stop !== undefined && !this.back.has(stop)) this.pair(n.id, stop);
+    }
   }
 
   /**

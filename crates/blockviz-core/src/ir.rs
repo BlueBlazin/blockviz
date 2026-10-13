@@ -37,6 +37,8 @@ pub enum Kind {
     Symbol,
     Input,
     Output,
+    /// Where a value nothing reads ends: a stop under the block that makes it.
+    Unused,
 }
 
 /// How a node is drawn. `Box` nodes may have an interior that opens on zoom;

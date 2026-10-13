@@ -256,3 +256,15 @@ fn shared_trunks_are_a_choice() {
     assert!(starts(&scene()) > 1);
     assert_eq!(starts(&scene_with(blockviz_core::layout::Options { shared_trunks: true })), 1);
 }
+
+#[test]
+fn values_nothing_reads_end_in_a_stop() {
+    // The notebook computes the embedding parameters, then leaves them out
+    // of the count ("embeddings are not included"): the block making them
+    // says so, rather than leading nowhere.
+    let s = scene();
+    let f = path(&s, &["scaling_laws.ipynb", "chinchilla_params"]);
+    let to_stop: Vec<&blockviz_core::ir::Edge> = f.edges.iter().filter(|e| s.nodes[e.to as usize].kind == Kind::Unused).collect();
+    assert_eq!(to_stop.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(), ["embeddings"]);
+    assert_eq!(s.nodes[to_stop[0].from as usize].outputs, ["embeddings"]);
+}

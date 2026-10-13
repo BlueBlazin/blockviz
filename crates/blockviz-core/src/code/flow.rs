@@ -72,6 +72,9 @@ pub struct Ctx<'p> {
     /// Where each statement list reads each name last (`Fb::last_reads`),
     /// by the list's place in memory, while its module is built.
     pub reads: HashMap<(*const Stmt, usize), Rc<Map<&'p str, usize>>>,
+    /// The functions being built, outermost first: a closure's assignments
+    /// may write the variables of those around it.
+    pub scopes: Vec<FnDef<'p>>,
 }
 
 impl Ctx<'_> {
@@ -281,6 +284,9 @@ pub struct Fb<'c, 'p> {
     pending: Vec<(Id, String)>,
     /// The function being built.
     fid: Option<usize>,
+    /// Values given names that nothing reads afterward, by the block that
+    /// makes them: each ends in a stop once the function is built.
+    unused: Vec<(Id, String)>,
 }
 
 fn compact(s: &str, max: usize) -> String {
@@ -314,6 +320,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             settled: None,
             pending: vec![],
             fid: None,
+            unused: vec![],
         }
     }
 
@@ -1055,6 +1062,11 @@ impl<'c, 'p> Fb<'c, 'p> {
             self.cx.b.remove(o);
         }
         // Names bound to merged blocks now come from the fused one.
+        for u in self.unused.iter_mut() {
+            if merged.contains(&u.0) {
+                u.0 = fused;
+            }
+        }
         for r in self.regions.iter_mut() {
             for b in r.env.values_mut() {
                 if let Bind::Src(srcs, _) = b {
@@ -1662,6 +1674,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         if self.module_level && self.handled.contains(&u32::from(s.start())) {
             return;
         }
+        let before = self.cx.b.len();
         match s {
             Stmt::Expr(e) => self.expr_stmt(s, &e.value),
             Stmt::Assign(a) => self.assign(s, &a.targets, &a.value),
@@ -1678,7 +1691,7 @@ impl<'c, 'p> Fb<'c, 'p> {
             }
             Stmt::If(x) => self.if_stmt(s, x, later),
             Stmt::For(x) => self.for_stmt(s, x, later),
-            Stmt::While(x) => self.while_stmt(s, &x.test, &x.body, later),
+            Stmt::While(x) => self.while_stmt(s, &x.test, &x.body, &x.orelse, later),
             Stmt::With(x) => self.with_stmt(x, later),
             Stmt::Try(x) => self.try_stmt(s, &x.body, &x.handlers, &x.orelse, &x.finalbody, later),
             Stmt::Match(x) => self.match_stmt(s, x, later),
@@ -1699,6 +1712,37 @@ impl<'c, 'p> Fb<'c, 'p> {
                 }
             }
             _ => {}
+        }
+        if self.fid.is_some() && !self.m.lang.warns_of_unused() {
+            self.note_unused(s, later, before);
+        }
+    }
+
+    /// Notes the names an assignment gives to a value it made (a block from
+    /// `before` on) when nothing reads them afterward.
+    fn note_unused(&mut self, s: &Stmt, later: Later, before: usize) {
+        let mut names = vec![];
+        match s {
+            Stmt::Assign(a) if a.targets.iter().all(|t| matches!(t, Expr::Name(_) | Expr::Tuple(_) | Expr::List(_))) => a.targets.iter().for_each(|t| walk::target_names(t, &mut names)),
+            Stmt::AnnAssign(a) if a.value.is_some() => walk::target_names(&a.target, &mut names),
+            // Not an update: it may change its value in place (`items += more`
+            // extends the list it names, which another name may share).
+            _ => return,
+        }
+        for name in names {
+            // `_` and `_guard` are left unread on purpose.
+            if name.starts_with('_') || later.contains(&name) {
+                continue;
+            }
+            // A block of its own: an alias (`s = session`) can be bound to a
+            // port the statement made to bring the value into a region.
+            if let Some(Bind::Src(srcs, _)) = self.regions.last().unwrap().env.get(&name) {
+                if let [id] = srcs[..] {
+                    if id as usize >= before && !self.cx.b.get(id).is_port() {
+                        self.unused.push((id, name));
+                    }
+                }
+            }
         }
     }
 
@@ -2631,7 +2675,10 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
         // The body runs again: what any of it reads is read later.
         let again = self.last_reads(body);
+        let mark = self.unused.len();
         self.statements(body, Later::new(&again, Some(&later)), true);
+        // A loop's `else` (which is not drawn) runs after its body.
+        self.read_after(mark, [&x.orelse[..]].into_iter());
         self.close_region(later);
         if data_iter.is_none() {
             for v in &iter_vals {
@@ -2640,7 +2687,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         }
     }
 
-    fn while_stmt(&mut self, s: &'p Stmt, test: &'p Expr, body: &'p [Stmt], later: Later) {
+    fn while_stmt(&mut self, s: &'p Stmt, test: &'p Expr, body: &'p [Stmt], orelse: &'p [Stmt], later: Later) {
         let forever = matches!(test, Expr::BooleanLiteral(b) if b.value);
         let title = if forever { "repeat".to_string() } else { format!("while {}", self.namer().code(test, 36)) };
         let cond = if forever { vec![] } else { self.condition_vals(test) };
@@ -2651,7 +2698,9 @@ impl<'c, 'p> Fb<'c, 'p> {
         // The test and the body run again.
         let mut again = Map::clone(&self.last_reads(body));
         again.extend(walk::loads(test).into_iter().map(|n| (n, 0)));
+        let mark = self.unused.len();
         self.statements(body, Later::new(&again, Some(&later)), true);
+        self.read_after(mark, [orelse].into_iter());
         self.close_region(later);
         self.link_condition(&cond, id);
     }
@@ -2724,9 +2773,16 @@ impl<'c, 'p> Fb<'c, 'p> {
 
     fn try_stmt(&mut self, s: &'p Stmt, body: &'p [Stmt], handlers: &'p [ast::ExceptHandler], orelse: &'p [Stmt], finalbody: &'p [Stmt], later: Later) {
         let trivial = handlers.iter().all(|h| self.units(&h.body) == 0) && self.units(finalbody) == 0;
+        // The handlers, `else` and `finally` run after the try body; `finally`
+        // after the handlers and `else` too.
+        let then = handlers.iter().map(|h| &h.body[..]).chain([orelse, finalbody]);
         if trivial {
+            let mark = self.unused.len();
             self.statements(body, later, true);
+            self.read_after(mark, then);
+            let mark = self.unused.len();
             self.statements(orelse, later, true);
+            self.read_after(mark, [finalbody].into_iter());
             return;
         }
         let id = self.open_region(Kind::Branch, String::new(), s);
@@ -2748,7 +2804,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         if !finalbody.is_empty() {
             lanes.push(("finally".into(), finalbody));
         }
-        for (title, b) in lanes {
+        for (i, (title, b)) in lanes.into_iter().enumerate() {
             let lane = self.add(Kind::Lane, Shape::Region, title);
             self.cx.b.get_mut(lane).category = "lane";
             if let (Some(first), Some(last)) = (b.first(), b.last()) {
@@ -2756,7 +2812,13 @@ impl<'c, 'p> Fb<'c, 'p> {
                 self.cx.b.get_mut(lane).span = Some(span);
             }
             self.regions.push(Region::new(lane));
+            let mark = self.unused.len();
             self.statements(b, later, true);
+            if i == 0 {
+                self.read_after(mark, then.clone());
+            } else if !std::ptr::eq(b, finalbody) {
+                self.read_after(mark, [finalbody].into_iter());
+            }
             self.fill_empty_arm(b);
             self.close_region(later);
         }
@@ -2861,7 +2923,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         };
         // Rust arms are their patterns; Python and JavaScript say `case`.
         let case = if self.m.lang == Lang::Rust { "" } else { "case " };
-        for case_ in &x.cases {
+        for (k, case_) in x.cases.iter().enumerate() {
             let case_title = |p: &str| format!("{case}{p}");
             let title = match &case_.patterns[..] {
                 [] if self.m.lang == Lang::Rust => "otherwise".to_string(),
@@ -2907,7 +2969,14 @@ impl<'c, 'p> Fb<'c, 'p> {
                     self.regions.last_mut().unwrap().env.insert(n, bind);
                 }
             }
+            let mark = self.unused.len();
             self.statements(&case.body, later, true);
+            // A JavaScript case runs on into the next unless it leaves (its
+            // closing `break` is not kept, so only `return`, `throw` and
+            // `continue` tell).
+            if self.m.lang.is_js() && !matches!(case.body.last(), Some(Stmt::Return(_) | Stmt::Raise(_) | Stmt::Continue(_))) {
+                self.read_after(mark, x.cases[k + 1..].iter().map(|c| &c.body[..]));
+            }
             self.fill_empty_arm(&case.body);
             self.close_region(later);
         }
@@ -4481,6 +4550,90 @@ impl<'c, 'p> Fb<'c, 'p> {
             n.badges.push("generator".into());
         }
     }
+
+    /// Forgets the values noted as unread since `mark` that statements
+    /// running after them (`then`) read.
+    fn read_after(&mut self, mark: usize, then: impl Iterator<Item = &'p [Stmt]>) {
+        let mut names: Set<&str> = Set::default();
+        for b in then {
+            names.extend(self.last_reads(b).keys());
+        }
+        let noted = self.unused.split_off(mark);
+        self.unused.extend(noted.into_iter().filter(|(_, n)| !names.contains(n.as_str())));
+    }
+
+    /// A block whose values nothing reads ends in a stop, its line labeled
+    /// with their names, so a block with no line out says why instead of
+    /// looking cut off. Only blocks with no line out at all, and only for local names:
+    /// not those declared `global`, not those of the code around a closure
+    /// (which `x = …` writes where assignments declare nothing), not those
+    /// a closure reads (whenever it runs), and not those only printed
+    /// (which `last_reads` does not count as reads). None at all in a
+    /// function that reads its locals without naming them (`locals()`).
+    fn finish_unused(&mut self) {
+        let Some(fid) = self.fid else { return };
+        if self.unused.is_empty() {
+            return;
+        }
+        let body = self.cx.ix.funcs[fid].def.body;
+        let mut dynamic = false;
+        walk::stmt_exprs(body, true, &mut |e| {
+            walk::walk(e, &mut |x| {
+                if let Expr::Call(c) = x {
+                    dynamic |= matches!(&*c.func, Expr::Name(n) if vocabulary::reads_locals(&n.id));
+                }
+            })
+        });
+        if dynamic {
+            self.unused.clear();
+            return;
+        }
+        let mut declared = BTreeSet::new();
+        walk::collect_bindings(body, &mut BTreeSet::new(), &mut declared);
+        let mut outside = BTreeSet::new();
+        if !self.m.lang.assignment_declares() {
+            for f in &self.cx.scopes[..self.cx.scopes.len().saturating_sub(1)] {
+                outside.extend(f.args.iter().map(|p| p.name.to_string()));
+                walk::collect_bindings(f.body, &mut outside, &mut BTreeSet::new());
+            }
+        }
+        let mut closures = walk::Reads::default();
+        walk::closure_reads(body, &mut closures);
+        let closures: Set<&str> = closures.take().collect();
+        let mut printed: Set<&str> = Set::default();
+        walk::stmt_exprs(body, true, &mut |e| {
+            walk::walk(e, &mut |x| {
+                if let Expr::Call(c) = x {
+                    if matches!(&*c.func, Expr::Name(n) if matches!(n.id.as_str(), "print" | "pprint")) {
+                        let mut reads = walk::Reads::default();
+                        c.arguments.args.iter().chain(c.arguments.keywords.iter().map(|k| &k.value)).for_each(|a| reads.expr(a));
+                        printed.extend(reads.take());
+                    }
+                }
+            })
+        });
+        let mut stops: Vec<(Id, Vec<String>)> = vec![];
+        for (id, name) in std::mem::take(&mut self.unused) {
+            let Some(parent) = self.cx.b.get(id).parent else { continue };
+            let outer = !self.m.lang.assignment_declares() && (outside.contains(&name) || self.cx.ix.sym(self.mi, &name).is_some());
+            if declared.contains(&name) || outer || closures.contains(name.as_str()) || printed.contains(name.as_str()) || self.cx.b.get(parent).edges.iter().any(|e| e.from == id) {
+                continue;
+            }
+            match stops.iter_mut().find(|s| s.0 == id) {
+                Some(s) if !s.1.contains(&name) => s.1.push(name),
+                Some(_) => {}
+                None => stops.push((id, vec![name])),
+            }
+        }
+        for (id, names) in stops {
+            let parent = self.cx.b.get(id).parent;
+            let stop = self.cx.b.add(parent, Kind::Unused, Shape::Port, "unused");
+            self.cx.b.get_mut(stop).category = "port";
+            for name in &names {
+                self.connect(id, stop, EdgeKind::Data, name, None, None);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4569,6 +4722,7 @@ fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: Set<String>, types: &
         }
     }
     let body: &[Stmt] = if docstring(def.body).is_some() { &def.body[1..] } else { def.body };
+    fb.cx.scopes.push(def);
     fb.statements(body, Later::new(&Map::default(), None), true);
     fb.finish_function(node);
     // A body with a single plain step is a leaf: the code says it all.
@@ -4583,7 +4737,11 @@ fn build_function<'p>(cx: &mut Ctx<'p>, fid: usize, outer: Set<String>, types: &
             b.get_mut(node).effects.extend(effects);
             b.get_mut(*k).parent = None;
         }
+    } else {
+        fb.finish_unused();
     }
+    fb.cx.scopes.pop();
+    let b = &mut fb.cx.b;
     let n = b.get_mut(node);
     n.effects.sort();
     n.effects.dedup();

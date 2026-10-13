@@ -249,3 +249,15 @@ fn analysis_is_deterministic() {
         assert_eq!(a, b, "{name}");
     }
 }
+
+#[test]
+fn no_value_is_left_unread() {
+    // The compiler rejects or warns of locals never read: what looks unread
+    // is a read the shared tree leaves out (an error check, a deferred call,
+    // a named result, a write through a reference), so nothing ends in a stop.
+    for name in ["axum-examples", "fd", "llama2-rs", "mini-redis", "ripgrep-core"] {
+        let s = scene(name);
+        let stops: Vec<&str> = s.nodes.iter().filter(|n| n.kind == Kind::Unused).map(|n| n.title.as_str()).collect();
+        assert!(stops.is_empty(), "{name}: {} stops", stops.len());
+    }
+}

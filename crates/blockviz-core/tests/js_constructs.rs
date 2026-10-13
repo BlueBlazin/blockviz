@@ -610,3 +610,76 @@ fn values_combined_by_an_operator_are_the_operator() {
     // the store into a field are formula steps.
     assert_eq!(ops, vec![("%".into(), 2), ("+".into(), 2), ("+".into(), 3)]);
 }
+
+#[test]
+fn unread_values_end_in_a_stop() {
+    let s = analyze(&[(
+        "load.ts",
+        r#"
+export function load(url: string, ms: number) {
+  let result;
+  const onAbort = () => clearTimeout(timer);
+  const timer = setTimeout(onAbort, ms);
+  const run = async () => {
+    const res = await fetch(url);
+    result = await res.json();
+  };
+  const stale = fetch("/b");
+  return run;
+}
+"#,
+    )]);
+    let f = find(&s, "load");
+    let stopped: Vec<&str> = std::iter::once(f).chain(descendants(&s, f)).flat_map(|n| n.edges.iter()).filter(|e| s.nodes[e.to as usize].kind == Kind::Unused).map(|e| e.label.as_str()).collect();
+    // `timer` is read by a handler written above it; `result` is a variable
+    // of the code around the callback, which the callback writes.
+    assert_eq!(stopped, ["stale"]);
+}
+
+#[test]
+fn values_read_after_their_case_are_not_unused() {
+    // A case without a closing exit runs on into the next; code run from a
+    // string can read any local.
+    let s = analyze(&[(
+        "cases.ts",
+        r#"
+export function fallthrough(kind: string) {
+  let out;
+  switch (kind) {
+    case "a":
+      out = fetchJson("/a");
+    case "b":
+      send(out);
+      break;
+  }
+  return kind;
+}
+
+export function leaves(kind: string) {
+  let out;
+  switch (kind) {
+    case "a":
+      out = fetchJson("/a");
+      return kind;
+    case "b":
+      send(out);
+      break;
+  }
+  return kind;
+}
+
+export function evaluated(url: string) {
+  const page = fetchJson(url);
+  return eval("page.body");
+}
+"#,
+    )]);
+    let stopped = |name: &str| -> Vec<String> {
+        let f = find(&s, name);
+        std::iter::once(f).chain(descendants(&s, f)).flat_map(|n| n.edges.iter()).filter(|e| s.nodes[e.to as usize].kind == Kind::Unused).map(|e| e.label.clone()).collect()
+    };
+    assert!(stopped("fallthrough").is_empty(), "{:?}", stopped("fallthrough"));
+    assert!(stopped("evaluated").is_empty(), "{:?}", stopped("evaluated"));
+    // A case that returns does not run on: what it made is unread.
+    assert_eq!(stopped("leaves"), ["out"]);
+}

@@ -457,3 +457,145 @@ def f(p, q, r, obj):
     // store into a field and a formula operand (`b * c`) are formula steps.
     assert_eq!(operators(&s, "f"), vec![("+".into(), 2), ("+".into(), 3), ("%".into(), 2)]);
 }
+
+/// The stops in a function, each as (the names on its line, the block it hangs under).
+fn stops<'a>(s: &'a blockviz_core::ir::Scene, f: &'a blockviz_core::ir::Node) -> Vec<(String, &'a blockviz_core::ir::Node)> {
+    let mut out = vec![];
+    for n in std::iter::once(f).chain(descendants(s, f)) {
+        for e in n.edges.iter().filter(|e| s.nodes[e.to as usize].kind == blockviz_core::ir::Kind::Unused) {
+            out.push((e.label.clone(), &s.nodes[e.from as usize]));
+        }
+    }
+    out
+}
+
+#[test]
+fn unread_values_end_in_a_stop() {
+    let s = analyze(
+        r#"
+import requests
+
+COUNT = 0
+
+def params(d_model, vocab_size, n):
+    embeddings = d_model * vocab_size
+    dense = d_model * vocab_size * n
+    return dense
+
+def kept(xs, url, session):
+    total = 0
+    for x in xs:
+        total = total + session.get(x)
+    timer = None
+    def cancel():
+        return timer
+    timer = requests.get(url)
+    _ignored = requests.get(url)
+    shown = requests.head(url)
+    print(shown)
+    try:
+        got = requests.get(url)
+    except OSError:
+        return None
+    else:
+        return got, total, cancel
+
+def bump(session, x):
+    global COUNT
+    rows = session.query(x)
+    COUNT = len(rows) * 2
+"#,
+    );
+    let f = s.nodes.iter().find(|n| n.title == "params").unwrap();
+    let found = stops(&s, f);
+    assert_eq!(found.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["embeddings"]);
+    // The line drops straight from the middle of the block to the stop, with no arrowhead.
+    let block = found[0].1;
+    let e = f.edges.iter().find(|e| e.from == block.id).unwrap();
+    let stop = &s.nodes[e.to as usize];
+    let x = block.x + block.w / 2.;
+    assert!(e.open);
+    assert!((e.points[0] - x).abs() < 0.1 && (e.points[1] - (block.y + block.h)).abs() < 0.1, "{:?}", e.points);
+    assert!((e.points[2] - x).abs() < 0.1 && (e.points[3] - stop.y).abs() < 0.1, "{:?}", e.points);
+    assert!((stop.x + stop.w / 2. - x).abs() < 0.1);
+    // Read later (in a loop, by a closure written above, in `else`), left
+    // unread on purpose, printed, or a global: none of these is unused.
+    for name in ["kept", "bump"] {
+        let f = s.nodes.iter().find(|n| n.title == name).unwrap();
+        assert!(stops(&s, f).is_empty(), "{name}: {:?}", stops(&s, f).iter().map(|(l, _)| l).collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn values_read_where_no_arrow_shows_it_are_not_unused() {
+    // Each of these values is read, though no later statement of its list
+    // reads it: by code that names no locals, in place, by a clause of its
+    // own statement that runs after it, or as the value an alias names.
+    let s = analyze(
+        r#"
+import requests
+
+def dynamic(url, render):
+    page = requests.get(url)
+    return render("t.html", **locals())
+
+def evaluated(url):
+    page = requests.get(url)
+    return eval("page.status")
+
+def in_place(url, acc):
+    items = acc
+    items += requests.get(url)
+
+def handler_then_finally(url, log):
+    try:
+        resp = requests.get(url)
+    except OSError:
+        fallback = requests.head(url)
+    finally:
+        log(fallback)
+    return resp
+
+def else_then_finally(url, log):
+    try:
+        resp = requests.get(url)
+    except OSError:
+        return requests.head(url)
+    else:
+        parsed = requests.post(resp)
+    finally:
+        log(parsed)
+
+def for_else(urls, log):
+    for u in urls:
+        last = requests.get(u)
+    else:
+        log(last)
+
+def while_else(url, log, n):
+    while n:
+        last = requests.get(url)
+        n -= 1
+    else:
+        log(last)
+
+def alias_in_loop(xs, session):
+    for x in xs:
+        s = session
+        requests.get(x)
+    return xs
+
+def deleted(url):
+    page = requests.get(url)
+    del page
+    return requests.head(url)
+"#,
+    );
+    for name in ["dynamic", "evaluated", "in_place", "handler_then_finally", "else_then_finally", "for_else", "while_else", "alias_in_loop"] {
+        let f = s.nodes.iter().find(|n| n.title == name).unwrap();
+        assert!(stops(&s, f).is_empty(), "{name}: {:?}", stops(&s, f).iter().map(|(l, b)| (l, &b.title)).collect::<Vec<_>>());
+    }
+    // Deleting a value is not reading it.
+    let f = s.nodes.iter().find(|n| n.title == "deleted").unwrap();
+    assert_eq!(stops(&s, f).iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["page"]);
+}

@@ -561,6 +561,10 @@ export class Renderer {
   }
 
   private port(n: SceneNode, b: Box, t: Xf, alpha: number, status: Status | null) {
+    if (n.kind === 'unused') {
+      this.stop(n, b, t, alpha);
+      return;
+    }
     if (b.h === 0 || !n.title) return;
     const size = Math.min(11.5 * t.s, 15);
     if (size < 4.2) return;
@@ -572,6 +576,31 @@ export class Renderer {
     ctx.textAlign = 'center';
     this.text(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
     ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+
+  /** Where a value nothing reads ends: a bar across the end of its line, and the word under it. */
+  private stop(n: SceneNode, b: Box, t: Xf, alpha: number) {
+    const ctx = this.ctx;
+    const x = b.x + b.w / 2;
+    const half = 6 * t.s;
+    if (half < 1) return;
+    ctx.globalAlpha = alpha * 0.95;
+    ctx.strokeStyle = this.theme.faintEdge;
+    ctx.lineWidth = clamp(1.3 * Math.sqrt(t.s), 0.45, 1.45);
+    ctx.beginPath();
+    ctx.moveTo(x - half, b.y);
+    ctx.lineTo(x + half, b.y);
+    ctx.stroke();
+    const size = Math.min(10.5 * t.s, 13);
+    if (size >= 4.2) {
+      ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
+      this.font(size, this.theme.sans);
+      ctx.fillStyle = this.theme.faint;
+      ctx.textAlign = 'center';
+      this.text(n.title, x, b.y + 3 * t.s + size * 0.9);
+      ctx.textAlign = 'left';
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -652,8 +681,9 @@ export class Renderer {
     // Edges can be pointed at once their diagram is legible.
     if (alpha > 0.3 && t.s * 11 >= 6 && (x1 - x0 + y1 - y0) * t.s > 6) this.edgeHits.push({ edge: e, owner, container, pts: screen });
     // Settings and sizes are faint; conditions are dotted: neither is the data itself.
+    // Nor is a value nothing reads, which fades as its line ends.
     const control = e.kind === 'control';
-    let color = control ? this.theme.context : e.kind === 'artifact' ? this.theme.artifact : e.kind === 'exec' ? this.theme.faintEdge : this.theme.edge;
+    let color = control ? this.theme.context : e.kind === 'artifact' ? this.theme.artifact : e.kind === 'exec' || this.unread(e) ? this.theme.faintEdge : this.theme.edge;
     let a = alpha * (control ? 0.8 : 0.95) * (dim ? 0.35 : 1);
     let width = control ? lw * 0.85 : lw;
     if (lit) {
@@ -724,10 +754,15 @@ export class Renderer {
     ctx.strokeStyle = this.theme.labelHalo;
     ctx.lineJoin = 'round';
     this.text(e.label, x, y, true);
-    // Values read in ink; conditions stay muted like their dotted lines.
-    ctx.fillStyle = lit ? this.theme.accent : change === 'added' ? this.theme.change.added.ink : e.kind === 'control' ? this.theme.muted : this.theme.labelInk;
+    // Values read in ink; conditions and values nothing reads stay muted like their lines.
+    ctx.fillStyle = lit ? this.theme.accent : change === 'added' ? this.theme.change.added.ink : e.kind === 'control' || this.unread(e) ? this.theme.muted : this.theme.labelInk;
     this.text(e.label, x, y);
     ctx.globalAlpha = 1;
+  }
+
+  /** Whether an edge carries values nothing reads to their stop. */
+  private unread(e: Edge): boolean {
+    return this.model.node(e.to).kind === 'unused';
   }
 
   /** A connection the change removed: a dashed red curve from the bottom of one block to the top of the other. */

@@ -29,6 +29,10 @@ pub struct LNode {
     pub converge: bool,
     /// Packing priority for disconnected pieces (lower first).
     pub pack: i32,
+    /// Room kept free under the node, centered on it (width, height): the
+    /// stop of a value nothing reads. It takes the space a node shorter
+    /// than its layer leaves below it, so the layer grows only if need be.
+    pub foot: (f64, f64),
 }
 
 #[derive(Clone, Debug)]
@@ -363,8 +367,10 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     let n = nodes.len();
     let mut out = LOut { pos: vec![(0., 0.); n], routes: vec![vec![]; edges.len()], labels: vec![None; edges.len()], width: 0., height: 0. };
     if n == 1 {
-        out.width = nodes[0].w;
-        out.height = nodes[0].h;
+        let v = &nodes[0];
+        out.width = v.w.max(v.foot.0);
+        out.height = v.h + v.foot.1;
+        out.pos[0] = ((out.width - v.w) / 2., 0.);
         return out;
     }
     let Scratch {
@@ -659,13 +665,15 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     // 5. Horizontal placement: alternating sweeps, each solved exactly per layer
     // as weighted isotonic regression under minimum-separation constraints.
     let is_dummy = |v: usize| v >= n;
+    // The width a vertex takes in its layer, its foot included.
+    let room = |v: usize| if is_dummy(v) { vw[v] } else { vw[v].max(nodes[v].foot.0) };
     let gap = |a: usize, b: usize| -> f64 {
         let g = match (is_dummy(a), is_dummy(b)) {
             (false, false) => NODE_GAP,
             (true, true) => DUMMY_GAP * 0.7,
             _ => DUMMY_GAP,
         };
-        (vw[a] + vw[b]) / 2. + g
+        (room(a) + room(b)) / 2. + g
     };
     // Each vertex's offset from the first in its layer at minimum spacing,
     // which is also where placement starts.
@@ -758,7 +766,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
         }
         still = if moved { 0 } else { still + 1 };
     }
-    let min_left = (0..nv).map(|v| x[v] - vw[v] / 2.).fold(f64::INFINITY, f64::min);
+    let min_left = (0..nv).map(|v| x[v] - room(v) / 2.).fold(f64::INFINITY, f64::min);
     for v in x.iter_mut() {
         *v -= min_left;
     }
@@ -872,7 +880,8 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     // 7. Channels: horizontal runs between layers get tracks; buses from one
     // port share a track so a value visibly splits.
     band_h.clear();
-    band_h.extend((0..nlayers).map(|l| layers[l].iter().map(|&v| vh[v]).fold(0., f64::max)));
+    // A centered node keeps its foot below it within the band.
+    band_h.extend((0..nlayers).map(|l| layers[l].iter().map(|&v| vh[v] + if is_dummy(v) { 0. } else { 2. * nodes[v].foot.1 }).fold(0., f64::max)));
     // Labels sit under the port an edge leaves, or above the reader it reaches.
     refill(port_label, port_at.len(), false);
     for (ei, e) in edges.iter().enumerate() {
@@ -935,7 +944,7 @@ fn layered(nodes: &[LNode], edges: &[LEdge], arrive: bool, scratch: &mut Scratch
     for v in 0..n {
         out.pos[v] = (x[v] - vw[v] / 2., top(v));
     }
-    out.width = (0..nv).map(|v| x[v] + vw[v] / 2.).fold(0., f64::max);
+    out.width = (0..nv).map(|v| x[v] + room(v) / 2.).fold(0., f64::max);
     out.height = band_y[nlayers - 1] + band_h[nlayers - 1];
 
     // 8. Routes.
@@ -1014,11 +1023,33 @@ fn turn(route: &mut Vec<(f64, f64)>, p: (f64, f64)) {
 mod tests {
     use super::*;
     fn node(w: f64, order: f64) -> LNode {
-        LNode { w, h: 40., pin: Pin::Free, order, rank: None, converge: false, pack: 0 }
+        LNode { w, h: 40., pin: Pin::Free, order, rank: None, converge: false, pack: 0, foot: (0., 0.) }
     }
     fn edge(a: usize, b: usize, group: u64) -> LEdge {
         LEdge { from: a, to: b, group, from_x: None, to_x: None, weight: 1., draw: true, label: true, label_w: 0. }
     }
+    #[test]
+    fn a_foot_keeps_room_under_its_node() {
+        // A short node beside a tall one keeps its foot in the space its
+        // layer leaves below it; a wide foot keeps its neighbors away.
+        let mut short = node(24., 0.);
+        short.h = 24.;
+        short.foot = (140., 36.);
+        let tall = LNode { h: 200., ..node(100., 1.) };
+        let nodes = vec![node(60., 0.), short, tall];
+        let out = layout(&nodes, &[edge(0, 1, 1), edge(0, 2, 2)], false, &mut Scratch::default());
+        let (sx, sy) = out.pos[1];
+        let (tx, ty) = out.pos[2];
+        assert!(sy + 24. + 36. <= ty + 200. + 0.5, "the foot fits in the layer");
+        let (lo, hi) = (sx + 12. - 70., sx + 12. + 70.);
+        assert!(hi <= tx || lo >= tx + 100., "the foot keeps clear of its neighbor: {lo}..{hi} vs {tx}");
+        assert!(lo >= -0.5 && hi <= out.width + 0.5);
+        // Alone, a node and its foot are one piece.
+        let out = layout(&nodes[1..2], &[], false, &mut Scratch::default());
+        assert_eq!((out.width, out.height), (140., 60.));
+        assert_eq!(out.pos[0], (58., 0.));
+    }
+
     #[test]
     fn chain_is_vertical_and_non_overlapping() {
         let nodes = vec![node(100., 0.), node(120., 1.), node(80., 2.)];

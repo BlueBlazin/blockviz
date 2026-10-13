@@ -269,7 +269,7 @@ export class SceneModel {
           if (!sp) visit(k);
           continue;
         }
-        if (k.kind !== 'input' && k.kind !== 'output') {
+        if (k.kind !== 'input' && k.kind !== 'output' && k.kind !== 'unused') {
           const lines = sp.endLine - sp.line;
           const extent = lines * 1e7 + (sp.end - sp.start);
           if (extent <= size) {
@@ -323,7 +323,7 @@ export class SceneModel {
       return t;
     };
     const entries = this.nodes
-      .filter(n => n.parent !== undefined && !['input', 'output', 'glyph', 'lane'].includes(n.kind) && n.title)
+      .filter(n => n.parent !== undefined && !['input', 'output', 'unused', 'glyph', 'lane'].includes(n.kind) && n.title)
       .map(n => ({
         id: n.id,
         title: n.title,

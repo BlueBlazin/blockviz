@@ -82,6 +82,26 @@ pub fn walk<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
     children(e, &mut |c| walk(c, f));
 }
 
+/// The free names that functions and lambdas written anywhere in a
+/// statement list read: a closure reads them when it runs, which may be
+/// after any statement of the list, even one written below it.
+pub fn closure_reads<'a>(stmts: &'a [Stmt], reads: &mut Reads<'a>) {
+    for s in stmts {
+        if let Stmt::FunctionDef(f) = s {
+            reads.body(f.params.iter().map(|p| p.name.as_str()), &f.body);
+            continue;
+        }
+        parts(s, &mut |p| match p {
+            Part::Body(body, _) => closure_reads(body, reads),
+            Part::Expr(e) => walk(e, &mut |x| match x {
+                Expr::Function(f) => reads.body(f.params.iter().map(|p| p.name.as_str()), &f.body),
+                Expr::Lambda(_) => reads.expr(x),
+                _ => {}
+            }),
+        });
+    }
+}
+
 /// Names bound inside comprehensions and lambdas are local to them.
 fn local_binders<'a>(e: &'a Expr, out: &mut Set<&'a str>) {
     match e {

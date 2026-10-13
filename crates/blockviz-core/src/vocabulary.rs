@@ -125,6 +125,12 @@ fn ml_word(w: &str) -> Option<&'static str> {
 /// content (its size, shape, type or existence), and clock readings. Their
 /// results are metadata and their inputs are used only for that property, so
 /// those edges are drawn lightly, with settings.
+/// Builtins that read a function's local names without naming them:
+/// `locals()`, `vars()`, and code run from a string (`eval`, `exec`).
+pub fn reads_locals(name: &str) -> bool {
+    matches!(name, "locals" | "vars" | "eval" | "exec")
+}
+
 /// Attributes that are a property of a value rather than its content:
 /// `x.shape`, `x.device`, `items.length`.
 pub fn is_metadata_attr(name: &str) -> bool {

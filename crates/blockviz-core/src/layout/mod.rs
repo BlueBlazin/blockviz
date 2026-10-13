@@ -26,6 +26,8 @@ const TARGET_SCALE: f64 = 0.24;
 const MAX_INNER_W: f64 = 400.;
 const MAX_INNER_H: f64 = 300.;
 const INLINE_TABLE_ROWS: usize = 8;
+/// From the bottom of a block to the stop of a value nothing reads.
+const STUB: f64 = 22.;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -76,7 +78,7 @@ fn units(b: &Builder, id: Id) -> usize {
         .iter()
         .map(|&c| {
             let c = b.get(c);
-            if c.is_port() {
+            if c.is_port() || c.kind == Kind::Unused {
                 0
             } else if wants_box(c) || !c.has_interior() {
                 1
@@ -129,6 +131,18 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
         }
         size(b, c, cx);
     }
+    // Stops hang under the blocks whose values end in them, in room those
+    // blocks keep free below themselves, not in a layer of their own.
+    let (stops, children): (Vec<Id>, Vec<Id>) = children.into_iter().partition(|&c| b.get(c).kind == Kind::Unused);
+    let edges = std::mem::take(&mut b.get_mut(id).edges);
+    let (stop_edges, edges): (Vec<Edge>, Vec<Edge>) = bundle(b, edges).into_iter().partition(|e| stops.contains(&e.to));
+    let feet: Map<Id, (f64, f64)> = stop_edges
+        .iter()
+        .map(|e| {
+            let stop = b.get(e.to);
+            (e.from, (stop.w.max(2. * (mono_width(&e.label, 11.) + 6.)), STUB + stop.h))
+        })
+        .collect();
     let lanes = b.get(id).hints.lanes;
     let lnodes: Vec<LNode> = children
         .iter()
@@ -146,13 +160,13 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
                 rank: if lanes && !n.is_port() { Some(n.hints.order) } else { None },
                 converge: n.shape == Shape::Glyph || (n.is_port() && n.hints.hidden),
                 pack: n.hints.pack,
+                foot: feet.get(&c).copied().unwrap_or((0., 0.)),
             }
         })
         .collect();
     let index: Map<Id, usize> = children.iter().enumerate().map(|(i, &c)| (c, i)).collect();
     // The edges are taken, laid out and put back; only those between children are drawn.
-    let edges = std::mem::take(&mut b.get_mut(id).edges);
-    let mut edges = bundle(b, edges);
+    let mut edges = edges;
     edges.retain(|e| index.contains_key(&e.from) && index.contains_key(&e.to));
     let mut ledges = Vec::with_capacity(edges.len());
     // Values a block sends share a line when they are one value, or always
@@ -218,6 +232,19 @@ fn content(b: &mut Builder, id: Id, cx: &mut Ctx) {
         }
         e.points = pts.iter().flat_map(|&(x, y)| [round(x), round(y)]).collect();
         e.label_at = label.map(|(x, y)| [round(x), round(y)]);
+        new_edges.push(e);
+    }
+    // A stop's line drops straight from the middle of its block, labeled
+    // just under the block, clear of the stop's bar.
+    for mut e in stop_edges {
+        let p = b.get(e.from);
+        let (x, y) = (p.x + p.w / 2., p.y + p.h);
+        let stop = b.get_mut(e.to);
+        stop.x = x - stop.w / 2.;
+        stop.y = y + STUB;
+        e.points = vec![round(x), round(y), round(x), round(y + STUB)];
+        e.label_at = Some([round(x + 4.), round(y + 12.)]);
+        e.open = true;
         new_edges.push(e);
     }
     let n = b.get_mut(id);
@@ -294,6 +321,13 @@ fn size(b: &mut Builder, id: Id, cx: &mut Ctx) {
             let n = b.get_mut(id);
             n.w = 24.;
             n.h = 24.;
+            return;
+        }
+        Shape::Port if n.kind == Kind::Unused => {
+            let w = sans_width(&n.title, 10.5, false) + 4.;
+            let n = b.get_mut(id);
+            n.w = w.round();
+            n.h = 14.;
             return;
         }
         Shape::Port => {
