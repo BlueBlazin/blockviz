@@ -119,6 +119,8 @@ fn modern_syntax() {
     // Tuple structs and unions are data.
     assert_eq!(rows(within(&s, modern, "Wrapper")), [("0", "Vec<u8>")]);
     assert_eq!(rows(within(&s, modern, "Bits")), [("int", "u32"), ("float", "f32")]);
+    // `safe fn` in an `unsafe extern` block (2024) declares a function like any other.
+    assert_eq!(within(&s, modern, "abs").kind, Kind::Function);
     // A closure returned is a function of its own.
     within(&s, within(&s, modern, "closures"), "returned function");
     // The test module is a namespace of tests.

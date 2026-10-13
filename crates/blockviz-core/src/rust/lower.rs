@@ -548,7 +548,7 @@ impl<'s> Lower<'s> {
         let mut body = vec![];
         let mut bases: Vec<Expr> = vec![];
         for x in impls.into_iter().flatten() {
-            if let Some((_, path, _)) = &x.trait_ {
+            if let Some((path, _)) = &x.trait_ {
                 let b = self.path_expr(None, path);
                 if !bases.iter().any(|e| self.text_of(e) == self.text_of(&b)) {
                     bases.push(b);
@@ -572,7 +572,7 @@ impl<'s> Lower<'s> {
         let ty = type_name(&x.self_ty).unwrap_or_default();
         self.self_ty.borrow_mut().push(ty);
         // A trait's methods say which trait they implement (`fmt` of `Display`).
-        let implements = x.trait_.as_ref().map(|(_, path, _)| {
+        let implements = x.trait_.as_ref().map(|(path, _)| {
             let r = self.of(path);
             Decorator { expression: Expr::Call(ExprCall { func: Box::new(name("impl", r, Ctx::Load)), arguments: Arguments { args: vec![Expr::Other(atom(r))], keywords: vec![] }, kind: CallKind::Call, range: r }), range: r }
         });
@@ -608,7 +608,7 @@ impl<'s> Lower<'s> {
         let written = crate::text::squash(self.text.get(usize::from(self.of(&x.self_ty).start())..usize::from(self.of(&x.self_ty).end())).unwrap_or(&ty));
         let written = written.split('<').next().unwrap_or(&written).trim_start_matches('&').trim().to_string();
         let title = match &x.trait_ {
-            Some((_, path, _)) => {
+            Some((path, _)) => {
                 bases.push(self.path_expr(None, path));
                 format!("impl {} for {written}", last_ident(path))
             }
@@ -1079,19 +1079,24 @@ impl<'s> Lower<'s> {
             // `_ => {}`, `Poll::Pending => ()`: cases that do nothing are not drawn.
             .filter(|arm| !is_nothing(&arm.body))
             .map(|arm| {
-                let patterns: Vec<TextRange> = match &arm.pat {
+                // `Some(x) if x > 0 =>`: the guard is held around the pattern.
+                let (pat, guard) = match &arm.pat {
+                    syn::Pat::Guard(g) => (&*g.pat, Some(&*g.guard)),
+                    p => (p, None),
+                };
+                let patterns: Vec<TextRange> = match pat {
                     syn::Pat::Wild(_) => vec![],
                     syn::Pat::Or(o) => o.cases.iter().map(|c| self.of(c)).collect(),
                     p => vec![self.of(p)],
                 };
                 let body = self.into(&arm.body, &dest.arm());
-                let range = cover(self.of(&arm.pat), self.erange(&arm.body));
-                let binds = pat_binds(&arm.pat).then(|| Box::new(self.pat(&arm.pat)));
-                let variant = match &arm.pat {
+                let range = cover(self.of(pat), self.erange(&arm.body));
+                let binds = pat_binds(pat).then(|| Box::new(self.pat(pat)));
+                let variant = match pat {
                     syn::Pat::TupleStruct(t) if t.elems.len() == 1 && pat_binds(&t.elems[0]) => Some(last_ident(&t.path)),
                     _ => None,
                 };
-                MatchCase { patterns, binds, variant, guard: arm.guard.as_ref().map(|(_, g)| Box::new(self.expr(g))), body, range }
+                MatchCase { patterns, binds, variant, guard: guard.map(|g| Box::new(self.expr(g))), body, range }
             })
             .collect();
         let range = self.rs(m.match_token.span, m.brace_token.span.close());
@@ -2031,9 +2036,14 @@ pub fn doc_text(attrs: &[syn::Attribute], inner: bool) -> Option<String> {
 
 // ----- spans of expressions --------------------------------------------------------------
 
-/// The first token of a function signature (`async`, `const`, `unsafe`, `extern`, `fn`).
+/// The first token of a function signature (`async`, `const`, `unsafe`, `safe`, `extern`, `fn`).
 fn sig_start(sig: &syn::Signature) -> Span {
-    sig.constness.map(|t| t.span).or(sig.asyncness.map(|t| t.span)).or(sig.unsafety.map(|t| t.span)).or(sig.abi.as_ref().map(|a| a.extern_token.span)).unwrap_or(sig.fn_token.span)
+    let safety = match sig.safety {
+        syn::Safety::Unsafe(t) => Some(t.span),
+        syn::Safety::Safe(t) => Some(t.span),
+        syn::Safety::Default => None,
+    };
+    sig.constness.map(|t| t.span).or(sig.asyncness.map(|t| t.span)).or(safety).or(sig.abi.as_ref().map(|a| a.extern_token.span)).unwrap_or(sig.fn_token.span)
 }
 
 fn path_first(p: &syn::Path) -> Span {
@@ -2071,7 +2081,7 @@ pub fn first(e: &syn::Expr) -> Span {
         E::Break(x) => x.break_token.span,
         E::Call(x) => first(&x.func),
         E::Cast(x) => first(&x.expr),
-        E::Closure(x) => x.asyncness.map(|a| a.span).or(x.capture.map(|c| c.span)).unwrap_or(x.or1_token.spans[0]),
+        E::Closure(x) => x.asyncness.map(|a| a.span).or(x.capture.map(|c| c.span)).unwrap_or(x.inputs_begin.spans[0]),
         E::Const(x) => x.const_token.span,
         E::Continue(x) => x.continue_token.span,
         E::Field(x) => first(&x.base),

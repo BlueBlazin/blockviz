@@ -26,7 +26,7 @@ oxc_allocator = "=0.153.0"
 oxc_span = "=0.153.0"
 oxc_syntax = "=0.153.0"
 # Rust: syn parses whole files; span locations give byte offsets into them.
-syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing", "printing", "clone-impls"] }
+syn = { version = "=3.0.9", default-features = false, features = ["full", "parsing", "printing", "clone-impls"] }
 proc-macro2 = { version = "=1.0.107", default-features = false, features = ["span-locations"] }
 
 [package.metadata.wasm-pack.profile.release]
