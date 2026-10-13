@@ -1,5 +1,7 @@
 # blockviz
 
+[![Scrolling from nanoGPT's repository into model.py, a function's dataflow and the attention call inside it, then back out](docs/blockviz.gif)](https://blueblazin.github.io/blockviz/)
+
 See inside a codebase the way architecture figures do: as nested block diagrams you can zoom into without end. The repository is a diagram of programs and the files they exchange; zoom into a file and it becomes a diagram of its classes and functions; zoom into a function and you see its dataflow; zoom into a call and you are inside the code it calls.
 
 Everything runs locally in the browser. A Rust core compiled to WebAssembly parses and lays out the whole project in a worker; the UI thread only draws.
