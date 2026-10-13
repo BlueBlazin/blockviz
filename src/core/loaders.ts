@@ -6,7 +6,11 @@ const IGNORED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv',
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|tiff?|pdf|zip|tar|gz|tgz|7z|bz2|xz|pt|pth|bin|ckpt|safetensors|onnx|h5|pkl|npy|npz|parquet|arrow|mp3|wav|flac|ogg|mp4|mov|webm|ttf|otf|woff2?|so|dylib|dll|exe|o|a|class|jar|pyc|db|sqlite)$/i;
 const MAX_FILE = 2_000_000;
 export const MAX_FILES = 4000;
-export const MAX_TOTAL = 40_000_000;
+/** Text read in all. Memory follows it: analysis takes about 11 bytes for
+ * each byte of code (freed when it is done), the diagram on the page about
+ * 5, so 100 MB, all of huggingface/transformers, comes to about 1.1 GB
+ * while it is analyzed and half that to keep open. */
+export const MAX_TOTAL = 100_000_000;
 
 export function ignoredPath(path: string): boolean {
   const parts = path.split('/');

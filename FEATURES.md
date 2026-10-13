@@ -12,7 +12,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Local folder**, from the picker or by dropping it anywhere on the page.
 - **Pasted code**: a single file, with its language guessed from the code (Python, JavaScript, TypeScript, JSX/TSX, Rust, Go).
 - **Runs in the browser**: a Rust core compiled to WebAssembly analyzes the code in a background worker. Nothing is uploaded or run.
-- **Skips what isn't the project's code**: `.git`, `node_modules`, `target`, `dist`, `build`, virtualenvs, caches and binary files. Limits are 4,000 files, 2 MB per file and 40 MB in total.
+- **Skips what isn't the project's code**: `.git`, `node_modules`, `target`, `dist`, `build`, virtualenvs, caches and binary files. Limits are 4,000 files, 2 MB per file and 100 MB of text in all; a larger project is read code first, then tests, then documentation, and the footer says what was left out.
 - **Command line**: `blockviz <dir> [--depth N] [--json] [--trunks]` prints the same analysis without a browser.
 
 ## Pull requests and comparisons
