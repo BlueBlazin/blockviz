@@ -11,7 +11,7 @@ import { ValuePanel } from './ui/ValuePanel';
 import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
 import type { Paint } from './canvas/renderer';
-import { legend, LIGHT, swatch, type Theme } from './canvas/theme';
+import { DARK, legend, LIGHT, swatch, type Theme } from './canvas/theme';
 import { blockName, ChangesPanel, RemovedDetails } from './ui/ChangesPanel';
 import { Highlights } from './core/highlights';
 import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
@@ -19,7 +19,7 @@ import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
-import { NARROW, TOUCH, useMedia } from './ui/media';
+import { DARK_SCHEME, NARROW, TOUCH, useMedia } from './ui/media';
 import { Store } from './ui/store';
 
 /** A change being read: both versions of the code and how the head (on screen) differs from the base. */
@@ -128,7 +128,11 @@ export default function App() {
   };
   const [copied, setCopied] = useState(false);
   const touch = useMedia(TOUCH);
-  const theme = LIGHT;
+  // The diagram is drawn in the system's light or dark mode, as the page's CSS is.
+  const theme = useMedia(DARK_SCHEME) ? DARK : LIGHT;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  useEffect(() => engine.current?.setTheme(theme), [theme]);
 
   const load = useCallback(async (make: (progress: (m: string) => void, signal: AbortSignal) => Promise<Project | Comparison>, sharedTrunks = trunksRef.current) => {
     loading.current?.abort();
@@ -229,7 +233,7 @@ export default function App() {
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); setRemovedSel(null); },
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); setRemovedSel(null); },
       onHover: id => hover.set(id),
-    }, theme, insets);
+    }, themeRef.current, insets);
     e.setDiff(loaded.compare?.diff ?? null);
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;

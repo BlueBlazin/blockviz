@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light dark;
   /* The page and the diagram's background (keep in step with `background` in src/canvas/theme.ts). */
   --bg: #ffffff;
   /* Bars floating over the diagram. */
@@ -52,6 +53,51 @@
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+}
+/* Dark mode, when the system is set to it. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --glass: rgba(22, 24, 28, 0.9);
+    --ink: #e6e8eb;
+    --ink-strong: #ffffff;
+    --muted: #a3a9b3;
+    --faint: #7c838d;
+    --line: #2d3138;
+    --line-strong: #3d424a;
+    --panel: #1d2025;
+    --hover: #272b31;
+    --accent: #5b9bff;
+    --accent-bg: #1b2a45;
+    --accent-bg-strong: #22365a;
+    --chip: #272b31;
+    --chip-ink: #c9cdd3;
+    --on-strong: #101215;
+    --heading: #d1ae55;
+    --code-bg: #181b1f;
+    --code-ink: #e6edf3;
+    --code-no: #5c636d;
+    --code-hover: #22262c;
+    --code-marked: #1b2a45;
+    --code-gap: #1f2328;
+    --scrim: rgba(10, 11, 13, 0.55);
+    --error-bg: #3a1d1b;
+    --error-line: #6b2b26;
+    --error-ink: #ffb4a9;
+    --logo-1: #5f462c;
+    --logo-2: #2f4957;
+    --logo-3: #555932;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+    --shadow-large: 0 24px 60px rgba(0, 0, 0, 0.55);
+    --added: #3fb950;
+    --added-bg: rgba(46, 160, 67, 0.18);
+    --changed: #d29922;
+    --changed-strong: #bb8009;
+    --changed-bg: rgba(187, 128, 9, 0.2);
+    --removed: #f85149;
+    --removed-bg: rgba(248, 81, 73, 0.17);
+    --renamed: #a371f7;
+  }
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -238,6 +284,19 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .t19 { color: #0969da; }                    /* link */
 .t20 { color: #0a3069; }                    /* code in documents */
 .t21 { color: #6639ba; }                    /* preprocessor, attributes, markers */
+
+/* Syntax on a dark page. */
+@media (prefers-color-scheme: dark) {
+  .t1, .t13 { color: #ff7b72; }
+  .t2, .t20 { color: #a5d6ff; }
+  .t3 { color: #8b949e; }
+  .t4, .t5, .t6, .t12, .t14, .t16, .t17 { color: #79c0ff; }
+  .t7, .t8, .t10, .t21 { color: #d2a8ff; }
+  .t9 { color: #ffa657; }
+  .t11 { color: #e6edf3; }
+  .t15 { color: #7ee787; }
+  .t19 { color: #58a6ff; }
+}
 
 /* Reading a change (a pull request) */
 .change-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 460px; padding: 4px 9px; border-radius: 8px; background: var(--glass); border: 1px solid var(--line); color: var(--muted); flex-shrink: 1; }

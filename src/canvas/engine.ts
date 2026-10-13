@@ -110,6 +110,12 @@ export class Engine {
     this.invalidate();
   }
 
+  /** Draws in `theme`'s colours. */
+  setTheme(theme: Theme) {
+    this.renderer.theme = theme;
+    this.invalidate();
+  }
+
   /** Shows how the code differs from a base version (null: it is not a change). */
   setDiff(diff: SceneDiff | null) {
     this.diff = diff;

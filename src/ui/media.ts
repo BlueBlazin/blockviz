@@ -4,6 +4,8 @@ import { useCallback, useSyncExternalStore } from 'react';
 export const NARROW = '(max-width: 760px)';
 /** A finger, not a mouse, is the main pointer. */
 export const TOUCH = '(pointer: coarse)';
+/** The system is set to dark mode. */
+export const DARK_SCHEME = '(prefers-color-scheme: dark)';
 
 /** Whether a media query matches, kept up to date. */
 export function useMedia(query: string): boolean {

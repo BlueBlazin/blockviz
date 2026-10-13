@@ -94,6 +94,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
   - orange dot: a side effect
   - corner mark: there is more inside
 - **Colours by role**: function, route or command, class, sub-module, library call, I/O, settings, file on disk. Architecture-figure colours (attention, norm, linear, embedding…) apply only in code that builds neural networks.
+- **Dark mode** follows the system's setting, and switches with it while the page is open: the diagram keeps each role's hue, its lightness turned over, and the panels, code and downloads follow.
 - **Text stays readable**: names stay legible at any zoom, long names wrap onto two lines, and table rows never grow past the size of names. A file, folder, class or file on disk keeps its name however narrow its box, as long as the name fits it legibly (except inside the thumbnail of a closed block).
 - **Tidy arrows** (the switch beside the home button, off by default, remembered): all the values a block sends share one line that branches to each reader, each branch labelled where it arrives. Off, each value has its own line, labelled where it leaves.
 - **Legend**, **help** (keys, how to read, analysis notes) and **footer stats** (files, lines, blocks, analysis time).
