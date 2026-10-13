@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- The logo beside the name (.logo in src/styles.css): two blocks over a wide one. -->
+  <!-- The logo beside the name (.logo in src/styles.css): two blocks over a wide one.
+       favicon-32.png and apple-touch-icon.png are this, rendered in its light colors. -->
   <style>
     rect { stroke: #17191d; stroke-width: 2.5; }
     .a { fill: #fbdcbc; }

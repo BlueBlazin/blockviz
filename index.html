@@ -9,7 +9,10 @@
     <meta name="description" content="Explore any codebase as nested architecture diagrams you can zoom into. Runs locally in your browser with Rust and WebAssembly." />
     <!-- Light or dark as the reader chose (src/ui/scheme.ts), before the page is first drawn. -->
     <script>try { const s = localStorage.getItem("blockviz.scheme"); if (s === "light" || s === "dark") document.documentElement.dataset.scheme = s; } catch {}</script>
+    <!-- The PNGs are favicon.svg rendered, for browsers that show no SVG favicon (sized, so the ones that do still pick the SVG) and for home screens. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>blockviz</title>
   </head>
   <body>
