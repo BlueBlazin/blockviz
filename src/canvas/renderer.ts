@@ -49,6 +49,9 @@ const OPEN_TO = 0.075;
 /** The smallest name, in pixels, a reader can make out. */
 const LEGIBLE = 7;
 
+/** The most lines a name is broken over. */
+const MAX_LINES = 4;
+
 /** The shortest side, in pixels, of a block drawn as more than a spot of its colour. */
 const SPECK = 2;
 
@@ -74,6 +77,8 @@ export class Renderer {
   private faded = 0;
   /** Widths of text, by its font as set and the text. */
   private widths = new Map<string, number>();
+  /** Names broken over lines, by font and name, for each number of lines (see `balance`). */
+  private wraps = new Map<string, { lines: string[]; width: number }[]>();
   /** The font as set (at a size on the ladder), and how much it is scaled to the size asked for. */
   private fontKey = '';
   private fontScale = 1;
@@ -345,19 +350,26 @@ export class Renderer {
     const prominent = t.s >= (named ? 0.08 : 0.14) && (roomy || landmark);
     let lines = [n.title];
     let size = prominent ? sizeFor(n.title, 0.55) : natural;
-    // A name of several words too long for a narrow box goes on two lines
-    // rather than shrinking out of sight.
-    if (prominent && size < 10 && n.title.includes(' ')) {
-      const split = splitTitle(n.title);
-      const longer = at10(split[0]) >= at10(split[1]) ? split[0] : split[1];
-      const two = sizeFor(longer, 0.3);
-      if (two > size + 0.5) {
-        lines = split;
-        size = two;
+    if (prominent && size < 10) {
+      // A long name in a narrow box goes over as many lines as the box is
+      // tall enough for, broken between its words, rather than shrinking.
+      const wraps = this.wrapped(n.title, family, weight);
+      for (let k = 2; k <= wraps.length; k++) {
+        const s = clamp(natural, Math.min(11.5, (b.h * 0.6) / k, Math.max(room / (wraps[k - 1].width / 10), natural)), 18);
+        if (s > size + 0.5) {
+          lines = wraps[k - 1].lines;
+          size = s;
+        }
       }
     }
-    // A landmark whose name no longer fits at a legible size is not one.
-    if (!roomy && size < LEGIBLE) {
+    if (prominent && size < LEGIBLE && !this.thumbnails) {
+      // Still too long to read whole: what the box holds of it at a size
+      // that can be read, its end cut short, rather than all of it at one that can't.
+      size = LEGIBLE;
+      this.font(size, family, weight);
+      lines = this.fill(nameParts(n.title), room, clamp(Math.floor((b.h * 0.6) / size), 1, MAX_LINES));
+    } else if (!roomy && size < LEGIBLE) {
+      // A landmark whose name no longer fits at a legible size is not one.
       lines = [n.title];
       size = natural;
     }
@@ -815,6 +827,32 @@ export class Renderer {
     ctx.restore();
   }
 
+  /** A name broken over 1…MAX_LINES lines in `family` at `weight`, each as evenly as its words allow, with its widest line's width at 10 px. */
+  private wrapped(title: string, family: string, weight: number): { lines: string[]; width: number }[] {
+    const key = `${weight} ${family}|${title}`;
+    let out = this.wraps.get(key);
+    if (!out) {
+      this.font(10, family, weight);
+      const parts = nameParts(title);
+      out = [];
+      for (let k = 1; k <= Math.min(MAX_LINES, parts.length); k++) out.push(balance(parts, k, t => this.width(t)));
+      if (this.wraps.size > 4000) this.wraps.clear();
+      this.wraps.set(key, out);
+    }
+    return out;
+  }
+
+  /** `parts` laid into at most `lines` lines of `max` pixels in the current font, each as full as it can be; the last takes what is left. */
+  private fill(parts: string[], max: number, lines: number): string[] {
+    const out = [''];
+    for (const p of parts) {
+      const line = out[out.length - 1];
+      if (line && out.length < lines && this.width((line + p).trimEnd()) > max) out.push(p);
+      else out[out.length - 1] = line + p;
+    }
+    return out.map(l => l.trim());
+  }
+
   /** Ellipsizes `text` to `max` pixels in the current font. Text sized to
    * fill `max` fits, whatever the rounding in working out its size. */
   private fit(text: string, max: number): string {
@@ -866,11 +904,51 @@ function parse(hex: string): number[] {
   return v;
 }
 
-/** A title split into two lines at the space nearest its middle. */
-export function splitTitle(title: string): [string, string] {
-  let best = -1;
-  for (let i = title.indexOf(' '); i >= 0; i = title.indexOf(' ', i + 1)) {
-    if (best < 0 || Math.abs(i - title.length / 2) < Math.abs(best - title.length / 2)) best = i;
+/**
+ * Where a name may break across lines: after a space, `_`, `-`, `/` or `.`,
+ * and before a capital after a lowercase letter (`get|User`); never before
+ * a file's extension, nor between separators and nothing (`__init__`).
+ */
+export function nameParts(title: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 1; i < title.length; i++) {
+    const before = title[i - 1];
+    const at = title[i];
+    const word = /[A-Za-z0-9]/.test(at) && /[A-Za-z0-9]/.test(title.slice(start, i));
+    const joint = ' _-/'.includes(before) || (before === '.' && /[ _\-/.]/.test(title.slice(i))) || (/[a-z]/.test(before) && /[A-Z]/.test(at));
+    if (word && joint) {
+      parts.push(title.slice(start, i));
+      start = i;
+    }
   }
-  return best < 0 ? [title, ''] : [title.slice(0, best), title.slice(best + 1)];
+  parts.push(title.slice(start));
+  return parts;
+}
+
+/** `parts` in at most `k` lines, the widest as narrow as it can be (by `widthOf`): the lines, trimmed, and that width. */
+export function balance(parts: string[], k: number, widthOf: (text: string) => number): { lines: string[]; width: number } {
+  const n = parts.length;
+  const span = (i: number, j: number) => widthOf(parts.slice(i, j).join('').trim());
+  // best[j][i]: the narrowest widest line for the first i parts in j lines, and where its last line starts.
+  const best: { width: number; from: number }[][] = [Array.from({ length: n + 1 }, (_, i) => ({ width: i ? Infinity : 0, from: 0 }))];
+  for (let j = 1; j <= k; j++) {
+    const row = [{ width: 0, from: 0 }];
+    for (let i = 1; i <= n; i++) {
+      let cell = { width: Infinity, from: 0 };
+      for (let f = j - 1; f < i; f++) {
+        const w = Math.max(best[j - 1][f].width, span(f, i));
+        if (w < cell.width) cell = { width: w, from: f };
+      }
+      row.push(cell);
+    }
+    best.push(row);
+  }
+  const lines: string[] = [];
+  for (let j = k, i = n; j > 0 && i > 0; j--) {
+    const from = best[j][i].from;
+    lines.unshift(parts.slice(from, i).join('').trim());
+    i = from;
+  }
+  return { lines, width: best[k][n].width };
 }
