@@ -1,6 +1,7 @@
 import { placement, READABLE } from './geometry';
 import type { SceneModel } from './model';
 import { Renderer, type Paint, type Pen } from './renderer';
+import type { Theme } from './theme';
 
 /**
  * Draws as a canvas does, into an SVG: the part of a canvas's 2D context the
@@ -225,10 +226,11 @@ const LARGEST = 4096;
 const MARGIN = 12;
 
 /**
- * Block `id` alone as SVG, with its diagram at the size names are read at on
- * screen; `paint` adds a change being read, or a value being followed.
+ * Block `id` alone as SVG in `theme`'s colours, with its diagram at the size
+ * names are read at on screen; `paint` adds a change being read, or a value
+ * being followed.
  */
-export function blockSvg(model: SceneModel, id: number, paint: Pick<Paint, 'diff' | 'trace'> = {}): string {
+export function blockSvg(model: SceneModel, id: number, theme: Theme, paint: Pick<Paint, 'diff' | 'trace'> = {}): string {
   const n = model.node(id);
   const owner = model.owner(n);
   // The scale of the diagram the block is in at which its own diagram reads at READABLE.
@@ -238,7 +240,7 @@ export function blockSvg(model: SceneModel, id: number, paint: Pick<Paint, 'diff
   const height = Math.ceil(n.h * s) + 2 * MARGIN;
   const p: Paint = { width, height, hover: null, selected: null, path: [], xfs: [], ...paint };
   return svgOf(width, height, pen => {
-    const r = new Renderer(pen, model);
+    const r = new Renderer(pen, model, theme);
     // The project itself is drawn as its diagram, as the view of all of it shows it.
     if (n.id === model.root) r.draw({ ...p, path: [n.id], xfs: [t] });
     else r.drawBlock(n, t, p);

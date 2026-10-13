@@ -3,6 +3,7 @@ import type { Project, Scene, SceneNode } from '../core/types';
 import { SceneModel } from './model';
 import { Renderer } from './renderer';
 import { SvgPen } from './svg';
+import { LIGHT } from './theme';
 
 /** Text 6 pixels a character wide. */
 const pen = () => new SvgPen({ font: '', measureText: (t: string) => ({ width: t.length * 6 }) as TextMetrics });
@@ -94,7 +95,7 @@ describe('a block as SVG', () => {
     const scene: Scene = { version: 1, title: 'repo', root: 0, nodes, files: [], diagnostics: [], stats: { files: 0, pythonFiles: 0, lines: 0, nodes: 3, maxDepth: 1 } };
     const project: Project = { name: 'repo', source: 'test', files: [] };
     const p = pen();
-    new Renderer(p, new SceneModel(scene, project)).drawBlock(nodes[1], { x: 2, y: 2, s: 1 }, { width: 200, height: 100, hover: null, selected: null, path: [], xfs: [] });
+    new Renderer(p, new SceneModel(scene, project), LIGHT).drawBlock(nodes[1], { x: 2, y: 2, s: 1 }, { width: 200, height: 100, hover: null, selected: null, path: [], xfs: [] });
     const svg = p.svg(200, 100);
     expect(svg).toContain('>forward</text>');
     expect(svg).not.toContain('backward');

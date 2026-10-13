@@ -2,13 +2,47 @@ import type { Status } from './diff';
 
 /**
  * Visual language, modelled on classic architecture figures: pastel fills by
- * role, dark hairline outlines, grey regions for repeated or conditional
+ * role, hairline outlines, grey regions for repeated or conditional
  * structure, and monochrome arrows.
  */
 
 export interface Swatch { fill: string; tint: string; ink?: string }
 
-const light: Record<string, Swatch> = {
+/** The colours a diagram is drawn in. */
+export interface Theme {
+  /** The page under the diagram. */
+  background: string;
+  /** What a block drawn as a blank card is filled with, and what text over a busy picture is backed with. */
+  paper: string;
+  ink: string;
+  muted: string;
+  faint: string;
+  outline: string;
+  /** The outline of an operation's box, lighter than a definition's. */
+  opOutline: string;
+  regionOutline: string;
+  laneOutline: string;
+  edge: string;
+  context: string;
+  faintEdge: string;
+  artifact: string;
+  accent: string;
+  accentSoft: string;
+  labelHalo: string;
+  labelInk: string;
+  effect: string;
+  /** A table's headings, and their lines while too small to read. */
+  heading: string;
+  headingTexture: string;
+  sans: string;
+  mono: string;
+  /** Fills by a block's role (see `swatch`). */
+  swatches: Record<string, Swatch>;
+  /** Colours of a change being read (a pull request): outlines and text (`ink`), and the fill blocks are tinted with. */
+  change: Record<Status, { ink: string; tint: string }>;
+}
+
+const swatches: Record<string, Swatch> = {
   // Neural-network vocabulary (matches the colours of the Transformer figure).
   attention: { fill: '#fbdcbc', tint: '#fef6ee' },
   mlp: { fill: '#c6e5f5', tint: '#f1f9fd' },
@@ -42,13 +76,19 @@ const light: Record<string, Swatch> = {
   neutral: { fill: '#eef0f3', tint: '#fafbfc' },
 };
 
-export const theme = {
+const fonts = {
+  sans: '"Helvetica Neue", Helvetica, -apple-system, "Segoe UI", Arial, sans-serif',
+  mono: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
+};
+
+export const LIGHT: Theme = {
   background: '#ffffff',
-  grid: '#eceef1',
+  paper: '#ffffff',
   ink: '#1b1e23',
   muted: '#5b626d',
   faint: '#8b929c',
   outline: '#2c3036',
+  opOutline: '#7d838c',
   regionOutline: '#b9bdc3',
   laneOutline: '#cbcfd4',
   edge: '#2c3036',
@@ -60,19 +100,19 @@ export const theme = {
   labelHalo: '#ffffff',
   labelInk: '#3d434c',
   effect: '#d97706',
-  sans: '"Helvetica Neue", Helvetica, -apple-system, "Segoe UI", Arial, sans-serif',
-  mono: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
+  heading: '#8a6d1f',
+  headingTexture: '#b39b52',
+  ...fonts,
+  swatches,
+  change: {
+    added: { ink: '#1a7f37', tint: '#c9f2d4' },
+    changed: { ink: '#bf8700', tint: '#fbecb3' },
+    removed: { ink: '#cf222e', tint: '#ffd8d6' },
+  },
 };
 
-/** Colours of a change being read (a pull request): outlines and text (`ink`), and the fill blocks are tinted with. */
-export const changeColor: Record<Status, { ink: string; tint: string }> = {
-  added: { ink: '#1a7f37', tint: '#c9f2d4' },
-  changed: { ink: '#bf8700', tint: '#fbecb3' },
-  removed: { ink: '#cf222e', tint: '#ffd8d6' },
-};
-
-export function swatch(category: string): Swatch {
-  return light[category] ?? light.neutral;
+export function swatch(theme: Theme, category: string): Swatch {
+  return theme.swatches[category] ?? theme.swatches.neutral;
 }
 
 /** Categories whose names carry meaning in a legend. */

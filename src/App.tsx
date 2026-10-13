@@ -11,7 +11,7 @@ import { ValuePanel } from './ui/ValuePanel';
 import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
 import type { Paint } from './canvas/renderer';
-import { changeColor, legend, swatch } from './canvas/theme';
+import { legend, LIGHT, swatch, type Theme } from './canvas/theme';
 import { blockName, ChangesPanel, RemovedDetails } from './ui/ChangesPanel';
 import { Highlights } from './core/highlights';
 import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
@@ -60,9 +60,9 @@ function downloadSvg(svg: string, title: string) {
 }
 
 /** Saves block `id` alone as SVG, named as the panels name it. */
-function downloadBlock(model: SceneModel, id: number, paint: Pick<Paint, 'diff' | 'trace'> = {}) {
+function downloadBlock(model: SceneModel, id: number, theme: Theme, paint: Pick<Paint, 'diff' | 'trace'> = {}) {
   const n = model.node(id);
-  downloadSvg(blockSvg(model, id, paint), n.title ? model.qualified(id) : blockName(model, n));
+  downloadSvg(blockSvg(model, id, theme, paint), n.title ? model.qualified(id) : blockName(model, n));
 }
 
 const storage = {
@@ -128,6 +128,7 @@ export default function App() {
   };
   const [copied, setCopied] = useState(false);
   const touch = useMedia(TOUCH);
+  const theme = LIGHT;
 
   const load = useCallback(async (make: (progress: (m: string) => void, signal: AbortSignal) => Promise<Project | Comparison>, sharedTrunks = trunksRef.current) => {
     loading.current?.abort();
@@ -228,7 +229,7 @@ export default function App() {
       onSelect: (id, path) => { setSelected(id); setSelectedPath(path); setValue(null); setRemovedSel(null); },
       onSelectEdge: edge => { setValue(edge); setSelected(null); setSelectedPath(null); setRemovedSel(null); },
       onHover: id => hover.set(id),
-    }, insets);
+    }, theme, insets);
     e.setDiff(loaded.compare?.diff ?? null);
     engine.current = e;
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = e;
@@ -498,24 +499,24 @@ export default function App() {
         <aside className="legend" aria-label="Legend">
           <header><strong>Legend</strong><button className="icon" aria-label="Close legend" onClick={() => setShowLegend(false)}><X size={14} /></button></header>
           <div className="legend-grid">
-            {legend.map(([cat, label]) => <span key={cat}><i style={{ background: swatch(cat).fill }} />{label}</span>)}
+            {legend.map(([cat, label]) => <span key={cat}><i style={{ background: swatch(theme, cat).fill, borderColor: theme.outline }} />{label}</span>)}
           </div>
           <div className="legend-lines">
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#2c3036" strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#2c3036" /></svg>value flows into</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke="#a3aab4" strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill="#a3aab4" /></svg>decides whether it runs</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#9a5566" strokeWidth="1.4" strokeDasharray="6 3" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#9a5566" /></svg>file written → read</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke="#2c3036" strokeWidth="1.4" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill="#2c3036" /></svg>code executed</span>
-            <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill="#fff" stroke="#2c3036" /><path d="M13.5 7h7M17 3.5v7" stroke="#2c3036" /></svg>add (residual)</span>
-            <span><svg width="34" height="14"><circle cx="17" cy="7" r="3.5" fill="#d97706" /></svg>has side effects</span>
+            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.edge} strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.edge} /></svg>value flows into</span>
+            <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke={theme.context} strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill={theme.context} /></svg>decides whether it runs</span>
+            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.artifact} strokeWidth="1.4" strokeDasharray="6 3" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.artifact} /></svg>file written → read</span>
+            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.edge} strokeWidth="1.4" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.edge} /></svg>code executed</span>
+            <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill={theme.paper} stroke={theme.outline} /><path d="M13.5 7h7M17 3.5v7" stroke={theme.outline} /></svg>add (residual)</span>
+            <span><svg width="34" height="14"><circle cx="17" cy="7" r="3.5" fill={theme.effect} /></svg>has side effects</span>
           </div>
           {compare && (
             <div className="legend-lines">
-              <span><i className="legend-box" style={{ background: changeColor.added.tint, borderColor: changeColor.added.ink }} />added</span>
-              <span><i className="legend-box" style={{ background: changeColor.changed.tint, borderColor: changeColor.changed.ink }} />changed</span>
-              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={changeColor.added.ink} strokeWidth="2" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={changeColor.added.ink} /></svg>new connection</span>
-              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={changeColor.removed.ink} strokeWidth="1.6" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={changeColor.removed.ink} /></svg>removed connection</span>
+              <span><i className="legend-box" style={{ background: theme.change.added.tint, borderColor: theme.change.added.ink }} />added</span>
+              <span><i className="legend-box" style={{ background: theme.change.changed.tint, borderColor: theme.change.changed.ink }} />changed</span>
+              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.change.added.ink} strokeWidth="2" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.change.added.ink} /></svg>new connection</span>
+              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.change.removed.ink} strokeWidth="1.6" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.change.removed.ink} /></svg>removed connection</span>
               <span><i className="legend-count">3</i>changes inside</span>
-              <span><i className="legend-box dashed" style={{ borderColor: changeColor.changed.ink }} />leads into changes</span>
+              <span><i className="legend-box dashed" style={{ borderColor: theme.change.changed.ink }} />leads into changes</span>
             </div>
           )}
           <p>Bigger blocks contain more. Zoom into any block with a corner mark to see inside.{compare ? ' What the change did not touch is faded.' : ''}</p>
@@ -535,7 +536,7 @@ export default function App() {
           onGo={goTo}
           onPick={pick}
           onPeek={id => engine.current?.peek(id)}
-          onDownload={() => downloadBlock(loaded.model, node.id, { diff: compare?.diff })}
+          onDownload={() => downloadBlock(loaded.model, node.id, theme, { diff: compare?.diff })}
           compare={compare && { diff: compare.diff, baseHighlights: compare.baseHighlights, index: changeIndex, onStep: stepChange, onChange: goToChange }}
         />
       )}
@@ -551,7 +552,7 @@ export default function App() {
           onClose={() => setRemovedSel(null)}
           onShow={id => engine.current?.flyToNode(id)}
           onStep={stepChange}
-          onDownload={() => downloadBlock(compare.diff.base, removedSel)}
+          onDownload={() => downloadBlock(compare.diff.base, removedSel, theme)}
         />
       )}
 
@@ -578,7 +579,7 @@ export default function App() {
           onClose={() => setValue(null)}
           onPick={id => { setValue(null); pick(id); }}
           onPeek={id => engine.current?.peek(id)}
-          onDownload={id => downloadBlock(loaded.model, id, { diff: compare?.diff, trace: traced })}
+          onDownload={id => downloadBlock(loaded.model, id, theme, { diff: compare?.diff, trace: traced })}
         />
       )}
 

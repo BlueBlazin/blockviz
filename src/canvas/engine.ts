@@ -4,6 +4,7 @@ import type { SceneDiff } from './diff';
 import type { SceneModel } from './model';
 import { Renderer, type EdgeHit, type Paint, type Trace } from './renderer';
 import { svgOf } from './svg';
+import type { Theme } from './theme';
 import { distanceToPolyline } from './trace';
 
 /** An edge, as its container and its index among the container's edges. */
@@ -64,9 +65,9 @@ export class Engine {
   private framed = true;
   private observer: ResizeObserver;
 
-  constructor(private canvas: HTMLCanvasElement, private model: SceneModel, private events: EngineEvents, insets?: Insets) {
+  constructor(private canvas: HTMLCanvasElement, private model: SceneModel, private events: EngineEvents, theme: Theme, insets?: Insets) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
-    this.renderer = new Renderer(this.ctx, model);
+    this.renderer = new Renderer(this.ctx, model, theme);
     this.camera = new Camera(model);
     if (insets) this.camera.insets = insets;
     this.observer = new ResizeObserver(() => this.resize());
@@ -270,7 +271,7 @@ export class Engine {
 
   /** The view as SVG, drawn as it is on screen. */
   svg(): string {
-    return svgOf(this.width, this.height, pen => new Renderer(pen, this.model).draw(this.paint()));
+    return svgOf(this.width, this.height, pen => new Renderer(pen, this.model, this.renderer.theme).draw(this.paint()));
   }
 
   // ----- frame loop ------------------------------------------------------------------

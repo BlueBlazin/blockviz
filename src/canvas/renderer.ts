@@ -2,7 +2,7 @@ import type { Edge, SceneNode } from '../core/types';
 import { boxOf, clamp, intersects, rectLine, smoothstep, visibleRuns, type Box, type Xf } from './geometry';
 import type { RemovedEdge, SceneDiff, Status } from './diff';
 import type { SceneModel } from './model';
-import { changeColor, swatch, theme } from './theme';
+import { swatch, type Theme } from './theme';
 
 /** A block drawn this frame. `clear` when the reader can see what it is (its
  * name is legible, or the box is large), so clicks never land on a block
@@ -90,11 +90,11 @@ export class Renderer {
   private fontScale = 1;
   private edgeBounds = new WeakMap<Edge, [number, number, number, number]>();
 
-  constructor(private ctx: Pen, private model: SceneModel) {}
+  constructor(private ctx: Pen, private model: SceneModel, public theme: Theme) {}
 
   draw(p: Paint) {
     const ctx = this.ctx;
-    ctx.fillStyle = theme.background;
+    ctx.fillStyle = this.theme.background;
     ctx.fillRect(0, 0, p.width, p.height);
     this.hits = [];
     this.edgeHits = [];
@@ -194,7 +194,7 @@ export class Renderer {
     const recursive = !!owner && owner !== n && chain.includes(owner.id);
     const inner = owner && !recursive ? (pathPos >= 0 ? p.xfs[pathPos] : this.model.interior(t, n, owner)) : null;
     const open = inner ? smoothstep(OPEN_FROM, OPEN_TO, inner.s) * smoothstep(40, 90, b.w) : 0;
-    const sw = swatch(n.category);
+    const sw = swatch(this.theme, n.category);
     const radius = clamp(6 * t.s, 1.2, 10);
     const selected = p.selected === n.id;
     const hovered = p.hover === n.id;
@@ -207,9 +207,9 @@ export class Renderer {
       alpha *= UNTOUCHED;
       this.faded++;
     }
-    const fill = fillOf(n, status);
+    const fill = fillOf(this.theme, n, status);
     // Opened, a changed block keeps its colour on the header band; the diagram inside stays plain.
-    const tint = status ? mix(sw.tint, changeColor[status].tint, 0.12) : sw.tint;
+    const tint = status ? mix(sw.tint, this.theme.change[status].tint, 0.12) : sw.tint;
 
     ctx.globalAlpha = alpha;
     ctx.beginPath();
@@ -229,7 +229,7 @@ export class Renderer {
     }
     const lw = clamp(1.25 * Math.sqrt(t.s), 0.5, 1.4);
     ctx.lineWidth = selected ? 2.2 : status ? Math.max(lw + 0.5, 1.5) + (hovered ? 0.5 : 0) : hovered ? lw + 0.6 : lw;
-    ctx.strokeStyle = selected ? theme.accent : status ? changeColor[status].ink : n.category === 'op' ? '#7d838c' : theme.outline;
+    ctx.strokeStyle = selected ? this.theme.accent : status ? this.theme.change[status].ink : n.category === 'op' ? this.theme.opOutline : this.theme.outline;
     ctx.stroke();
     this.ring(n, b, radius, p);
     const me = this.hit(n, b, parentHit);
@@ -264,12 +264,12 @@ export class Renderer {
     if (p.selected === n.id) {
       ctx.beginPath();
       ctx.roundRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8, radius + 4);
-      ctx.strokeStyle = theme.accentSoft;
+      ctx.strokeStyle = this.theme.accentSoft;
       ctx.lineWidth = 6;
       ctx.stroke();
     } else if (p.related?.has(n.id)) {
       // A use of the block in focus: outlined so the reader sees where it is used.
-      ctx.strokeStyle = theme.accent;
+      ctx.strokeStyle = this.theme.accent;
       ctx.lineWidth = 1.6;
       ctx.setLineDash([5, 3]);
       this.outline({ x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 }, radius + 3, p);
@@ -282,7 +282,7 @@ export class Renderer {
   private speck(n: SceneNode, b: Box, t: Xf, alpha: number, p: Paint) {
     const ctx = this.ctx;
     ctx.globalAlpha = p.diff && !this.faded && !p.diff.touched(n.id) ? alpha * UNTOUCHED : alpha;
-    ctx.fillStyle = fillOf(n, p.diff?.status(n.id) ?? null);
+    ctx.fillStyle = fillOf(this.theme, n, p.diff?.status(n.id) ?? null);
     ctx.fillRect(b.x, b.y, b.w, b.h);
     this.ring(n, b, clamp(6 * t.s, 1.2, 10), p);
     ctx.globalAlpha = 1;
@@ -300,7 +300,7 @@ export class Renderer {
     // In a thumbnail the tint shows where changes are; the closed block's badge counts them.
     if ((!inside && !through) || b.w < 14 || b.h < 10 || this.thumbnails) return;
     const ctx = this.ctx;
-    const ink = changeColor.changed.ink;
+    const ink = this.theme.change.changed.ink;
     const radius = clamp(6 * t.s, 1.2, 10) + 3;
     if (!status || through) {
       ctx.globalAlpha = through ? unfaded : alpha;
@@ -313,7 +313,7 @@ export class Renderer {
     const count = inside || through;
     const words = b.w >= 130 ? ` change${count === 1 ? '' : 's'}` : '';
     const text = through ? `→ ${count}${words}` : `${count}${words}`;
-    this.font(10, theme.sans, 600);
+    this.font(10, this.theme.sans, 600);
     const w = this.width(text) + 10;
     const h = 15;
     const x = Math.max(b.x + 2, b.x + b.w - w - 6);
@@ -321,14 +321,14 @@ export class Renderer {
     ctx.globalAlpha = through ? unfaded : alpha;
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, h / 2);
-    ctx.fillStyle = through ? '#ffffff' : ink;
+    ctx.fillStyle = through ? this.theme.paper : ink;
     ctx.fill();
     if (through) {
       ctx.strokeStyle = ink;
       ctx.lineWidth = 1;
       ctx.stroke();
     }
-    ctx.fillStyle = through ? ink : '#ffffff';
+    ctx.fillStyle = through ? ink : this.theme.paper;
     ctx.textAlign = 'center';
     this.text(text, x + w / 2, y + 11);
     ctx.textAlign = 'left';
@@ -343,7 +343,7 @@ export class Renderer {
     // Names of boxes big enough to hold them stay readable at any zoom.
     const natural = (code ? 12 : 13) * t.s;
     const named = NAMED_KINDS.has(n.kind);
-    const family = code ? theme.mono : theme.sans;
+    const family = code ? this.theme.mono : this.theme.sans;
     const weight = code ? 400 : n.kind === 'call' || n.kind === 'symbol' ? 500 : 600;
     const at10 = (text: string) => {
       this.font(10, family, weight);
@@ -407,26 +407,26 @@ export class Renderer {
       const w = Math.max(...titles.map(l => this.width(l))) + size * 1.1;
       const h = (twoLines ? size + extra + ms + 6 : size + extra) + size * 0.7;
       ctx.globalAlpha = alpha * 0.92;
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = this.theme.paper;
       ctx.beginPath();
       ctx.roundRect(cx - w / 2, cy - h / 2, w, h, Math.min(h, size * 1.7) / 2.6);
       ctx.fill();
     }
     ctx.globalAlpha = textAlpha;
     ctx.textAlign = 'center';
-    ctx.fillStyle = theme.ink;
+    ctx.fillStyle = this.theme.ink;
     const titleY = (twoLines ? cy - ms * 0.15 : cy + size * 0.35) - extra / 2;
     titles.forEach((l, i) => this.text(l, cx, titleY + i * lh));
     if (twoLines) {
-      this.font(ms, theme.sans);
-      ctx.fillStyle = theme.muted;
+      this.font(ms, this.theme.sans);
+      ctx.fillStyle = this.theme.muted;
       this.text(this.fit(meta, maxW), cx, titleY + extra + ms + 3);
     }
     if (deep && !overlay && b.w > 46 && size > 6) {
       // Something lives inside: a small corner mark invites zooming.
       const s = clamp(4 * t.s, 2, 5);
       ctx.globalAlpha = textAlpha * 0.6;
-      ctx.strokeStyle = theme.muted;
+      ctx.strokeStyle = this.theme.muted;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(b.x + b.w - 3 * s, b.y + s);
@@ -447,15 +447,15 @@ export class Renderer {
     const x = b.x + Math.min(9 * t.s, 14);
     const y = b.y + Math.min(band / 2 + size * 0.36, band - 4);
     const maxW = b.w - 18 * t.s;
-    this.font(size, theme.sans, 600);
-    ctx.fillStyle = theme.ink;
+    this.font(size, this.theme.sans, 600);
+    ctx.fillStyle = this.theme.ink;
     const title = this.fit(n.title, maxW);
     this.text(title, x, y);
     const used = this.width(title) + 8 * t.s;
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
     if (meta && used < maxW - 20 * t.s) {
-      this.font(size * 0.82, theme.sans);
-      ctx.fillStyle = theme.muted;
+      this.font(size * 0.82, this.theme.sans);
+      ctx.fillStyle = this.theme.muted;
       this.text(this.fit(meta, maxW - used), x + used, y);
     }
   }
@@ -468,7 +468,7 @@ export class Renderer {
     const ctx = this.ctx;
     const r = clamp(3 * t.s, 1.5, 4);
     ctx.globalAlpha = alpha * 0.9;
-    ctx.fillStyle = theme.effect;
+    ctx.fillStyle = this.theme.effect;
     ctx.beginPath();
     ctx.arc(b.x + b.w - r * 2.2, b.y + b.h - r * 2.2, r, 0, Math.PI * 2);
     ctx.fill();
@@ -489,10 +489,10 @@ export class Renderer {
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.roundRect(b.x, b.y, b.w, b.h, radius);
-    ctx.fillStyle = fillOf(n, status);
+    ctx.fillStyle = fillOf(this.theme, n, status);
     ctx.fill();
     ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
-    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? changeColor[status].ink : lane ? theme.laneOutline : theme.regionOutline;
+    ctx.strokeStyle = p.selected === n.id ? this.theme.accent : status ? this.theme.change[status].ink : lane ? this.theme.laneOutline : this.theme.regionOutline;
     if (!lane) ctx.stroke();
     else if (4 * t.s < 1) {
       // Dashes finer than a pixel blend into a fainter line: drawn as one.
@@ -513,15 +513,15 @@ export class Renderer {
       const badges = (n.badges ?? []).join('  ');
       let reserve = 0;
       if (badges) {
-        this.font(12 * t.s, theme.sans, 700);
+        this.font(12 * t.s, this.theme.sans, 700);
         reserve = this.width(badges) + 18 * t.s;
-        ctx.fillStyle = theme.ink;
+        ctx.fillStyle = this.theme.ink;
         ctx.textAlign = 'right';
         this.text(badges, b.x + b.w - 10 * t.s, b.y + 17 * t.s);
         ctx.textAlign = 'left';
       }
-      this.font(size, code ? theme.mono : theme.sans, code ? 400 : 600);
-      ctx.fillStyle = theme.muted;
+      this.font(size, code ? this.theme.mono : this.theme.sans, code ? 400 : 600);
+      ctx.fillStyle = this.theme.muted;
       this.text(this.fit(n.title, b.w - 20 * t.s - reserve), b.x + 10 * t.s, b.y + 17 * t.s);
     }
     const inner = pathPos >= 0 ? p.xfs[pathPos] : this.model.interior(t, n, n);
@@ -539,11 +539,11 @@ export class Renderer {
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = this.theme.paper;
     ctx.fill();
     const status = p.diff?.status(n.id) ?? null;
     ctx.lineWidth = clamp(1.25 * Math.sqrt(t.s), 0.5, 1.4) + (status ? 0.5 : 0);
-    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? changeColor[status].ink : theme.outline;
+    ctx.strokeStyle = p.selected === n.id ? this.theme.accent : status ? this.theme.change[status].ink : this.theme.outline;
     ctx.stroke();
     if (r < 2.5) return;
     if (n.title === '+') {
@@ -555,8 +555,8 @@ export class Renderer {
       ctx.lineTo(cx, cy + a);
       ctx.stroke();
     } else {
-      this.font(r * 1.15, theme.sans, 600);
-      ctx.fillStyle = theme.ink;
+      this.font(r * 1.15, this.theme.sans, 600);
+      ctx.fillStyle = this.theme.ink;
       ctx.textAlign = 'center';
       this.text(n.title, cx, cy + r * 0.4);
       ctx.textAlign = 'left';
@@ -569,9 +569,9 @@ export class Renderer {
     if (size < 4.2) return;
     const ctx = this.ctx;
     ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
-    this.font(size, theme.mono);
+    this.font(size, this.theme.mono);
     // A new input or result is named in the colour of what was added.
-    ctx.fillStyle = status ? changeColor[status].ink : theme.muted;
+    ctx.fillStyle = status ? this.theme.change[status].ink : this.theme.muted;
     ctx.textAlign = 'center';
     this.text(this.fit(n.title, Math.max(b.w + 60 * t.s, 40)), b.x + b.w / 2, b.y + b.h / 2 + size * 0.35);
     ctx.textAlign = 'left';
@@ -595,21 +595,21 @@ export class Renderer {
         if (size < 4.5) {
           // Too small to read: a texture of lines that hints at the content.
           ctx.globalAlpha = alpha * 0.35;
-          ctx.fillStyle = r.heading ? '#b39b52' : theme.faint;
+          ctx.fillStyle = r.heading ? this.theme.headingTexture : this.theme.faint;
           ctx.fillRect(x, y + h * 0.45, Math.min((r.key.length + (r.value?.length ?? 0) + 3) * size * 0.6, (owner.cw ?? 100) * t.s - 20 * f), Math.max(size * 0.35, 0.6));
         } else if (r.heading) {
           ctx.globalAlpha = textAlpha;
-          this.font(10.5 * f, theme.sans, 700);
-          ctx.fillStyle = '#8a6d1f';
+          this.font(10.5 * f, this.theme.sans, 700);
+          ctx.fillStyle = this.theme.heading;
           this.text(r.key.toUpperCase(), x, y + h * 0.72);
         } else {
           ctx.globalAlpha = textAlpha;
-          this.font(size, theme.mono);
-          ctx.fillStyle = theme.ink;
+          this.font(size, this.theme.mono);
+          ctx.fillStyle = this.theme.ink;
           this.text(r.key, x, y + h * 0.72);
           if (r.value) {
             const kw = this.width(r.key);
-            ctx.fillStyle = theme.muted;
+            ctx.fillStyle = this.theme.muted;
             this.text(this.fit(` = ${r.value}`, (owner.cw ?? 300) * t.s - kw - 20 * f), x + kw, y + h * 0.72);
           }
         }
@@ -656,15 +656,15 @@ export class Renderer {
     if (alpha > 0.3 && t.s * 11 >= 6 && (x1 - x0 + y1 - y0) * t.s > 6) this.edgeHits.push({ edge: e, owner, container, pts: screen });
     // Settings and sizes are faint; conditions are dotted: neither is the data itself.
     const control = e.kind === 'control';
-    let color = control ? theme.context : e.kind === 'artifact' ? theme.artifact : e.kind === 'exec' ? theme.faintEdge : theme.edge;
+    let color = control ? this.theme.context : e.kind === 'artifact' ? this.theme.artifact : e.kind === 'exec' ? this.theme.faintEdge : this.theme.edge;
     let a = alpha * (control ? 0.8 : 0.95) * (dim ? 0.35 : 1);
     let width = control ? lw * 0.85 : lw;
     if (lit) {
-      color = theme.accent;
+      color = this.theme.accent;
       a = Math.max(alpha, 0.9);
       width = lw + 0.7;
     } else if (change === 'added') {
-      color = changeColor.added.ink;
+      color = this.theme.change.added.ink;
       a = Math.max(a, 0.9);
       width = lw + 0.6;
     } else if (change === 'faded') {
@@ -717,18 +717,18 @@ export class Renderer {
     const ctx = this.ctx;
     const lit = state === true;
     const size = Math.min(11 * t.s, 13.5);
-    this.font(size, theme.mono);
+    this.font(size, this.theme.mono);
     // Labels never overprint each other; the one for a highlighted edge wins.
     const r = { x: x - 1, y: y - size, w: this.width(e.label) + 2, h: size + 2 };
     if (!lit && placed.some(q => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h)) return;
     placed.push(r);
     ctx.globalAlpha = state === false ? alpha * 0.4 : change === 'faded' && !lit ? alpha * UNTOUCHED : alpha;
     ctx.lineWidth = 3;
-    ctx.strokeStyle = theme.labelHalo;
+    ctx.strokeStyle = this.theme.labelHalo;
     ctx.lineJoin = 'round';
     this.text(e.label, x, y, true);
     // Values read in ink; conditions stay muted like their dotted lines.
-    ctx.fillStyle = lit ? theme.accent : change === 'added' ? changeColor.added.ink : e.kind === 'control' ? theme.muted : theme.labelInk;
+    ctx.fillStyle = lit ? this.theme.accent : change === 'added' ? this.theme.change.added.ink : e.kind === 'control' ? this.theme.muted : this.theme.labelInk;
     this.text(e.label, x, y);
     ctx.globalAlpha = 1;
   }
@@ -746,8 +746,8 @@ export class Renderer {
     const bend = Math.max(24 * t.s, Math.abs(y1 - y0) / 2);
     const head = clamp(7 * Math.sqrt(t.s), 3, 8);
     ctx.globalAlpha = Math.max(alpha, 0.85);
-    ctx.strokeStyle = changeColor.removed.ink;
-    ctx.fillStyle = changeColor.removed.ink;
+    ctx.strokeStyle = this.theme.change.removed.ink;
+    ctx.fillStyle = this.theme.change.removed.ink;
     ctx.lineWidth = lw + 0.3;
     ctx.setLineDash([5, 4]);
     // The curve in steps fine enough to look smooth, so it can be cut to the screen.
@@ -769,11 +769,11 @@ export class Renderer {
     ctx.fill();
     if (r.label && t.s * 11 >= 4.5) {
       const size = Math.min(11 * t.s, 13.5);
-      this.font(size, theme.mono);
+      this.font(size, this.theme.mono);
       const mx = (x0 + x1) / 2;
       const my = (y0 + y1) / 2;
       ctx.lineWidth = 3;
-      ctx.strokeStyle = theme.labelHalo;
+      ctx.strokeStyle = this.theme.labelHalo;
       this.text(r.label, mx + 4, my, true);
       this.text(r.label, mx + 4, my);
     }
@@ -891,14 +891,14 @@ export class Renderer {
 export const fontSize = (px: number) => 10 * 2 ** (Math.round(4 * Math.log2(px / 10)) / 4);
 
 /** A block's colour, tinted by how a change touched it. */
-function fillOf(n: SceneNode, status: Status | null): string {
-  if (n.shape === 'glyph') return '#ffffff';
+function fillOf(theme: Theme, n: SceneNode, status: Status | null): string {
+  if (n.shape === 'glyph') return theme.paper;
   if (n.shape === 'region') {
-    const fill = n.kind === 'table' ? swatch('config').tint : swatch(n.kind === 'lane' ? 'lane' : 'region').fill;
-    return status ? mix(fill, changeColor[status].tint, 0.5) : fill;
+    const fill = n.kind === 'table' ? swatch(theme, 'config').tint : swatch(theme, n.kind === 'lane' ? 'lane' : 'region').fill;
+    return status ? mix(fill, theme.change[status].tint, 0.5) : fill;
   }
-  const fill = swatch(n.category).fill;
-  return status ? mix(fill, changeColor[status].tint, 0.7) : fill;
+  const fill = swatch(theme, n.category).fill;
+  return status ? mix(fill, theme.change[status].tint, 0.7) : fill;
 }
 
 function mix(a: string, b: string, t: number): string {
