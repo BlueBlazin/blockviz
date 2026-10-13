@@ -97,7 +97,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Dark mode** follows the system's setting, and switches with it while the page is open, unless you pick light or dark with the toolbar's switch (remembered; picking the system's own goes back to following it). The diagram keeps each role's hue, its lightness turned over, and the panels, code and downloads follow.
 - **Text stays readable**: names stay legible at any zoom, long names wrap onto two lines, and table rows never grow past the size of names. A file, folder, class or file on disk keeps its name however narrow its box, as long as the name fits it legibly (except inside the thumbnail of a closed block).
 - **Tidy arrows** (the switch beside the home button, off by default, remembered): all the values a block sends share one line that branches to each reader, each branch labelled where it arrives. Off, each value has its own line, labelled where it leaves.
-- **Legend** and **footer stats** (files, lines, blocks, analysis time).
+- **Legend** of what the project's diagram draws (its colours, kinds of arrow and marks; a change's colours when reading one), and **footer stats** (files, lines, blocks, analysis time).
 
 ## What becomes a block (all languages)
 

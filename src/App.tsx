@@ -10,7 +10,7 @@ import { traceValue } from './canvas/trace';
 import { ValuePanel } from './ui/ValuePanel';
 import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
-import type { Paint } from './canvas/renderer';
+import { drawnIn, type Paint } from './canvas/renderer';
 import { DARK, legend, LIGHT, swatch, type Theme } from './canvas/theme';
 import { blockName, ChangesPanel, RemovedDetails } from './ui/ChangesPanel';
 import { Highlights } from './core/highlights';
@@ -383,6 +383,8 @@ export default function App() {
   const node = loaded && selected !== null ? loaded.model.node(selected) : null;
   const stats = loaded?.scene.stats;
   const cut = loaded ? partial(loaded.project) : null;
+  // The legend lists only what this project's diagram draws.
+  const drawn = useMemo(() => (showLegend && loaded ? drawnIn(loaded.model.nodes) : null), [showLegend, loaded]);
   // Inside code reached through a call (… › block › attn): where that code is defined.
   const borrowed = useMemo(() => (loaded ? loaded.model.borrowedDefinition(view.path) : null), [loaded, view.path]);
 
@@ -497,26 +499,26 @@ export default function App() {
         {cut && <span className="partial" title={`Larger than blockviz reads in a browser (${LIMITS}): its code was read first, then its tests, then its documentation.`}>Partly shown: {cut}</span>}
       </div>
 
-      {showLegend && (
+      {drawn && (
         <aside className="legend" aria-label="Legend">
           <header><strong>Legend</strong><button className="icon" aria-label="Close legend" onClick={() => setShowLegend(false)}><X size={14} /></button></header>
           <div className="legend-grid">
-            {legend.map(([cat, label]) => <span key={cat}><i style={{ background: swatch(theme, cat).fill, borderColor: theme.outline }} />{label}</span>)}
+            {legend.filter(([cat]) => drawn.roles.has(cat)).map(([cat, label]) => <span key={cat}><i style={{ background: swatch(theme, cat).fill, borderColor: theme.outline }} />{label}</span>)}
           </div>
           <div className="legend-lines">
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.edge} strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.edge} /></svg>value flows into</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke={theme.context} strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill={theme.context} /></svg>decides whether it runs</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.artifact} strokeWidth="1.4" strokeDasharray="6 3" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.artifact} /></svg>file written → read</span>
-            <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.edge} strokeWidth="1.4" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.edge} /></svg>code executed</span>
-            <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill={theme.paper} stroke={theme.outline} /><path d="M13.5 7h7M17 3.5v7" stroke={theme.outline} /></svg>add (residual)</span>
-            <span><svg width="34" height="14"><circle cx="17" cy="7" r="3.5" fill={theme.effect} /></svg>has side effects</span>
+            {(drawn.edges.has('data') || drawn.edges.has('uses')) && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.edge} strokeWidth="1.4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.edge} /></svg>value flows into</span>}
+            {drawn.edges.has('control') && <span><svg width="34" height="10"><line x1="0" y1="5" x2="27" y2="5" stroke={theme.context} strokeWidth="1.2" strokeDasharray="1.5 2.5" /><path d="M27 2 L33 5 L27 8Z" fill={theme.context} /></svg>decides whether it runs</span>}
+            {drawn.edges.has('artifact') && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.artifact} strokeWidth="1.4" strokeDasharray="6 3" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.artifact} /></svg>file written → read</span>}
+            {drawn.edges.has('exec') && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.faintEdge} strokeWidth="1.4" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.faintEdge} /></svg>code executed</span>}
+            {drawn.add && <span><svg width="34" height="14"><circle cx="17" cy="7" r="6" fill={theme.paper} stroke={theme.outline} /><path d="M13.5 7h7M17 3.5v7" stroke={theme.outline} /></svg>add (residual)</span>}
+            {drawn.effects && <span><svg width="34" height="14"><circle cx="17" cy="7" r="3.5" fill={theme.effect} /></svg>has side effects</span>}
           </div>
-          {compare && (
+          {compare && compare.diff.changes.length > 0 && (
             <div className="legend-lines">
-              <span><i className="legend-box" style={{ background: theme.change.added.tint, borderColor: theme.change.added.ink }} />added</span>
-              <span><i className="legend-box" style={{ background: theme.change.changed.tint, borderColor: theme.change.changed.ink }} />changed</span>
-              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.change.added.ink} strokeWidth="2" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.change.added.ink} /></svg>new connection</span>
-              <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.change.removed.ink} strokeWidth="1.6" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.change.removed.ink} /></svg>removed connection</span>
+              {compare.diff.summary.added > 0 && <span><i className="legend-box" style={{ background: theme.change.added.tint, borderColor: theme.change.added.ink }} />added</span>}
+              {compare.diff.summary.changed > 0 && <span><i className="legend-box" style={{ background: theme.change.changed.tint, borderColor: theme.change.changed.ink }} />changed</span>}
+              {compare.diff.added.size > 0 && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.change.added.ink} strokeWidth="2" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.change.added.ink} /></svg>new connection</span>}
+              {compare.diff.removed.size > 0 && <span><svg width="34" height="10"><line x1="0" y1="5" x2="26" y2="5" stroke={theme.change.removed.ink} strokeWidth="1.6" strokeDasharray="5 4" /><path d="M26 1.5 L33 5 L26 8.5Z" fill={theme.change.removed.ink} /></svg>removed connection</span>}
               <span><i className="legend-count">3</i>changes inside</span>
               <span><i className="legend-box dashed" style={{ borderColor: theme.change.changed.ink }} />leads into changes</span>
             </div>

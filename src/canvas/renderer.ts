@@ -1,4 +1,4 @@
-import type { Edge, SceneNode } from '../core/types';
+import type { Edge, EdgeKind, SceneNode } from '../core/types';
 import { boxOf, clamp, intersects, rectLine, smoothstep, visibleRuns, type Box, type Xf } from './geometry';
 import type { RemovedEdge, SceneDiff, Status } from './diff';
 import type { SceneModel } from './model';
@@ -461,10 +461,7 @@ export class Renderer {
   }
 
   private effectsMark(n: SceneNode, b: Box, t: Xf, alpha: number) {
-    const fx = n.effects ?? [];
-    if (!fx.length || b.w < 30) return;
-    const loud = fx.some(e => /write|network|exec|mutat|distributed|process|raises|reads|filesystem|state/.test(e));
-    if (!loud) return;
+    if (b.w < 30 || !marked(n)) return;
     const ctx = this.ctx;
     const r = clamp(3 * t.s, 1.5, 4);
     ctx.globalAlpha = alpha * 0.9;
@@ -889,6 +886,25 @@ export class Renderer {
  * quarter of an octave apart, 10 px among them, so a name passes through a
  * few of them as the view zooms rather than a new one each frame. */
 export const fontSize = (px: number) => 10 * 2 ** (Math.round(4 * Math.log2(px / 10)) / 4);
+
+/** Whether a block's side effects are marked with a dot: ones that reach outside it. */
+const marked = (n: SceneNode) => !!n.effects?.some(e => /write|network|exec|mutat|distributed|process|raises|reads|filesystem|state/.test(e));
+
+/** What a scene draws, for its legend: the roles blocks are coloured by, the kinds of arrow, and whether there are residual adds and marked side effects. */
+export interface Drawn { roles: Set<string>; edges: Set<EdgeKind>; add: boolean; effects: boolean }
+
+export function drawnIn(nodes: SceneNode[]): Drawn {
+  const out: Drawn = { roles: new Set(), edges: new Set(), add: false, effects: false };
+  for (const n of nodes) {
+    // As `fillOf` colours them: boxes by their role, tables as settings.
+    if (n.shape === 'box') out.roles.add(n.category);
+    else if (n.shape === 'region' && n.kind === 'table') out.roles.add('config');
+    if (n.shape === 'glyph' && n.title === '+') out.add = true;
+    if (marked(n)) out.effects = true;
+    for (const e of n.edges ?? []) out.edges.add(e.kind);
+  }
+  return out;
+}
 
 /** A block's colour, tinted by how a change touched it. */
 function fillOf(theme: Theme, n: SceneNode, status: Status | null): string {

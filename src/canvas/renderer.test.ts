@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { balance, fontSize, nameParts } from './renderer';
+import type { SceneNode } from '../core/types';
+import { balance, drawnIn, fontSize, nameParts } from './renderer';
 
 describe('names', () => {
   it('break between words, never before an extension or inside separators', () => {
@@ -33,5 +34,22 @@ describe('font sizes', () => {
     }
     // An octave of zoom lays a name out at four sizes (and the next octave's first).
     expect(sizes.size).toBe(5);
+  });
+});
+
+describe('the legend', () => {
+  it('lists what a scene draws: the roles of its boxes, its tables as settings, its kinds of arrow, its adds and marked effects', () => {
+    const n = (id: number, over: Partial<SceneNode>): SceneNode => ({ id, kind: 'function', shape: 'box', category: 'function', title: 'f', x: 0, y: 0, w: 10, h: 10, ...over });
+    const drawn = drawnIn([
+      n(0, { kind: 'repo', category: 'repo', edges: [{ from: 1, to: 2, kind: 'artifact', points: [] }] }),
+      n(1, { kind: 'table', shape: 'region', category: 'io' }),
+      n(2, { kind: 'glyph', shape: 'glyph', category: 'op', title: '+' }),
+      n(3, { kind: 'lane', shape: 'region', category: 'attention', effects: ['prints'] }),
+      n(4, { category: 'class', effects: ['writes files'] }),
+    ]);
+    expect([...drawn.roles].sort()).toEqual(['class', 'config', 'repo']);
+    expect([...drawn.edges]).toEqual(['artifact']);
+    expect(drawn.add).toBe(true);
+    expect(drawn.effects).toBe(true);
   });
 });

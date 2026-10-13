@@ -145,6 +145,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .legend-grid span, .legend-lines span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .legend-grid i { width: 18px; height: 12px; border: 1.1px solid; border-radius: 3px; flex: none; }
 .legend-lines { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.legend-grid:empty, .legend-lines:empty { display: none; }
+.legend-grid:empty + .legend-lines { margin-top: 0; padding-top: 0; border-top: 0; }
 .legend p { margin: 10px 0 0; color: var(--faint); font-size: 11.5px; line-height: 1.45; }
 
 /* Inspector */
