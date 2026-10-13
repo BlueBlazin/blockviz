@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { Project, Scene, SceneNode } from '../core/types';
+import { SceneModel } from './model';
+import { Renderer } from './renderer';
 import { SvgPen } from './svg';
 
 /** Text 6 pixels a character wide. */
@@ -77,5 +80,24 @@ describe('drawing as SVG', () => {
       '</g>',
       '<rect x="0" y="-1" width="1" height="1" fill="#000000"/>',
     ]);
+  });
+});
+
+describe('a block as SVG', () => {
+  it('is drawn alone, with its name', () => {
+    const n = (id: number, title: string, extra: Partial<SceneNode>): SceneNode => ({ id, kind: 'function', shape: 'box', category: 'function', title, x: 0, y: 0, w: 10, h: 10, ...extra });
+    const nodes = [
+      n(0, 'repo', { kind: 'repo', children: [1, 2], w: 400, h: 200, cw: 400, ch: 200 }),
+      n(1, 'forward', { parent: 0, x: 10, y: 10, w: 180, h: 80 }),
+      n(2, 'backward', { parent: 0, x: 210, y: 10, w: 180, h: 80 }),
+    ];
+    const scene: Scene = { version: 1, title: 'repo', root: 0, nodes, files: [], diagnostics: [], stats: { files: 0, pythonFiles: 0, lines: 0, nodes: 3, maxDepth: 1 } };
+    const project: Project = { name: 'repo', source: 'test', files: [] };
+    const p = pen();
+    new Renderer(p, new SceneModel(scene, project)).drawBlock(nodes[1], { x: 2, y: 2, s: 1 }, { width: 200, height: 100, hover: null, selected: null, path: [], xfs: [] });
+    const svg = p.svg(200, 100);
+    expect(svg).toContain('>forward</text>');
+    expect(svg).not.toContain('backward');
+    expect(svg).toContain('<path d="M18 12H');
   });
 });

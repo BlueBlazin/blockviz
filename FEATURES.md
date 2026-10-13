@@ -47,6 +47,7 @@ Everything the app does today, grouped by what you'd use it for. The README expl
 - **Smooth flights** that zoom out, pan and zoom back in. Motion is reduced when the system asks for it.
 - **Clicks land on what you can see**: a block too small to make out is passed over for the one around it.
 - **Download** the current view as SVG, sharp at any size with its text kept as text, or as PNG. It is drawn by the same code as the screen, so it shows exactly what you see.
+- **Download a block alone** as SVG from its details panel, at the size its names read at: a block, a block a change removed (as it was), or the definition a followed value runs through, with the value's path lit.
 
 ## Phones and tablets
 

@@ -1,4 +1,6 @@
-import type { Pen } from './renderer';
+import { placement, READABLE } from './geometry';
+import type { SceneModel } from './model';
+import { Renderer, type Paint, type Pen } from './renderer';
 
 /**
  * Draws as a canvas does, into an SVG: the part of a canvas's 2D context the
@@ -215,4 +217,30 @@ export function svgOf(width: number, height: number, draw: (pen: SvgPen) => void
   const pen = new SvgPen((measurer ??= document.createElement('canvas').getContext('2d')!));
   draw(pen);
   return pen.svg(width, height);
+}
+
+/** The most pixels across a block is exported at: a larger one is drawn smaller, as a screen that size would show it. */
+const LARGEST = 4096;
+/** Room around a block, for the rings and badges drawn over its edge. */
+const MARGIN = 12;
+
+/**
+ * Block `id` alone as SVG, with its diagram at the size names are read at on
+ * screen; `paint` adds a change being read, or a value being followed.
+ */
+export function blockSvg(model: SceneModel, id: number, paint: Pick<Paint, 'diff' | 'trace'> = {}): string {
+  const n = model.node(id);
+  const owner = model.owner(n);
+  // The scale of the diagram the block is in at which its own diagram reads at READABLE.
+  const s = Math.min(owner && n.inner ? READABLE / placement(n, owner.cw ?? 1, owner.ch ?? 1).k : 1, LARGEST / Math.max(n.w, n.h));
+  const t = { x: MARGIN - n.x * s, y: MARGIN - n.y * s, s };
+  const width = Math.ceil(n.w * s) + 2 * MARGIN;
+  const height = Math.ceil(n.h * s) + 2 * MARGIN;
+  const p: Paint = { width, height, hover: null, selected: null, path: [], xfs: [], ...paint };
+  return svgOf(width, height, pen => {
+    const r = new Renderer(pen, model);
+    // The project itself is drawn as its diagram, as the view of all of it shows it.
+    if (n.id === model.root) r.draw({ ...p, path: [n.id], xfs: [t] });
+    else r.drawBlock(n, t, p);
+  });
 }

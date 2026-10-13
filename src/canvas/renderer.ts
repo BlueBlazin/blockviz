@@ -104,6 +104,15 @@ export class Renderer {
     this.interior(root, p.xfs[0], -1, 0, p, [root.id], 1);
   }
 
+  /** Draws block `n` alone, as `draw` would draw it in a diagram with transform `t`. */
+  drawBlock(n: SceneNode, t: Xf, p: Paint) {
+    this.hits = [];
+    this.edgeHits = [];
+    this.thumbnails = 0;
+    this.faded = 0;
+    this.node(n, boxOf(t, n), t, -1, -1, p, [], 1);
+  }
+
   // ----- containers ----------------------------------------------------------------
 
   private interior(owner: SceneNode, t: Xf, parentHit: number, pathPos: number, p: Paint, chain: number[], alpha: number) {

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, ExternalLink, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import type { Change, SceneDiff, Status } from '../canvas/diff';
 import type { SceneModel } from '../canvas/model';
@@ -133,7 +133,7 @@ export function ChangesPanel({ diff, info, size, current, onResize, onClose, onG
 }
 
 /** A block the change removed: what it was, where it was, and its code as it was. */
-export function RemovedDetails({ diff, change, baseHighlights, size, index, onResize, onClose, onShow, onStep }: {
+export function RemovedDetails({ diff, change, baseHighlights, size, index, onResize, onClose, onShow, onStep, onDownload }: {
   diff: SceneDiff;
   change: Change;
   baseHighlights: Highlights;
@@ -144,6 +144,8 @@ export function RemovedDetails({ diff, change, baseHighlights, size, index, onRe
   /** Shows the block it was in. */
   onShow: (id: number) => void;
   onStep: (delta: number) => void;
+  /** Saves the block as it was, alone, as SVG. */
+  onDownload: () => void;
 }) {
   const model = diff.base;
   const n = model.node(change.id);
@@ -162,6 +164,9 @@ export function RemovedDetails({ diff, change, baseHighlights, size, index, onRe
         </div>
         <div className="change-status"><span className="change-badge removed">Removed</span><span>from <button className="link" onClick={() => onShow(change.at)}>{diff.head.qualified(change.at)}</button></span></div>
         <ChangeSteps index={index} total={diff.changes.length} onStep={onStep} />
+        <div className="insp-actions">
+          <button onClick={onDownload} title="Download this block as it was, alone, as SVG"><Download size={13} />SVG</button>
+        </div>
         {span && model.fileBytes(span.file) && (
           <div className="insp-source">
             <label>{d.file}<span className="dim"> · {span.line === span.endLine ? `line ${span.line}` : `lines ${span.line}–${span.endLine}`} before</span></label>

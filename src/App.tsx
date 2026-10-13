@@ -5,12 +5,14 @@ import { droppedProject, exampleProject, folderProject, githubComparison, github
 import type { Comparison, Project, Scene } from './core/types';
 import { SceneDiff } from './canvas/diff';
 import { Engine, type EdgeRef, type ViewState } from './canvas/engine';
+import { blockSvg } from './canvas/svg';
 import { traceValue } from './canvas/trace';
 import { ValuePanel } from './ui/ValuePanel';
 import type { Insets } from './canvas/geometry';
 import { SceneModel } from './canvas/model';
+import type { Paint } from './canvas/renderer';
 import { changeColor, legend, swatch } from './canvas/theme';
-import { ChangesPanel, RemovedDetails } from './ui/ChangesPanel';
+import { blockName, ChangesPanel, RemovedDetails } from './ui/ChangesPanel';
 import { Highlights } from './core/highlights';
 import { clampPanel, DEFAULT_PANEL, Inspector, type PanelSize } from './ui/Inspector';
 import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
@@ -55,6 +57,12 @@ function download(blob: Blob | null, name: string) {
 function downloadSvg(svg: string, title: string) {
   const name = title.replace(/[\\/:*?"<>|\0-\x1f]+/g, '-').trim().slice(0, 80) || 'diagram';
   download(new Blob([svg], { type: 'image/svg+xml' }), `${name}.svg`);
+}
+
+/** Saves block `id` alone as SVG, named as the panels name it. */
+function downloadBlock(model: SceneModel, id: number, paint: Pick<Paint, 'diff' | 'trace'> = {}) {
+  const n = model.node(id);
+  downloadSvg(blockSvg(model, id, paint), n.title ? model.qualified(id) : blockName(model, n));
 }
 
 const storage = {
@@ -527,6 +535,7 @@ export default function App() {
           onGo={goTo}
           onPick={pick}
           onPeek={id => engine.current?.peek(id)}
+          onDownload={() => downloadBlock(loaded.model, node.id, { diff: compare?.diff })}
           compare={compare && { diff: compare.diff, baseHighlights: compare.baseHighlights, index: changeIndex, onStep: stepChange, onChange: goToChange }}
         />
       )}
@@ -542,6 +551,7 @@ export default function App() {
           onClose={() => setRemovedSel(null)}
           onShow={id => engine.current?.flyToNode(id)}
           onStep={stepChange}
+          onDownload={() => downloadBlock(compare.diff.base, removedSel)}
         />
       )}
 
@@ -568,6 +578,7 @@ export default function App() {
           onClose={() => setValue(null)}
           onPick={id => { setValue(null); pick(id); }}
           onPeek={id => engine.current?.peek(id)}
+          onDownload={id => downloadBlock(loaded.model, id, { diff: compare?.diff, trace: traced })}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { ArrowUpRight, Maximize2, X } from 'lucide-react';
+import { ArrowUpRight, Download, Maximize2, X } from 'lucide-react';
 import { useMemo, useState, type CSSProperties } from 'react';
 import type { SceneNode } from '../core/types';
 import type { SceneModel } from '../canvas/model';
@@ -103,7 +103,7 @@ function UsedBy({ model, id, onGo, onPeek }: { model: SceneModel; id: number; on
   );
 }
 
-export function Inspector({ model, highlights, node, hover, size, compare, onResize, onClose, onZoom, onGo, onPick, onPeek }: {
+export function Inspector({ model, highlights, node, hover, size, compare, onResize, onClose, onZoom, onGo, onPick, onPeek, onDownload }: {
   model: SceneModel;
   highlights: Highlights;
   node: SceneNode;
@@ -120,6 +120,8 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
   onPick: (id: number) => void;
   /** The pointer is on a line: point out its block in the diagram. */
   onPeek: (id: number | null) => void;
+  /** Saves the block alone as SVG. */
+  onDownload: () => void;
 }) {
   const owner = model.owner(node);
   const target = node.link ?? node.ref;
@@ -170,6 +172,7 @@ export function Inspector({ model, highlights, node, hover, size, compare, onRes
         <div className="insp-actions">
           {owner && <button onClick={onZoom}><Maximize2 size={13} />Zoom in</button>}
           {def && <button onClick={() => onGo(def.id)}><ArrowUpRight size={13} />Go to {def.kind === 'class' ? 'class' : 'definition'}<span className="dim">{def.title}</span></button>}
+          <button onClick={onDownload} title="Download this block alone as SVG"><Download size={13} />SVG</button>
         </div>
         <UsedBy key={node.id} model={model} id={node.id} onGo={onGo} onPeek={onPeek} />
         <List label="Inputs" values={node.inputs} />

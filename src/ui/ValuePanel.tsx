@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Download, X } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import type { Edge } from '../core/types';
 import type { SceneModel } from '../canvas/model';
@@ -23,7 +23,7 @@ function definition(model: SceneModel, id: number): number {
  * A value followed through its diagram: where it is made and every step that
  * reads it, in the order they are drawn. Each step is a link to it.
  */
-export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, onPeek }: {
+export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, onPeek, onDownload }: {
   model: SceneModel;
   owner: number;
   edges: ReadonlySet<Edge>;
@@ -32,6 +32,8 @@ export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, 
   onClose: () => void;
   onPick: (id: number) => void;
   onPeek: (id: number | null) => void;
+  /** Saves a definition alone as SVG, the value's path lit in it. */
+  onDownload: (id: number) => void;
 }) {
   const list = [...edges];
   // Ports and branches only pass the value on; the steps are what read and make it.
@@ -56,6 +58,9 @@ export function ValuePanel({ model, owner, edges, start, size, onClose, onPick, 
         </header>
         <h2 className="mono">{start.label || 'unnamed value'}</h2>
         <p className="insp-doc">In {model.qualified(definition(model, owner))}. Its path is highlighted in the diagram.</p>
+        <div className="insp-actions">
+          <button onClick={() => onDownload(definition(model, owner))} title="Download this definition alone as SVG, the value's path lit in it"><Download size={13} />SVG</button>
+        </div>
         <div className="insp-field">
           <label>Comes from</label>
           <div className="uses" onMouseLeave={() => onPeek(null)}>{sources.map(row)}</div>
