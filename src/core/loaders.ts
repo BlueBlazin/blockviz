@@ -1,5 +1,5 @@
 import { browserCache, type RepoCache, type SavedFile, type SavedRepo } from './cache';
-import type { CompareInfo, Comparison, FileChange, InputFile, Project } from './types';
+import type { CompareInfo, Comparison, FileChange, InputFile, LeftOut, Project } from './types';
 
 // Keep in step with `IGNORED_DIRS` in crates/blockviz-core/src/project.rs.
 const IGNORED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.idea', '.vscode', '.ipynb_checkpoints', 'dist', 'build', 'target', '.next', '.cache', 'site-packages', '.eggs', '.turbo', '.nuxt', '.svelte-kit', '.output', '.vercel', '.parcel-cache', '.yarn', 'bower_components', 'storybook-static']);
@@ -15,6 +15,55 @@ export function ignoredPath(path: string): boolean {
 
 const wantsText = (path: string, size: number) => size <= MAX_FILE && !BINARY.test(path);
 
+/** Test code. Keep in step with `is_test_path` in crates/blockviz-core/src/project.rs. */
+export function isTestPath(path: string): boolean {
+  const base = path.slice(path.lastIndexOf('/') + 1);
+  return path.split('/').slice(0, -1).some(d => TEST_DIRS.has(d))
+    || base.startsWith('test_') || base.endsWith('_test.py') || base.endsWith('_test.go') || base === 'conftest.py'
+    || ['.test.', '.spec.', '-spec.', '.e2e.'].some(s => base.includes(s));
+}
+const TEST_DIRS = new Set(['tests', 'test', 'testing', '__tests__', 'spec', 'specs', 'e2e', '__mocks__', 'test-d']);
+const DOC_DIRS = new Set(['docs', 'doc', 'documentation']);
+
+/** Where a file comes in the order a project's limits are spent: its code (0),
+ * then its tests (1), then its documentation (2). */
+const rank = (path: string) => (path.split('/').slice(0, -1).some(d => DOC_DIRS.has(d)) ? 2 : isTestPath(path) ? 1 : 0);
+
+/**
+ * The files of a project read in a browser: at most `max`, its code first
+ * (then its tests, then its documentation, each by path), so that a large
+ * repository shows its code rather than whatever sorts first. In that order,
+ * with how many more there are.
+ */
+export function firstFiles<T extends { path: string }>(entries: T[], max = MAX_FILES): { first: T[]; more: number } {
+  const ranked = entries
+    .filter(e => !ignoredPath(e.path))
+    .map(e => ({ e, r: rank(e.path) }))
+    .sort((a, b) => a.r - b.r || (a.e.path < b.e.path ? -1 : a.e.path > b.e.path ? 1 : 0))
+    .map(x => x.e);
+  return { first: ranked.slice(0, max), more: Math.max(0, ranked.length - max) };
+}
+
+/** Which of `files` (as `firstFiles` orders them) have their text read: each
+ * up to MAX_FILE, and `max` bytes in all, code first; and how many text files
+ * go without for want of room. */
+export function readable<T extends { path: string; size: number }>(files: T[], max = MAX_TOTAL): { read: Set<T>; unread: number } {
+  const read = new Set<T>();
+  let total = 0;
+  let unread = 0;
+  for (const f of files) {
+    if (!wantsText(f.path, f.size)) continue;
+    if (total + f.size > max) unread++;
+    else {
+      total += f.size;
+      read.add(f);
+    }
+  }
+  return { read, unread };
+}
+
+const leftOut = (files: number, texts: number): LeftOut | undefined => (files || texts ? { files, texts } : undefined);
+
 export type Progress = (message: string, fraction?: number) => void;
 
 /** karpathy/nanoGPT, bundled as an example. */
@@ -23,41 +72,42 @@ export async function exampleProject(): Promise<Project> {
   return { name: 'nanoGPT', files: [...files].sort((a, b) => a.path.localeCompare(b.path)), source: 'github.com/karpathy/nanoGPT' };
 }
 
-async function readFiles(entries: { path: string; file: File }[], progress: Progress): Promise<InputFile[]> {
+/** A local project's files, within its limits, in the order they were found. */
+async function readFiles(entries: { path: string; file: () => Promise<File> }[], progress: Progress): Promise<Pick<Project, 'files' | 'leftOut'>> {
+  const { first, more } = firstFiles(entries);
+  const found = new Map(entries.map((e, i) => [e, i]));
+  const files = await Promise.all(first.map(async e => {
+    const file = await e.file();
+    return { e, path: e.path, file, size: file.size };
+  }));
+  const { read, unread } = readable(files);
+  files.sort((a, b) => found.get(a.e)! - found.get(b.e)!);
   const out: InputFile[] = [];
-  let total = 0;
-  const kept = entries.filter(e => !ignoredPath(e.path)).slice(0, MAX_FILES);
-  for (let i = 0; i < kept.length; i++) {
-    const { path, file } = kept[i];
-    if (i % 25 === 0) progress(`Reading files… ${i}/${kept.length}`, i / kept.length);
-    if (wantsText(path, file.size) && total + file.size <= MAX_TOTAL) {
-      total += file.size;
-      out.push({ path, text: await file.text(), bytes: file.size });
-    } else {
-      out.push({ path, bytes: file.size });
-    }
+  for (let i = 0; i < files.length; i++) {
+    const { path, file } = files[i];
+    if (i % 25 === 0) progress(`Reading files… ${i}/${files.length}`, i / files.length);
+    out.push(read.has(files[i]) ? { path, text: await file.text(), bytes: file.size } : { path, bytes: file.size });
   }
-  return out;
+  return { files: out, leftOut: leftOut(more, unread) };
 }
 
 /** From `<input type="file" webkitdirectory>`. */
 export async function folderProject(list: FileList, progress: Progress): Promise<Project> {
-  const entries = Array.from(list).map(file => ({ path: (file as File & { webkitRelativePath: string }).webkitRelativePath || file.name, file }));
+  const entries = Array.from(list).map(file => ({ path: (file as File & { webkitRelativePath: string }).webkitRelativePath || file.name, file: async () => file }));
   // Files picked without their folder (phones can't pick folders) have bare names.
   const first = entries[0]?.path ?? '';
   const name = first.includes('/') ? first.split('/')[0] : entries.length === 1 ? first : 'files';
-  return { name, files: await readFiles(entries, progress), source: 'local folder' };
+  return { name, ...(await readFiles(entries, progress)), source: 'local folder' };
 }
 
 /** From a drag-and-drop of files and/or folders. */
 export async function droppedProject(items: DataTransferItemList, progress: Progress): Promise<Project> {
-  const entries: { path: string; file: File }[] = [];
+  // Every file is listed before any is opened, so that the limits are spent on the code.
+  const entries: { path: string; file: () => Promise<File> }[] = [];
   const walk = async (entry: FileSystemEntry, prefix: string): Promise<void> => {
-    if (entries.length >= MAX_FILES) return;
     const path = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isFile) {
-      const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej));
-      entries.push({ path, file });
+      entries.push({ path, file: () => new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej)) });
     } else if (entry.isDirectory && !IGNORED.has(entry.name)) {
       const reader = (entry as FileSystemDirectoryEntry).createReader();
       for (;;) {
@@ -71,7 +121,7 @@ export async function droppedProject(items: DataTransferItemList, progress: Prog
   for (const r of roots) await walk(r, '');
   progress(`Reading ${entries.length} files…`);
   const name = roots.length === 1 && roots[0].isDirectory ? roots[0].name : 'dropped files';
-  return { name, files: await readFiles(entries, progress), source: 'dropped files' };
+  return { name, ...(await readFiles(entries, progress)), source: 'dropped files' };
 }
 
 /** A GitHub location: a repository (a branch, a folder), a pull request, or two versions compared. */
@@ -180,7 +230,7 @@ function repoKey(ref: GitHubRef): string {
 const plainFiles = (files: SavedFile[]): InputFile[] => files.map(({ path, text, bytes }) => (text === undefined ? { path, bytes } : { path, text, bytes }));
 
 function fromSaved(r: SavedRepo): Project {
-  return { name: r.name, files: plainFiles(r.files), source: r.source, description: r.description };
+  return { name: r.name, files: plainFiles(r.files), source: r.source, description: r.description, leftOut: r.leftOut };
 }
 
 function comparisonOf(r: SavedRepo): Comparison {
@@ -214,12 +264,18 @@ async function listTree(api: string, rev: string, prefix: string, what: string, 
   const tree = await gh<{ tree: { path: string; type: string; size?: number; sha?: string }[]; truncated: boolean }>(`${api}/git/trees/${refPath(rev)}?recursive=1`, what, signal);
   return tree.tree
     .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && !ignoredPath(t.path))
-    .slice(0, MAX_FILES)
     .map(t => ({ path: t.path.slice(prefix.length), full: t.path, size: t.size ?? 0, sha: t.sha }));
 }
 
-/** Texts not yet `known` among `blobs` (what downloading them will fetch). */
-const unknown = (blobs: Blob[], known: Map<string, string>) => blobs.filter(b => wantsText(b.path, b.size) && !(b.sha && known.has(b.sha)));
+/** A version's files within its limits: those kept, those whose text is read, and what is left out. */
+function plan(blobs: Blob[]): { kept: Blob[]; read: Set<Blob>; leftOut?: LeftOut } {
+  const { first, more } = firstFiles(blobs);
+  const { read, unread } = readable(first);
+  return { kept: first, read, leftOut: leftOut(more, unread) };
+}
+
+/** Texts to read not yet `known` (what downloading them will fetch). */
+const unknown = (read: Set<Blob>, known: Map<string, string>) => [...read].filter(b => !(b.sha && known.has(b.sha)));
 
 /** How long to wait before trying a failed download again (twice). */
 const RETRY_MS = [250, 1000];
@@ -241,23 +297,18 @@ async function fetchText(url: string, signal?: AbortSignal): Promise<string | un
 }
 
 /**
- * The files of `blobs` from the first of `raws` (raw.githubusercontent.com
- * prefixes) that has each; texts already `known` by their hash are reused,
- * and what is downloaded becomes known. `tick` counts each download.
+ * The files of `blobs`, the texts of those to `read` from the first of `raws`
+ * (raw.githubusercontent.com prefixes) that has each; texts already `known`
+ * by their hash are reused, and what is downloaded becomes known. `tick`
+ * counts each download.
  */
-async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, string>, tick: () => void, signal?: AbortSignal): Promise<SavedFile[]> {
+async function fetchFiles(raws: string[], blobs: Blob[], read: Set<Blob>, known: Map<string, string>, tick: () => void, signal?: AbortSignal): Promise<SavedFile[]> {
   const files: SavedFile[] = [];
-  let total = 0;
-  const textual = blobs.filter(f => wantsText(f.path, f.size));
+  const textual = blobs.filter(f => read.has(f));
   const worker = async () => {
     for (;;) {
       const f = textual.shift();
       if (!f) return;
-      if (total + f.size > MAX_TOTAL) {
-        files.push({ path: f.path, bytes: f.size, sha: f.sha });
-        continue;
-      }
-      total += f.size;
       const kept = f.sha ? known.get(f.sha) : undefined;
       if (kept !== undefined) {
         files.push({ path: f.path, text: kept, bytes: f.size, sha: f.sha });
@@ -275,7 +326,7 @@ async function fetchFiles(raws: string[], blobs: Blob[], known: Map<string, stri
   };
   // A worker that fails (or is aborted) leaves the others nothing more to fetch.
   await Promise.all(Array.from({ length: 12 }, () => worker().catch(e => { textual.length = 0; throw e; })));
-  for (const f of blobs) if (!wantsText(f.path, f.size)) files.push({ path: f.path, bytes: f.size, sha: f.sha });
+  for (const f of blobs) if (!read.has(f)) files.push({ path: f.path, bytes: f.size, sha: f.sha });
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -296,10 +347,10 @@ async function download(ref: GitHubRef, key: string, known: Map<string, string>,
   const info = await gh<{ default_branch: string; name: string; description?: string | null }>(api, `public repository ${repo}`, signal);
   const branch = ref.branch ?? info.default_branch;
   const prefix = ref.path ? `${ref.path.replace(/\/$/, '')}/` : '';
-  const blobs = await listTree(api, branch, prefix, `branch ${branch} in ${repo}`, signal);
-  const files = await fetchFiles([`https://raw.githubusercontent.com/${repo}/${refPath(branch)}`], blobs, known, counter(unknown(blobs, known).length, progress), signal);
+  const { kept, read, leftOut } = plan(await listTree(api, branch, prefix, `branch ${branch} in ${repo}`, signal));
+  const files = await fetchFiles([`https://raw.githubusercontent.com/${repo}/${refPath(branch)}`], kept, read, known, counter(unknown(read, known).length, progress), signal);
   const name = ref.path ? ref.path.split('/').pop()! : info.name;
-  return { key, name, files, source: `github.com/${repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined, saved: now() };
+  return { key, name, files, leftOut, source: `github.com/${repo}${ref.path ? `/${ref.path}` : ''}`, description: ref.path ? undefined : info.description ?? undefined, saved: now() };
 }
 
 interface PullJson {
@@ -362,14 +413,16 @@ async function downloadComparison(ref: GitHubRef, key: string, known: Map<string
     listTree(api, info.baseSha, '', `commit ${info.baseSha.slice(0, 7)} in ${repo}`, signal),
     listTree(api, info.headSha, '', `commit ${info.headSha.slice(0, 7)} in ${repo}`, signal),
   ]);
-  const headShas = new Set(headBlobs.map(b => b.sha));
-  const missing = unknown(headBlobs, known).length + unknown(baseBlobs, known).filter(b => !headShas.has(b.sha)).length;
+  const [after, before] = [plan(headBlobs), plan(baseBlobs)];
+  const headShas = new Set([...after.read].map(b => b.sha));
+  const missing = unknown(after.read, known).length + unknown(before.read, known).filter(b => !headShas.has(b.sha)).length;
   const tick = counter(missing, progress);
-  const head = await fetchFiles(raws(info.headSha, fork), headBlobs, known, tick, signal);
-  const base = await fetchFiles(raws(info.baseSha), baseBlobs, known, tick, signal);
+  const head = await fetchFiles(raws(info.headSha, fork), after.kept, after.read, known, tick, signal);
+  const base = await fetchFiles(raws(info.baseSha), before.kept, before.read, known, tick, signal);
+  // What changed, of all the files: a file left out of one version is not new in the other.
   info.files = fileChanges(baseBlobs, headBlobs, cmp.files ?? []);
   const source = ref.pull !== undefined ? `github.com/${repo}/pull/${ref.pull}` : `github.com/${repo}/compare/${info.title}`;
-  return { key, name, description, source, files: head, base, compare: info, saved: now() };
+  return { key, name, description, source, files: head, base, leftOut: after.leftOut, compare: info, saved: now() };
 }
 
 /** How each file differs between the two versions, by content hash; GitHub's

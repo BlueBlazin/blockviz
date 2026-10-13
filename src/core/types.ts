@@ -72,7 +72,10 @@ export interface Scene {
 }
 
 export interface InputFile { path: string; text?: string; bytes: number }
-export interface Project { name: string; files: InputFile[]; source: string; description?: string }
+/** What a project's limits left out: files not read at all, and files read
+ * without their text because the project's text in all reached its limit. */
+export interface LeftOut { files: number; texts: number }
+export interface Project { name: string; files: InputFile[]; source: string; description?: string; leftOut?: LeftOut }
 
 /** How a file differs between the two versions compared. */
 export type FileChange = { path: string; status: 'added' | 'removed' | 'modified' | 'renamed'; previous?: string };

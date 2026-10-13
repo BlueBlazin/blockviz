@@ -1,4 +1,4 @@
-import type { CompareInfo, InputFile } from './types';
+import type { CompareInfo, InputFile, LeftOut } from './types';
 
 /** A file as downloaded, with the hash GitHub names its content by. */
 export interface SavedFile extends InputFile { sha?: string }
@@ -13,6 +13,8 @@ export interface SavedRepo {
   files: SavedFile[];
   base?: SavedFile[];
   compare?: CompareInfo;
+  /** What the limits left out of the files (the head's, of a comparison). */
+  leftOut?: LeftOut;
   /** When it was downloaded or last checked against GitHub (ms since the epoch). */
   saved: number;
 }

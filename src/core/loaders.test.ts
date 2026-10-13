@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memoryCache } from './cache';
-import { fileChanges, githubComparison, githubProject, guessFilename, ignoredPath, isComparison, parseGitHub, pastedProject } from './loaders';
+import { fileChanges, firstFiles, githubComparison, githubProject, guessFilename, ignoredPath, isComparison, isTestPath, parseGitHub, pastedProject, readable } from './loaders';
 
 describe('pasted code', () => {
   it('is Python unless it uses JavaScript syntax', () => {
@@ -40,6 +40,27 @@ describe('ignored paths', () => {
   });
 });
 
+describe('limits', () => {
+  it('spend the files on code first, then tests, then documentation', () => {
+    const paths = ['docs/a.md', 'tests/test_a.py', 'src/b.py', 'README.md', 'src/a_test.go', 'src/a.py', 'node_modules/x.js'];
+    const { first, more } = firstFiles(paths.map(path => ({ path })), 4);
+    expect(first.map(f => f.path)).toEqual(['README.md', 'src/a.py', 'src/b.py', 'src/a_test.go']);
+    expect(more).toBe(2);
+  });
+
+  it('read code before tests and documentation, as far as the text in all allows', () => {
+    const files = [{ path: 'src/a.py', size: 6 }, { path: 'src/logo.png', size: 1 }, { path: 'tests/t.py', size: 3 }, { path: 'docs/d.md', size: 3 }];
+    const { read, unread } = readable(files, 9);
+    expect([...read].map(f => f.path)).toEqual(['src/a.py', 'tests/t.py']);
+    expect(unread).toBe(1);
+  });
+
+  it('tell test code as the analyzer does', () => {
+    for (const p of ['tests/x.py', 'pkg/test_x.py', 'pkg/x_test.go', 'conftest.py', 'src/app.spec.ts', 'web/__tests__/a.js']) expect(isTestPath(p)).toBe(true);
+    for (const p of ['src/testing_utils.py', 'src/attest.py', 'src/contest/x.py']) expect(isTestPath(p)).toBe(false);
+  });
+});
+
 describe('GitHub repositories', () => {
   /** A fake GitHub serving `files` (path → text); `sha` names each file's content.
    * `drops[path]` downloads of a file fail with a network error. */
@@ -69,6 +90,19 @@ describe('GitHub repositories', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it('say what a repository too large to read whole leaves out, and keep saying it', async () => {
+    const files: Record<string, string> = { 'docs/guide.md': '# Guide', 'tests/test_a.py': 'pass' };
+    for (let i = 0; i < 4003; i++) files[`src/m${String(i).padStart(4, '0')}.py`] = `x = ${i}`;
+    github(files);
+    const cache = memoryCache();
+    const p = await githubProject('github.com/o/r', () => {}, { cache, now: () => 0 });
+    // The code is read; the three last modules by path, the test and the guide are left out.
+    expect(p.files).toHaveLength(4000);
+    expect(p.files.every(f => f.path.startsWith('src/') && f.text !== undefined)).toBe(true);
+    expect(p.leftOut).toEqual({ files: 5, texts: 0 });
+    expect((await githubProject('github.com/o/r', () => {}, { cache, now: () => 1 })).leftOut).toEqual({ files: 5, texts: 0 });
   });
 
   it('opens again from the saved copy without downloading', async () => {
