@@ -446,10 +446,13 @@ impl<'s> Lower<'s> {
         for v in &d.declarations {
             // A single declarator speaks for the whole statement (and its comments).
             let span = if d.declarations.len() == 1 { span } else { v.span };
+            // `let x;` declares a name as `let x: T;` does, with no value yet.
             let Some(init) = &v.init else {
-                if let Some(t) = &v.type_annotation {
-                    out.push(Stmt::AnnAssign(StmtAnnAssign { target: Box::new(self.pattern(&v.id)), annotation: Box::new(self.type_expr(&t.type_annotation)), value: None, range: r(span) }));
-                }
+                let annotation = match &v.type_annotation {
+                    Some(t) => self.type_expr(&t.type_annotation),
+                    None => Expr::Other(atom(Span::new(v.id.span().end, v.id.span().end))),
+                };
+                out.push(Stmt::AnnAssign(StmtAnnAssign { target: Box::new(self.pattern(&v.id)), annotation: Box::new(annotation), value: None, range: r(span) }));
                 continue;
             };
             // `var app = exports = module.exports = express()`: the variable holds
