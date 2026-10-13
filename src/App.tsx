@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, Download, FolderOpen, GitPullRequest, Home, Info, Link, Maximize, Minus, Plus, Search as SearchIcon, Split, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Download, FolderOpen, GitPullRequest, Home, Info, Link, Maximize, Minus, Moon, Plus, Search as SearchIcon, Split, Sun, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Analyzer } from './core/analyzer';
 import { droppedProject, exampleProject, folderProject, githubComparison, githubProject, isComparison, MAX_FILES, MAX_TOTAL, parseGitHub, pastedProject, type Progress } from './core/loaders';
@@ -19,7 +19,8 @@ import { OpenDialog, type OpenRequest } from './ui/OpenDialog';
 import { Search } from './ui/Search';
 import { Breadcrumbs } from './ui/Breadcrumbs';
 import { hashParam, hashParams, Navigation, pushProject } from './ui/navigation';
-import { DARK_SCHEME, NARROW, useMedia } from './ui/media';
+import { NARROW } from './ui/media';
+import { toggleScheme, useDark } from './ui/scheme';
 import { Store } from './ui/store';
 
 /** A change being read: both versions of the code and how the head (on screen) differs from the base. */
@@ -125,8 +126,9 @@ export default function App() {
     storage.set('blockviz.trunks', on ? '1' : '');
   };
   const [copied, setCopied] = useState(false);
-  // The diagram is drawn in the system's light or dark mode, as the page's CSS is.
-  const theme = useMedia(DARK_SCHEME) ? DARK : LIGHT;
+  // The diagram is drawn light or dark, as the page is.
+  const dark = useDark();
+  const theme = dark ? DARK : LIGHT;
   const themeRef = useRef(theme);
   themeRef.current = theme;
   useEffect(() => engine.current?.setTheme(theme), [theme]);
@@ -464,6 +466,7 @@ export default function App() {
             PNG
           </button>
         </div>
+        <button className="icon" title={dark ? 'Light mode' : 'Dark mode'} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleScheme}>{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
       </div>
 
       <div className="zoombar">

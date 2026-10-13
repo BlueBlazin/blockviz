@@ -7,6 +7,8 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#16181c" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="Explore any codebase as nested architecture diagrams you can zoom into. Runs locally in your browser with Rust and WebAssembly." />
+    <!-- Light or dark as the reader chose (src/ui/scheme.ts), before the page is first drawn. -->
+    <script>try { const s = localStorage.getItem("blockviz.scheme"); if (s === "light" || s === "dark") document.documentElement.dataset.scheme = s; } catch {}</script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>blockviz</title>
   </head>

@@ -1,104 +1,64 @@
 :root {
+  /* Light or dark as the system is set, unless the reader chose (`data-scheme`,
+     src/ui/scheme.ts): every colour is light-dark(its light value, its dark value). */
   color-scheme: light dark;
   /* The page and the diagram's background (keep in step with `background` in src/canvas/theme.ts). */
-  --bg: #ffffff;
+  --bg: light-dark(#ffffff, #16181c);
   /* Bars floating over the diagram. */
-  --glass: rgba(255, 255, 255, 0.92);
-  --ink: #17191d;
-  --ink-strong: #000000;
-  --muted: #5d636e;
-  --faint: #8d939d;
-  --line: #e4e6ea;
-  --line-strong: #d3d6db;
-  --panel: #ffffff;
-  --hover: #f3f4f6;
-  --accent: #2563eb;
+  --glass: light-dark(rgba(255, 255, 255, 0.92), rgba(22, 24, 28, 0.9));
+  --ink: light-dark(#17191d, #e6e8eb);
+  --ink-strong: light-dark(#000000, #ffffff);
+  --muted: light-dark(#5d636e, #a3a9b3);
+  --faint: light-dark(#8d939d, #7c838d);
+  --line: light-dark(#e4e6ea, #2d3138);
+  --line-strong: light-dark(#d3d6db, #3d424a);
+  --panel: light-dark(#ffffff, #1d2025);
+  --hover: light-dark(#f3f4f6, #272b31);
+  --accent: light-dark(#2563eb, #5b9bff);
   /* What is current or selected in a list, and a link to a place. */
-  --accent-bg: #eef3fe;
-  --accent-bg-strong: #e1eafd;
-  --chip: #f3f4f6;
-  --chip-ink: #343840;
+  --accent-bg: light-dark(#eef3fe, #1b2a45);
+  --accent-bg-strong: light-dark(#e1eafd, #22365a);
+  --chip: light-dark(#f3f4f6, #272b31);
+  --chip-ink: light-dark(#343840, #c9cdd3);
   /* Text on a strong colour: a file's mark, a count. */
-  --on-strong: #ffffff;
+  --on-strong: light-dark(#ffffff, #101215);
   /* A table's headings, as the diagram draws them. */
-  --heading: #8a6d1f;
-  --code-bg: #f8f9fa;
-  --code-ink: #1f2328;
-  --code-no: #a3a9b2;
-  --code-hover: #eef1f5;
-  --code-marked: #e3ebfd;
-  --code-gap: #f0f2f5;
-  --scrim: rgba(250, 250, 251, 0.6);
-  --error-bg: #fff4f2;
-  --error-line: #f3cbc5;
-  --error-ink: #8a2a1d;
-  --logo-1: #fbdcbc;
-  --logo-2: #c6e5f5;
-  --logo-3: #eff3c4;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 6px 20px rgba(16, 24, 40, 0.07);
-  --shadow-large: 0 24px 60px rgba(16, 24, 40, 0.18);
+  --heading: light-dark(#8a6d1f, #d1ae55);
+  --code-bg: light-dark(#f8f9fa, #181b1f);
+  --code-ink: light-dark(#1f2328, #e6edf3);
+  --code-no: light-dark(#a3a9b2, #5c636d);
+  --code-hover: light-dark(#eef1f5, #22262c);
+  --code-marked: light-dark(#e3ebfd, #1b2a45);
+  --code-gap: light-dark(#f0f2f5, #1f2328);
+  --scrim: light-dark(rgba(250, 250, 251, 0.6), rgba(10, 11, 13, 0.55));
+  --error-bg: light-dark(#fff4f2, #3a1d1b);
+  --error-line: light-dark(#f3cbc5, #6b2b26);
+  --error-ink: light-dark(#8a2a1d, #ffb4a9);
+  /* The logo's blocks, in the diagram's colours. */
+  --logo-1: light-dark(#fbdcbc, #5d462e);
+  --logo-2: light-dark(#c6e5f5, #314854);
+  --logo-3: light-dark(#eff3c4, #545734);
+  --shadow: 0 1px 2px light-dark(rgba(16, 24, 40, 0.04), rgba(0, 0, 0, 0.3)), 0 6px 20px light-dark(rgba(16, 24, 40, 0.07), rgba(0, 0, 0, 0.35));
+  --shadow-large: 0 24px 60px light-dark(rgba(16, 24, 40, 0.18), rgba(0, 0, 0, 0.55));
   --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, sans-serif;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   /* A change being read (keep in step with `change` in src/canvas/theme.ts). */
-  --added: #1a7f37;
-  --added-bg: #e6ffec;
-  --changed: #9a6700;
-  --changed-strong: #bf8700;
-  --changed-bg: #fff8c5;
-  --removed: #cf222e;
-  --removed-bg: #ffebe9;
-  --renamed: #8250df;
+  --added: light-dark(#1a7f37, #3fb950);
+  --added-bg: light-dark(#e6ffec, rgba(46, 160, 67, 0.18));
+  --changed: light-dark(#9a6700, #d29922);
+  --changed-strong: light-dark(#bf8700, #bb8009);
+  --changed-bg: light-dark(#fff8c5, rgba(187, 128, 9, 0.2));
+  --removed: light-dark(#cf222e, #f85149);
+  --removed-bg: light-dark(#ffebe9, rgba(248, 81, 73, 0.17));
+  --renamed: light-dark(#8250df, #a371f7);
   font-family: var(--ui);
   font-size: 13px;
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
 }
-/* Dark mode, when the system is set to it. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181c;
-    --glass: rgba(22, 24, 28, 0.9);
-    --ink: #e6e8eb;
-    --ink-strong: #ffffff;
-    --muted: #a3a9b3;
-    --faint: #7c838d;
-    --line: #2d3138;
-    --line-strong: #3d424a;
-    --panel: #1d2025;
-    --hover: #272b31;
-    --accent: #5b9bff;
-    --accent-bg: #1b2a45;
-    --accent-bg-strong: #22365a;
-    --chip: #272b31;
-    --chip-ink: #c9cdd3;
-    --on-strong: #101215;
-    --heading: #d1ae55;
-    --code-bg: #181b1f;
-    --code-ink: #e6edf3;
-    --code-no: #5c636d;
-    --code-hover: #22262c;
-    --code-marked: #1b2a45;
-    --code-gap: #1f2328;
-    --scrim: rgba(10, 11, 13, 0.55);
-    --error-bg: #3a1d1b;
-    --error-line: #6b2b26;
-    --error-ink: #ffb4a9;
-    --logo-1: #5f462c;
-    --logo-2: #2f4957;
-    --logo-3: #555932;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
-    --shadow-large: 0 24px 60px rgba(0, 0, 0, 0.55);
-    --added: #3fb950;
-    --added-bg: rgba(46, 160, 67, 0.18);
-    --changed: #d29922;
-    --changed-strong: #bb8009;
-    --changed-bg: rgba(187, 128, 9, 0.2);
-    --removed: #f85149;
-    --removed-bg: rgba(248, 81, 73, 0.17);
-    --renamed: #a371f7;
-  }
-}
+:root[data-scheme="light"] { color-scheme: light; }
+:root[data-scheme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 /* The page never scrolls or bounces; panels scroll inside themselves. */
@@ -269,34 +229,21 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .code .ln.gap:hover { color: var(--accent); }
 .code .ln.marked.add, .code .ln.marked.del { border-left-color: var(--accent); }
 /* Syntax classes, numbered as in crates/blockviz-core/src/highlight (Hl). */
-.t1 { color: #cf222e; }                     /* keyword */
-.t2 { color: #0a3069; }                     /* string */
-.t3 { color: #6e7781; }                     /* comment */
-.t4, .t5, .t6, .t12 { color: #0550ae; }     /* number, constant, builtin, self */
-.t7, .t8, .t10 { color: #8250df; }          /* definition, call, decorator */
-.t9 { color: #953800; }                     /* type */
-.t11 { color: #1f2328; font-style: italic; } /* parameter */
-.t13 { color: #cf222e; }                    /* interpolation braces */
-.t14, .t16 { color: #0550ae; }              /* key, attribute */
-.t15 { color: #116329; }                    /* tag */
-.t17 { color: #0550ae; font-weight: 600; }  /* heading */
-.t18 { font-weight: 600; }                  /* strong */
-.t19 { color: #0969da; }                    /* link */
-.t20 { color: #0a3069; }                    /* code in documents */
-.t21 { color: #6639ba; }                    /* preprocessor, attributes, markers */
-
-/* Syntax on a dark page. */
-@media (prefers-color-scheme: dark) {
-  .t1, .t13 { color: #ff7b72; }
-  .t2, .t20 { color: #a5d6ff; }
-  .t3 { color: #8b949e; }
-  .t4, .t5, .t6, .t12, .t14, .t16, .t17 { color: #79c0ff; }
-  .t7, .t8, .t10, .t21 { color: #d2a8ff; }
-  .t9 { color: #ffa657; }
-  .t11 { color: #e6edf3; }
-  .t15 { color: #7ee787; }
-  .t19 { color: #58a6ff; }
-}
+.t1 { color: light-dark(#cf222e, #ff7b72); }                      /* keyword */
+.t2 { color: light-dark(#0a3069, #a5d6ff); }                      /* string */
+.t3 { color: light-dark(#6e7781, #8b949e); }                      /* comment */
+.t4, .t5, .t6, .t12 { color: light-dark(#0550ae, #79c0ff); }      /* number, constant, builtin, self */
+.t7, .t8, .t10 { color: light-dark(#8250df, #d2a8ff); }           /* definition, call, decorator */
+.t9 { color: light-dark(#953800, #ffa657); }                      /* type */
+.t11 { color: light-dark(#1f2328, #e6edf3); font-style: italic; } /* parameter */
+.t13 { color: light-dark(#cf222e, #ff7b72); }                     /* interpolation braces */
+.t14, .t16 { color: light-dark(#0550ae, #79c0ff); }               /* key, attribute */
+.t15 { color: light-dark(#116329, #7ee787); }                     /* tag */
+.t17 { color: light-dark(#0550ae, #79c0ff); font-weight: 600; }   /* heading */
+.t18 { font-weight: 600; }                                        /* strong */
+.t19 { color: light-dark(#0969da, #58a6ff); }                     /* link */
+.t20 { color: light-dark(#0a3069, #a5d6ff); }                     /* code in documents */
+.t21 { color: light-dark(#6639ba, #d2a8ff); }                     /* preprocessor, attributes, markers */
 
 /* Reading a change (a pull request) */
 .change-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 460px; padding: 4px 9px; border-radius: 8px; background: var(--glass); border: 1px solid var(--line); color: var(--muted); flex-shrink: 1; }
