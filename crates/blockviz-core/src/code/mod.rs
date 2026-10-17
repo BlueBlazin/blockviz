@@ -154,6 +154,7 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
         })
         .collect();
     let ix = Index::build(&modules, |name, class| b.add(None, if class { Kind::Class } else { Kind::Function }, Shape::Box, name));
+    crate::timing::stage("index definitions");
     let module_by_path: HashMap<String, usize> = modules.iter().enumerate().map(|(i, m)| (m.path.clone(), i)).collect();
     let n = modules.len();
     let mut imported = vec![false; n];
@@ -200,9 +201,11 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
     let mounts = frameworks::mounts(&modules, &ix);
     let routes = frameworks::routes(&modules, &ix);
     let mut cx = Ctx { ix, b, file_nodes, relations: vec![], entry: vec![false; n], module_by_path, imported, app: vec![false; n], handlers: vec![vec![]; n], prefixes: HashMap::new(), mounts, domains, routes, components: HashMap::new(), component_calls: vec![], reads: HashMap::new(), scopes: vec![] };
+    crate::timing::stage("domains and frameworks");
     for mi in 0..n {
         Fb::build_module(&mut cx, mi);
     }
+    crate::timing::stage("dataflow");
     // A component lists the blocks that call it, wherever they are drawn.
     for (k, path, call) in std::mem::take(&mut cx.component_calls) {
         if let Some(&c) = cx.components.get(&(k, path)) {
@@ -308,5 +311,6 @@ pub fn analyze(b: Builder, modules: Vec<Module>, headers: Vec<String>, failed: V
         }
     }
     let Ctx { b, .. } = cx;
+    crate::timing::stage("code results");
     (b, result)
 }

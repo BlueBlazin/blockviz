@@ -22,6 +22,7 @@ pub mod project;
 pub mod python;
 pub mod rust;
 pub mod text;
+pub mod timing;
 pub mod vocabulary;
 
 use serde::{Deserialize, Serialize};

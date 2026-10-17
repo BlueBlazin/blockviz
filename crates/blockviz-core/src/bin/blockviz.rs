@@ -1,5 +1,5 @@
 //! Prints the diagram tree for a directory, for inspecting abstractions
-//! without a browser: `cargo run --bin blockviz -- path/to/repo [--depth N] [--json] [--trunks]`.
+//! without a browser: `cargo run --bin blockviz -- path/to/repo [--depth N] [--json] [--trunks] [--timings]`.
 
 use blockviz_core::ir::{Node, Scene};
 use std::io::Write;
@@ -61,18 +61,39 @@ fn print(scene: &Scene, id: u32, depth: usize, max: usize) {
     }
 }
 
+/// Each stage of the analysis, and what the page would pay on top: the scene
+/// as JSON, which the native app never needs.
+fn timings(scene: &Scene, read: std::time::Duration, elapsed: std::time::Duration) {
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    println!("{} — {} files, {} lines, {} nodes", scene.title, scene.stats.files, scene.stats.lines, scene.stats.nodes);
+    println!("{:>9.1} ms  read files", ms(read));
+    for (name, d) in blockviz_core::timing::take() {
+        println!("{:>9.1} ms  {name}", ms(d));
+    }
+    println!("{:>9.1} ms  analysis in all", ms(elapsed));
+    let start = std::time::Instant::now();
+    let json = serde_json::to_vec(scene).unwrap();
+    println!("{:>9.1} ms  scene as JSON ({:.1} MB, not needed natively)", ms(start.elapsed()), json.len() as f64 / 1e6);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let dir = args.get(1).expect("usage: blockviz <dir> [--depth N] [--json] [--trunks]");
+    let dir = args.get(1).expect("usage: blockviz <dir> [--depth N] [--json] [--trunks] [--timings]");
     let depth = args.iter().position(|a| a == "--depth").and_then(|i| args.get(i + 1)).and_then(|d| d.parse().ok()).unwrap_or(4);
     let root = Path::new(dir);
     let mut files = vec![];
+    let reading = std::time::Instant::now();
     walk(root, root, &mut files);
+    let read = reading.elapsed();
     let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let start = std::time::Instant::now();
     let opts = blockviz_core::layout::Options { shared_trunks: args.iter().any(|a| a == "--trunks") };
     let scene = blockviz_core::analyze_with(&name, files, opts);
     let elapsed = start.elapsed();
+    if args.iter().any(|a| a == "--timings") {
+        timings(&scene, read, elapsed);
+        return;
+    }
     if args.iter().any(|a| a == "--json") {
         // Written as it is serialized: as one string, transformers' scene is 274 MB.
         let mut out = std::io::BufWriter::new(std::io::stdout().lock());

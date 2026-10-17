@@ -92,6 +92,7 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
 }
 
 pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) -> Scene {
+    crate::timing::start();
     let mut diagnostics = vec![];
     let mut files: Vec<InFile> = files
         .into_iter()
@@ -204,19 +205,24 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         entries.push(FileEntry { path: f.path, class, language, node: 0, read, generated, hidden, program });
     }
 
+    crate::timing::stage("classify files");
     let mut b = Builder::default();
     let root = b.add(None, Kind::Repo, Shape::Box, title.clone());
     b.get_mut(root).category = "repo";
     let (mut modules, mut headers, mut failed) = python::parse(&mut b, py_inputs, &mut diagnostics);
+    crate::timing::stage("parse Python");
     let (js_modules, js_headers, js_failed) = crate::js::parse(&mut b, js_inputs, &resolver, &mut diagnostics);
+    crate::timing::stage("parse JavaScript");
     modules.extend(js_modules);
     headers.extend(js_headers);
     failed.extend(js_failed);
     let (rs_modules, rs_headers, rs_failed) = crate::rust::parse(&mut b, rs_inputs, &rs_resolver, &mut diagnostics);
+    crate::timing::stage("parse Rust");
     modules.extend(rs_modules);
     headers.extend(rs_headers);
     failed.extend(rs_failed);
     let (go_modules, go_headers, go_failed) = crate::go::front_end(&mut b, go_inputs, &go_resolver, &mut diagnostics);
+    crate::timing::stage("parse Go");
     modules.extend(go_modules);
     headers.extend(go_headers);
     failed.extend(go_failed);
@@ -697,13 +703,16 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
         scene_root = code_files[0];
         b.get_mut(scene_root).parent = None;
     }
+    crate::timing::stage("repository level");
     crate::layout::layout(&mut b, scene_root, opts);
+    crate::timing::stage("layout");
     let python_files = py.files.len() as u32;
     let lines: u32 = metas.iter().map(|m| m.lines).sum();
     let max_depth = b.nodes.iter().map(|n| n.id).filter(|&id| b.get(id).parent.is_some()).map(|id| b.depth(id)).max().unwrap_or(0);
     let (nodes, scene_root) = b.finish(scene_root);
     diagnostics.push("Static analysis: arrows show likely dataflow and dependencies inferred from source, not a runtime trace. Dynamic dispatch and code passed through strings may be missed.".into());
     let stats = Stats { files: metas.len() as u32, python_files, lines, nodes: nodes.len() as u32, max_depth };
+    crate::timing::stage("finish");
     Scene { version: 2, title, description, root: scene_root, nodes, files: metas, diagnostics, stats }
 }
 
