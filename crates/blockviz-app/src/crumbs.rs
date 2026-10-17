@@ -45,6 +45,7 @@ pub fn crumb(ui: &Ui, i: usize, title: SharedString, last: bool, on_go: impl Fn(
         .text_color(if last { ui.ink } else { ui.muted })
         .when(last, |d| d.font_weight(FontWeight::SEMIBOLD))
         .hover(|s| s.bg(ui.hover).text_color(ui.ink))
+        .when(i == 0, |d| d.debug_selector(|| "crumb-root".into()))
         .on_click(move |_, window, cx| on_go(i, window, cx))
         .child(title)
         .into_any_element()

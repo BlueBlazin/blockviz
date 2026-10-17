@@ -1,16 +1,19 @@
 //! blockviz as a native app: a folder on disk analyzed in process and drawn
 //! with GPUI. Drag pans, scrolling zooms at the pointer, a click selects, a
 //! double click (or Enter) opens; F fits the block the view is in, H or 0 shows
-//! the whole project. Breadcrumbs name the blocks the view is in.
+//! the whole project. Breadcrumbs name the blocks the view is in, and a
+//! panel shows the selected block's details and source.
 //!
 //! `blockviz-app [folder] [--svg out.svg]`: with `--svg`, the whole view is
 //! written as SVG, drawn as the window would draw it, and no window opens.
 
 mod camera;
+mod code;
 mod crumbs;
 mod folder;
 mod model;
 mod paint;
+mod panel;
 mod theme;
 
 use camera::{Camera, Framing, Plan};
@@ -20,7 +23,9 @@ use gpui::{
 };
 use model::Model;
 use paint::{Fonts, Hit, Walk};
+use panel::Inspector;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -31,8 +36,8 @@ struct Press {
     moved: bool,
 }
 
-struct Viewer {
-    m: Model,
+pub struct Viewer {
+    m: Rc<Model>,
     camera: Camera,
     theme: theme::Theme,
     fonts: Fonts,
@@ -53,9 +58,39 @@ struct Viewer {
     crumbs: Vec<u32>,
     /// The menu of folded breadcrumbs is open.
     crumb_menu: bool,
+    inspector: gpui::Entity<Inspector>,
 }
 
+/// The details panel's width, and how far it is from the window's edges.
+const PANEL_W: f64 = 380.0;
+
 impl Viewer {
+    fn new(m: Rc<Model>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        window.focus(&focus);
+        let camera = Camera::new(&m);
+        let me = cx.entity().downgrade();
+        let inspector = cx.new(|_| Inspector::new(m.clone(), me));
+        Viewer {
+            m,
+            camera,
+            theme: theme::light(),
+            fonts: Fonts::new(),
+            focus,
+            width: 0.0,
+            height: 0.0,
+            hits: vec![],
+            selected: None,
+            selected_path: None,
+            press: None,
+            flight: None,
+            ui: theme::ui(),
+            crumbs: vec![],
+            crumb_menu: false,
+            inspector,
+        }
+    }
+
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.camera.reanchor(&self.m, self.width, self.height);
         cx.notify();
@@ -68,10 +103,48 @@ impl Viewer {
         cx.notify();
     }
 
-    fn select(&mut self, id: Option<u32>, path: Option<Vec<u32>>, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, id: Option<u32>, path: Option<Vec<u32>>, cx: &mut Context<Self>) {
         self.selected = id;
         self.selected_path = path;
+        // Framing keeps blocks clear of the panel while it is open.
+        self.camera.insets.right = if id.is_some() { PANEL_W + 24.0 } else { 12.0 };
+        self.inspector.update(cx, |i, cx| i.show(id, cx));
         cx.notify();
+    }
+
+    /// Selects a block and flies to where it is defined (a link in the panel).
+    pub(crate) fn go_to(&mut self, id: u32, cx: &mut Context<Self>) {
+        let path = self.m.canonical_path(id);
+        self.select(Some(id), Some(path.clone()), cx);
+        self.fly_to(&path, Framing::Open, 0.08, cx);
+    }
+
+    /// Selects the block drawn for a line of source, staying where the reader is.
+    pub(crate) fn pick(&mut self, id: u32, cx: &mut Context<Self>) {
+        let near = self.selected_path.clone().unwrap_or_else(|| self.crumbs.clone());
+        let path = self.m.instance_path(id, &near);
+        self.select(path.last().copied(), Some(path.clone()), cx);
+        self.reveal(&path, cx);
+    }
+
+    /// Brings a block into view unless it is already on screen and legible.
+    fn reveal(&mut self, path: &[u32], cx: &mut Context<Self>) {
+        let id = *path.last().unwrap();
+        let i = self.camera.insets;
+        let seen = self.hits.iter().any(|h| {
+            let r = h.rect;
+            h.id == id && h.clear && r.x >= i.left && r.y >= i.top && r.x + r.w <= self.width - i.right && r.y + r.h <= self.height - i.bottom
+        });
+        if !seen {
+            self.fly_to(path, Framing::Open, 0.08, cx);
+        }
+    }
+
+    /// Opens the selected block (the panel's Zoom in, or Enter).
+    pub(crate) fn open_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(path) = self.selected_path.clone() {
+            self.fly_to(&path, Framing::Open, 0.08, cx);
+        }
     }
 
     /// Frames all of the block the view is in.
@@ -163,11 +236,7 @@ impl Viewer {
         }
         match k.key.as_str() {
             "escape" => self.select(None, None, cx),
-            "enter" => {
-                if let Some(path) = self.selected_path.clone() {
-                    self.fly_to(&path, Framing::Open, 0.08, cx);
-                }
-            }
+            "enter" => self.open_selected(cx),
             "f" => self.fit(cx),
             "h" | "0" => self.home(cx),
             _ => {}
@@ -206,6 +275,18 @@ impl Render for Viewer {
                     ),
             )
             .child(div().absolute().top(px(12.0)).left(px(12.0)).child(self.breadcrumbs(cx)))
+            .when(self.selected.is_some(), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(60.0))
+                        .right(px(12.0))
+                        .bottom(px(64.0))
+                        .w(px(PANEL_W as f32))
+                        .debug_selector(|| "inspector".into())
+                        .child(gpui::AnyView::from(self.inspector.clone()).cached(gpui::StyleRefinement::default().size_full())),
+                )
+            })
     }
 }
 
@@ -231,7 +312,7 @@ impl Viewer {
             let i = path[k];
             move |_: usize, _: &mut Window, cx: &mut App| this.update(cx, |v, cx| v.go_crumb(i, cx))
         };
-        let mut bar = crumbs::bar(ui);
+        let mut bar = crumbs::bar(ui).debug_selector(|| "crumbs".into());
         for (j, c) in shown.iter().enumerate() {
             if j > 0 {
                 bar = bar.child(crumbs::chevron(ui));
@@ -341,7 +422,7 @@ fn main() {
         println!("{:>9.1} ms  {stage}", ms(d));
     }
     println!("{:>9.1} ms  analysis in all", ms(analyzed));
-    let m = Model::new(scene, texts);
+    let m = Rc::new(Model::new(scene, texts));
 
     if let Some(out) = svg {
         let (width, height) = (1440.0, 900.0);
@@ -359,15 +440,131 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
-        cx.open_window(options, |window, cx| {
-            cx.new(|cx| {
-                let focus = cx.focus_handle();
-                window.focus(&focus);
-                let camera = Camera::new(&m);
-                Viewer { m, camera, theme: theme::light(), fonts: Fonts::new(), focus, width: 0.0, height: 0.0, hits: vec![], selected: None, selected_path: None, press: None, flight: None, ui: theme::ui(), crumbs: vec![], crumb_menu: false }
-            })
-        })
-        .unwrap();
+        cx.open_window(options, |window, cx| cx.new(|cx| Viewer::new(m, window, cx))).unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use super::*;
+    use gpui::{point, Modifiers, TestAppContext, VisualTestContext};
+
+    const MODEL_PY: &str = "class Block:\n    def __init__(self):\n        self.attn = Attention()\n\n    def forward(self, x):\n        x = x + self.attn(x)\n        x = x + self.mlp(x)\n        return x\n\n\nclass Attention:\n    def __call__(self, x):\n        return x\n";
+
+    fn open(cx: &mut TestAppContext) -> (gpui::Entity<Viewer>, &mut VisualTestContext) {
+        let files = [("model.py", MODEL_PY), ("train.py", "from model import Block\nb = Block()\nb.forward(1)\n")];
+        let inputs = files.iter().map(|(p, t)| blockviz_core::project::InFile { path: p.to_string(), text: Some(t.to_string()), bytes: t.len() as u64 }).collect();
+        let m = Rc::new(Model::new(blockviz_core::analyze("t", inputs), files.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect()));
+        let (view, cx) = cx.add_window_view(|window, cx| Viewer::new(m, window, cx));
+        frame(cx);
+        (view, cx)
+    }
+
+    /// Draws the window as the next frame would (the test platform draws only on input),
+    /// twice: a frame can ask for another, as the breadcrumbs do when the view moved.
+    fn frame(cx: &mut VisualTestContext) {
+        for _ in 0..2 {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear());
+        }
+        cx.run_until_parked();
+    }
+
+    fn titled(v: &Viewer, title: &str) -> u32 {
+        v.m.scene.nodes.iter().find(|n| n.title == title).unwrap().id
+    }
+
+    fn center(b: gpui::Bounds<Pixels>) -> Point<Pixels> {
+        point(b.origin.x + b.size.width / 2.0, b.origin.y + b.size.height / 2.0)
+    }
+
+    /// Finishes the flight under way, as its last frame would.
+    fn land(view: &gpui::Entity<Viewer>, cx: &mut VisualTestContext) {
+        view.update(cx, |v, cx| {
+            if let Some((_, plan)) = v.flight.take() {
+                let (w, h) = (v.width, v.height);
+                v.camera.step(&v.m, &plan, 1.0, w, h);
+                cx.notify();
+            }
+        });
+        frame(cx);
+    }
+
+    #[gpui::test]
+    fn a_click_opens_the_panel_and_a_line_of_source_selects_its_block(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        assert!(cx.debug_bounds("inspector").is_none());
+        // Click the middle of model.py's box.
+        let (file, at) = view.read_with(cx, |v, _| {
+            let file = titled(v, "model.py");
+            let r = v.hits.iter().find(|h| h.id == file).unwrap().rect;
+            (file, point(px((r.x + r.w / 2.0) as f32), px((r.y + 6.0) as f32)))
+        });
+        cx.simulate_click(at, Modifiers::none());
+        frame(cx);
+        assert_eq!(view.read_with(cx, |v, _| v.selected), Some(file));
+        let panel = cx.debug_bounds("inspector").expect("the panel is open");
+        assert_eq!(panel.size.width, px(PANEL_W as f32));
+
+        // A step is shown in its function, its own line marked; clicking that line selects the block drawn for it.
+        let step = view.update(cx, |v, cx| {
+            let forward = titled(v, "forward");
+            let step = v.m.block_at(forward, 6);
+            assert_ne!(step, forward);
+            let path = v.m.canonical_path(step);
+            v.select(Some(step), Some(path), cx);
+            step
+        });
+        frame(cx);
+        let line = cx.debug_bounds("marked-line").expect("its line is marked");
+        assert!(panel.contains(&line.origin), "{line:?} in {panel:?}");
+        view.update(cx, |v, cx| v.select(None, None, cx));
+        frame(cx);
+        // (GPUI keeps elements' debug bounds from earlier frames, so a closed panel is checked by state.)
+        assert_eq!(view.read_with(cx, |v, _| v.selected), None);
+        view.update(cx, |v, cx| {
+            let path = v.m.canonical_path(step);
+            v.select(Some(step), Some(path), cx);
+        });
+        frame(cx);
+        let line = cx.debug_bounds("marked-line").unwrap();
+        cx.simulate_click(center(line), Modifiers::none());
+        frame(cx);
+        assert_eq!(view.read_with(cx, |v, _| v.selected), Some(step));
+
+        // Its close button closes it, and so does Esc.
+        let close = cx.debug_bounds("panel-close").expect("a close button");
+        cx.simulate_click(center(close), Modifiers::none());
+        frame(cx);
+        assert_eq!(view.read_with(cx, |v, _| v.selected), None);
+        view.update(cx, |v, cx| v.select(Some(step), None, cx));
+        frame(cx);
+        cx.simulate_keystrokes("escape");
+        frame(cx);
+        assert_eq!(view.read_with(cx, |v, _| v.selected), None);
+    }
+
+    #[gpui::test]
+    fn breadcrumbs_follow_a_flight_and_take_the_view_back_out(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        assert!(cx.debug_bounds("crumbs").is_none(), "the whole project shows only its name");
+        view.update(cx, |v, cx| {
+            let path = v.m.canonical_path(titled(v, "forward"));
+            v.fly_to(&path, Framing::Open, 0.08, cx);
+        });
+        land(&view, cx);
+        let crumbs = view.read_with(cx, |v, _| v.crumbs.iter().map(|&c| v.m.node(c).title.clone()).collect::<Vec<_>>());
+        assert_eq!(crumbs.last().map(String::as_str), Some("forward"), "{crumbs:?}");
+        assert!(crumbs.iter().any(|c| c == "model.py"));
+        let root = cx.debug_bounds("crumb-root").expect("crumbs are shown");
+        cx.simulate_click(center(root), Modifiers::none());
+        frame(cx);
+        land(&view, cx);
+        assert_eq!(view.read_with(cx, |v, _| v.camera.path.clone()), [view.read_with(cx, |v, _| v.m.root())]);
+        // Keys: H goes home from anywhere, F fits the block the view is in.
+        cx.simulate_keystrokes("f");
+        frame(cx);
+        assert!(view.read_with(cx, |v, _| v.flight.is_some()));
+    }
 }

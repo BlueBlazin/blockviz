@@ -237,6 +237,21 @@ impl Model {
         best.0
     }
 
+    /// An instance path to `target` that stays where the reader is: through the
+    /// deepest element of `near` whose interior holds `target` (the call it was
+    /// reached through), else the target's own definition site.
+    pub fn instance_path(&self, target: u32, near: &[u32]) -> Vec<u32> {
+        let canonical = self.canonical_path(target);
+        for i in (0..near.len()).rev() {
+            let n = self.node(near[i]);
+            let owner = self.owner(n).unwrap_or(n);
+            if let Some(j) = canonical.iter().position(|&c| c == owner.id) {
+                return near[..=i].iter().chain(&canonical[j + 1..]).copied().collect();
+            }
+        }
+        canonical
+    }
+
     /// What a block is in, as search lists it: `model.py › Block`.
     pub fn trail(&self, id: u32) -> String {
         let path = self.canonical_path(id);

@@ -10,6 +10,10 @@ blockviz-core = { path = "../blockviz-core" }
 # Shaders are compiled as the app starts: building them ahead needs Xcode's separate Metal Toolchain.
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
 
+[dev-dependencies]
+# Draws windows headlessly in tests, with simulated input.
+gpui = { version = "=0.2.2", features = ["runtime_shaders", "test-support"] }
+
 # Its own workspace: GPUI is a large build that the web app's tests and CI never need.
 [workspace]
 
