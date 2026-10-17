@@ -2,7 +2,7 @@
 //! with GPUI. Drag pans, scrolling zooms at the pointer, a click selects, a
 //! double click (or Enter) opens; F fits the block the view is in, H or 0 shows
 //! the whole project. Breadcrumbs name the blocks the view is in, and a
-//! panel shows the selected block's details and source.
+//! panel shows the selected block's details and source. `/` or ⌘K searches.
 //!
 //! `blockviz-app [folder] [--svg out.svg]`: with `--svg`, the whole view is
 //! written as SVG, drawn as the window would draw it, and no window opens.
@@ -11,6 +11,7 @@ mod camera;
 mod code;
 mod crumbs;
 mod folder;
+mod input;
 mod model;
 mod paint;
 mod panel;
@@ -18,7 +19,7 @@ mod theme;
 
 use camera::{Camera, Framing, Plan};
 use gpui::{
-    canvas, div, prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent,
+    canvas, div, prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window, WindowBounds, WindowOptions,
 };
 use model::Model;
@@ -59,10 +60,22 @@ pub struct Viewer {
     /// The menu of folded breadcrumbs is open.
     crumb_menu: bool,
     inspector: gpui::Entity<Inspector>,
+    search: Option<Search>,
 }
 
 /// The details panel's width, and how far it is from the window's edges.
 const PANEL_W: f64 = 380.0;
+
+/// The search palette while it is open: its field, the results for what is
+/// in it, and the one Enter picks.
+struct Search {
+    input: gpui::Entity<input::TextInput>,
+    query: String,
+    results: Vec<u32>,
+    active: usize,
+    scroll: gpui::ScrollHandle,
+    _edits: gpui::Subscription,
+}
 
 impl Viewer {
     fn new(m: Rc<Model>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -88,6 +101,7 @@ impl Viewer {
             crumbs: vec![],
             crumb_menu: false,
             inspector,
+            search: None,
         }
     }
 
@@ -229,8 +243,75 @@ impl Viewer {
         }
     }
 
-    fn key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ui = theme::ui();
+        let input = cx.new(|cx| input::TextInput::new("Jump to a file, class, function or block…", &ui, cx));
+        let edits = cx.observe(&input, |v, input, cx| {
+            let query = input.read(cx).content.to_string();
+            if let Some(s) = v.search.as_mut() {
+                if s.query != query {
+                    s.results = v.m.find(&query);
+                    s.query = query;
+                    s.active = 0;
+                    s.scroll.scroll_to_item(0);
+                    cx.notify();
+                }
+            }
+        });
+        window.focus(&input.focus_handle(cx));
+        self.search = Some(Search { input, query: String::new(), results: self.m.find(""), active: 0, scroll: gpui::ScrollHandle::new(), _edits: edits });
+        cx.notify();
+    }
+
+    fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search = None;
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    /// Picks a search result: flies to it and selects it.
+    fn pick_result(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(&id) = self.search.as_ref().and_then(|s| s.results.get(i)) else { return };
+        self.close_search(window, cx);
+        self.go_to(id, cx);
+    }
+
+    fn search_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.search.as_mut() else { return };
         let k = &e.keystroke;
+        if k.key == "k" && (k.modifiers.platform || k.modifiers.control) {
+            cx.stop_propagation();
+            return self.close_search(window, cx);
+        }
+        match k.key.as_str() {
+            "down" => s.active = (s.active + 1).min(s.results.len().saturating_sub(1)),
+            "up" => s.active = s.active.saturating_sub(1),
+            "enter" => {
+                let i = s.active;
+                cx.stop_propagation();
+                return self.pick_result(i, window, cx);
+            }
+            "escape" => {
+                cx.stop_propagation();
+                return self.close_search(window, cx);
+            }
+            _ => return,
+        }
+        s.scroll.scroll_to_item(s.active);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &e.keystroke;
+        if self.search.is_some() {
+            return;
+        }
+        if k.key == "k" && (k.modifiers.platform || k.modifiers.control) || k.key == "/" && !k.modifiers.platform {
+            // Handled here, the key is not typed into the field it opens.
+            cx.stop_propagation();
+            return self.open_search(window, cx);
+        }
         if k.modifiers.platform || k.modifiers.control || k.modifiers.alt {
             return;
         }
@@ -275,6 +356,7 @@ impl Render for Viewer {
                     ),
             )
             .child(div().absolute().top(px(12.0)).left(px(12.0)).child(self.breadcrumbs(cx)))
+            .when_some(self.search_palette(cx), |d, p| d.child(p))
             .when(self.selected.is_some(), |d| {
                 d.child(
                     div()
@@ -291,6 +373,104 @@ impl Render for Viewer {
 }
 
 impl Viewer {
+    fn search_palette(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let s = self.search.as_ref()?;
+        let ui = &self.ui;
+        let rows = s.results.iter().enumerate().map(|(i, &id)| {
+            let n = self.m.node(id);
+            div()
+                .id(("result", i))
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .px(px(10.0))
+                .py(px(7.0))
+                .rounded(px(8.0))
+                .cursor_pointer()
+                .when(i == s.active, |d| d.bg(ui.accent_bg))
+                .on_hover(cx.listener(move |v, hovered: &bool, _, cx| {
+                    if let Some(s) = v.search.as_mut().filter(|_| *hovered) {
+                        s.active = i;
+                        cx.notify();
+                    }
+                }))
+                .on_click(cx.listener(move |v, _, window, cx| v.pick_result(i, window, cx)))
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap(px(8.0))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(n.title.clone())
+                        .when(!n.subtitle.is_empty(), |d| d.child(div().font_weight(gpui::FontWeight::NORMAL).text_size(px(12.0)).text_color(ui.faint).child(n.subtitle.clone()))),
+                )
+                .child(div().text_size(px(11.5)).text_color(ui.faint).truncate().child(self.m.trail(id)))
+        });
+        let list = div()
+            .id("search-results")
+            .max_h(px((self.height * 0.52) as f32))
+            .overflow_y_scroll()
+            .track_scroll(&s.scroll)
+            .p(px(6.0))
+            .when(s.results.is_empty(), |d| d.child(div().p(px(18.0)).text_color(ui.faint).flex().justify_center().child("No matches")))
+            .children(rows);
+        let palette = div()
+            .w(px((self.width - 32.0).min(640.0) as f32))
+            .bg(ui.panel)
+            .border_1()
+            .border_color(ui.line)
+            .rounded(px(14.0))
+            .shadow_lg()
+            .overflow_hidden()
+            .debug_selector(|| "search".into())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_key_down(cx.listener(Self::search_key))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .px(px(14.0))
+                    .py(px(12.0))
+                    .border_b_1()
+                    .border_color(ui.line)
+                    .text_size(px(15.0))
+                    .text_color(ui.ink)
+                    .child(s.input.clone())
+                    .child(
+                        div()
+                            .font_family(theme::MONO_FONT)
+                            .text_size(px(11.0))
+                            .text_color(ui.faint)
+                            .border_1()
+                            .border_color(ui.line)
+                            .rounded(px(4.0))
+                            .px(px(5.0))
+                            .py(px(1.0))
+                            .bg(ui.code_bg)
+                            .child("esc"),
+                    ),
+            )
+            .child(list);
+        Some(
+            div()
+                .absolute()
+                .size_full()
+                .bg(ui.scrim)
+                .flex()
+                .justify_center()
+                .items_start()
+                .pt(px((self.height * 0.12) as f32))
+                .font_family(theme::UI_FONT)
+                .text_size(px(13.0))
+                .text_color(ui.ink)
+                .occlude()
+                .on_mouse_down(MouseButton::Left, cx.listener(|v, _, window, cx| v.close_search(window, cx)))
+                .child(palette)
+                .into_any_element(),
+        )
+    }
+
     /// Flies out to fit crumb `i`.
     fn go_crumb(&mut self, i: usize, cx: &mut Context<Self>) {
         self.crumb_menu = false;
@@ -438,6 +618,7 @@ fn main() {
     }
 
     Application::new().run(move |cx: &mut App| {
+        input::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
         cx.open_window(options, |window, cx| cx.new(|cx| Viewer::new(m, window, cx))).unwrap();
@@ -456,6 +637,7 @@ mod ui_tests {
         let files = [("model.py", MODEL_PY), ("train.py", "from model import Block\nb = Block()\nb.forward(1)\n")];
         let inputs = files.iter().map(|(p, t)| blockviz_core::project::InFile { path: p.to_string(), text: Some(t.to_string()), bytes: t.len() as u64 }).collect();
         let m = Rc::new(Model::new(blockviz_core::analyze("t", inputs), files.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect()));
+        cx.update(input::bind_keys);
         let (view, cx) = cx.add_window_view(|window, cx| Viewer::new(m, window, cx));
         frame(cx);
         (view, cx)
@@ -566,5 +748,40 @@ mod ui_tests {
         cx.simulate_keystrokes("f");
         frame(cx);
         assert!(view.read_with(cx, |v, _| v.flight.is_some()));
+    }
+
+    #[gpui::test]
+    fn search_finds_a_method_by_its_qualified_name_and_flies_there(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.simulate_keystrokes("/");
+        frame(cx);
+        assert!(cx.debug_bounds("search").is_some());
+        // The key that opened the palette is not typed into it.
+        assert_eq!(view.read_with(cx, |v, cx| v.search.as_ref().unwrap().input.read(cx).content.to_string()), "");
+        cx.simulate_input("Block.forward");
+        frame(cx);
+        let forward = view.read_with(cx, |v, _| titled(v, "forward"));
+        assert_eq!(view.read_with(cx, |v, _| v.search.as_ref().unwrap().results.first().copied()), Some(forward));
+        // Typing never runs the diagram's keys (F fits, H goes home).
+        assert!(view.read_with(cx, |v, _| v.flight.is_none()));
+        cx.simulate_keystrokes("down up enter");
+        frame(cx);
+        view.read_with(cx, |v, _| {
+            assert!(v.search.is_none());
+            assert_eq!(v.selected, Some(forward));
+            assert!(v.flight.is_some());
+        });
+        // ⌘K opens it and closes it again; so does Esc.
+        cx.simulate_keystrokes("cmd-k");
+        frame(cx);
+        assert!(view.read_with(cx, |v, _| v.search.is_some()));
+        cx.simulate_keystrokes("cmd-k");
+        frame(cx);
+        assert!(view.read_with(cx, |v, _| v.search.is_none()));
+        cx.simulate_keystrokes("/");
+        frame(cx);
+        cx.simulate_keystrokes("escape");
+        frame(cx);
+        assert!(view.read_with(cx, |v, _| v.search.is_none()));
     }
 }

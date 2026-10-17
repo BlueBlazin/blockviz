@@ -716,6 +716,7 @@ version = "0.1.0"
 dependencies = [
  "blockviz-core",
  "gpui",
+ "unicode-segmentation",
 ]
 
 [[package]]

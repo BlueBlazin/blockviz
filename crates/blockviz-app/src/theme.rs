@@ -101,6 +101,7 @@ pub struct Ui {
     pub code_no: Hsla,
     pub code_hover: Hsla,
     pub code_marked: Hsla,
+    pub scrim: Hsla,
 }
 
 pub fn ui() -> Ui {
@@ -122,6 +123,7 @@ pub fn ui() -> Ui {
         code_no: c(0xa3a9b2),
         code_hover: c(0xeef1f5),
         code_marked: c(0xe3ebfd),
+        scrim: gpui::Rgba { r: 250.0 / 255.0, g: 250.0 / 255.0, b: 251.0 / 255.0, a: 0.6 }.into(),
     }
 }
 

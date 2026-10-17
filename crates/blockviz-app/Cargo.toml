@@ -9,6 +9,8 @@ publish = false
 blockviz-core = { path = "../blockviz-core" }
 # Shaders are compiled as the app starts: building them ahead needs Xcode's separate Metal Toolchain.
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+# Moving through the search field by character, as a reader sees characters.
+unicode-segmentation = "1"
 
 [dev-dependencies]
 # Draws windows headlessly in tests, with simulated input.
