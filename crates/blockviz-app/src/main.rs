@@ -11,6 +11,7 @@
 mod anchor;
 mod camera;
 mod code;
+mod compare;
 mod crumbs;
 mod input;
 mod live;
