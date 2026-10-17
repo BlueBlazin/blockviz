@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 /// How long the folder must be quiet before analyzing again.
 const SETTLE: Duration = Duration::from_millis(120);
 /// Files over this size are listed without their text (the core's own limit).
-const MAX_TEXT: u64 = 2_000_000;
+pub const MAX_TEXT: u64 = 2_000_000;
 
 /// A file as the project holds it: its text (none when unreadable or too large) and size.
 #[derive(Clone)]

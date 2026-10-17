@@ -13,6 +13,7 @@ mod camera;
 mod code;
 mod compare;
 mod crumbs;
+mod git;
 mod input;
 mod live;
 mod model;
