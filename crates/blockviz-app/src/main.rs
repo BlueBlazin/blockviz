@@ -1,12 +1,13 @@
 //! blockviz as a native app: a folder on disk analyzed in process and drawn
 //! with GPUI. Drag pans, scrolling zooms at the pointer, a click selects, a
 //! double click (or Enter) opens; F fits the block the view is in, H or 0 shows
-//! the whole project.
+//! the whole project. Breadcrumbs name the blocks the view is in.
 //!
 //! `blockviz-app [folder] [--svg out.svg]`: with `--svg`, the whole view is
 //! written as SVG, drawn as the window would draw it, and no window opens.
 
 mod camera;
+mod crumbs;
 mod folder;
 mod model;
 mod paint;
@@ -47,6 +48,11 @@ struct Viewer {
     press: Option<Press>,
     /// A camera move under way, and when it started.
     flight: Option<(Instant, Plan)>,
+    ui: theme::Ui,
+    /// The blocks the view is in, root first, as of the last frame.
+    crumbs: Vec<u32>,
+    /// The menu of folded breadcrumbs is open.
+    crumb_menu: bool,
 }
 
 impl Viewer {
@@ -169,31 +175,116 @@ impl Viewer {
     }
 }
 
+/// Height of the bar over the diagram's top, kept clear when framing.
+const TOP_BAR: f64 = 48.0;
+
 impl Render for Viewer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.camera.insets.top = TOP_BAR;
         let view = cx.entity();
         div()
+            .relative()
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
-            .on_scroll_wheel(cx.listener(Self::scroll))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::down))
-            .on_mouse_move(cx.listener(Self::moved))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::up))
             .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds: Bounds<Pixels>, (), window, cx| {
-                        view.update(cx, |v, cx| v.paint(bounds, window, cx));
-                    },
-                )
-                .size_full(),
+                div()
+                    .absolute()
+                    .size_full()
+                    .on_scroll_wheel(cx.listener(Self::scroll))
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::down))
+                    .on_mouse_move(cx.listener(Self::moved))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::up))
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds: Bounds<Pixels>, (), window, cx| {
+                                view.update(cx, |v, cx| v.paint(bounds, window, cx));
+                            },
+                        )
+                        .size_full(),
+                    ),
             )
+            .child(div().absolute().top(px(12.0)).left(px(12.0)).child(self.breadcrumbs(cx)))
     }
 }
 
 impl Viewer {
-    fn paint(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+    /// Flies out to fit crumb `i`.
+    fn go_crumb(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.crumb_menu = false;
+        let path = if i >= 1 { self.crumbs[..=i].to_vec() } else { vec![self.m.root()] };
+        self.fly_to(&path, Framing::Fit, 0.06, cx);
+    }
+
+    fn breadcrumbs(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let path: Vec<usize> = (0..self.crumbs.len()).filter(|&i| !self.m.node(self.crumbs[i]).title.is_empty()).collect();
+        let titles: Vec<gpui::SharedString> = path.iter().map(|&i| self.m.titles[self.crumbs[i] as usize].clone()).collect();
+        let ui = &self.ui;
+        if titles.len() <= 1 {
+            return crumbs::bar(ui).child(div().px(px(7.0)).py(px(4.0)).font_weight(gpui::FontWeight::SEMIBOLD).text_color(ui.ink).child(self.m.scene.title.clone())).into_any_element();
+        }
+        let room = self.width - 24.0 - self.camera.insets.right;
+        let (shown, hidden) = crumbs::fold(&titles, room);
+        let go = |k: usize| {
+            let this = cx.entity();
+            let i = path[k];
+            move |_: usize, _: &mut Window, cx: &mut App| this.update(cx, |v, cx| v.go_crumb(i, cx))
+        };
+        let mut bar = crumbs::bar(ui);
+        for (j, c) in shown.iter().enumerate() {
+            if j > 0 {
+                bar = bar.child(crumbs::chevron(ui));
+            }
+            match *c {
+                Some(k) => bar = bar.child(crumbs::crumb(ui, k, titles[k].clone(), k == titles.len() - 1, go(k))),
+                None => {
+                    let mut fold = div().relative().child(
+                        div()
+                            .id("crumb-fold")
+                            .px(px(7.0))
+                            .py(px(4.0))
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .text_color(ui.muted)
+                            .hover(|s| s.bg(ui.hover))
+                            .on_click(cx.listener(|v, _, _, cx| {
+                                v.crumb_menu = !v.crumb_menu;
+                                cx.notify();
+                            }))
+                            .child("…"),
+                    );
+                    if self.crumb_menu {
+                        let mut menu = div()
+                            .absolute()
+                            .top(px(30.0))
+                            .left_0()
+                            .flex()
+                            .flex_col()
+                            .min_w(px(180.0))
+                            .max_w(px(360.0))
+                            .p(px(4.0))
+                            .bg(ui.panel)
+                            .border_1()
+                            .border_color(ui.line)
+                            .rounded(px(10.0))
+                            .shadow_md()
+                            .occlude();
+                        for &k in &hidden {
+                            menu = menu.child(crumbs::crumb(ui, k, titles[k].clone(), false, go(k)));
+                        }
+                        fold = fold.child(menu);
+                    }
+                    bar = bar.child(fold);
+                }
+            }
+        }
+        bar.into_any_element()
+    }
+}
+
+impl Viewer {
+    fn paint(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let (width, height) = (f64::from(bounds.size.width), f64::from(bounds.size.height));
         if self.width == 0.0 {
             self.camera.fit_root(&self.m, width, height);
@@ -219,6 +310,13 @@ impl Viewer {
         walk.draw();
         paint::emit(&walk.out, &self.fonts, window, cx);
         self.hits = walk.hits;
+        // The breadcrumbs follow the view; they are drawn again only when it is somewhere else.
+        let focus = self.camera.focus(&self.m, width, height);
+        if focus != self.crumbs {
+            self.crumbs = focus;
+            self.crumb_menu = false;
+            cx.notify();
+        }
     }
 }
 
@@ -266,7 +364,7 @@ fn main() {
                 let focus = cx.focus_handle();
                 window.focus(&focus);
                 let camera = Camera::new(&m);
-                Viewer { m, camera, theme: theme::light(), fonts: Fonts::new(), focus, width: 0.0, height: 0.0, hits: vec![], selected: None, selected_path: None, press: None, flight: None }
+                Viewer { m, camera, theme: theme::light(), fonts: Fonts::new(), focus, width: 0.0, height: 0.0, hits: vec![], selected: None, selected_path: None, press: None, flight: None, ui: theme::ui(), crumbs: vec![], crumb_menu: false }
             })
         })
         .unwrap();
