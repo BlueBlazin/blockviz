@@ -1,5 +1,7 @@
 [workspace]
 members = ["crates/blockviz-core"]
+# The native app is its own workspace (see its Cargo.toml).
+exclude = ["crates/blockviz-app"]
 resolver = "2"
 
 [profile.release]

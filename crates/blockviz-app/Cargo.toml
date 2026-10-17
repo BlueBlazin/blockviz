@@ -1,0 +1,17 @@
+[package]
+name = "blockviz-app"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+blockviz-core = { path = "../blockviz-core" }
+# Shaders are compiled as the app starts: building them ahead needs Xcode's separate Metal Toolchain.
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+
+# Its own workspace: GPUI is a large build that the web app's tests and CI never need.
+[workspace]
+
+[profile.release]
+debug = "line-tables-only"
