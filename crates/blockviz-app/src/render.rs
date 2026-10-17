@@ -884,22 +884,14 @@ impl<'a, 'p> Draw<'a, 'p> {
         }
         let theme = self.theme;
         let selected = self.p.selected == Some(n.id);
-        // A loop, a branch and its arms, a try and its handlers are tinted and
-        // outlined in the color of what they do, under a band of it that holds their title.
-        let role = self.flow_role(n);
-        let flow = role.map(|r| theme.flow(r));
-        let mut fill = fill_of(theme, n, status);
-        let mut outline = if lane { theme.lane_outline } else { theme.region_outline };
-        if let (Some(f), None) = (flow, status) {
-            // The role's color toward the page; an arm lighter than the branch around it.
-            fill = mix(f.fill, theme.paper, if lane { 0.62 } else { 0.42 });
-            outline = mix(f.fill, f.ink, if lane { 0.4 } else { 0.5 });
-        }
+        // A loop, a branch's arm, a try's handler has its title on a band
+        // across its top in the color of what it does.
+        let flow = self.flow_role(n).map(|r| theme.flow(r));
         let ctx = &mut *self.ctx;
         ctx.set_alpha(alpha);
         ctx.begin_path();
         ctx.round_rect(b.x, b.y, b.w, b.h, radius);
-        ctx.set_fill(fill);
+        ctx.set_fill(fill_of(theme, n, status));
         ctx.fill();
         if let (Some(f), false) = (flow, n.title.is_empty()) {
             ctx.save();
@@ -916,8 +908,6 @@ impl<'a, 'p> Draw<'a, 'p> {
             2.0
         } else if status.is_some() {
             1.5
-        } else if flow.is_some() {
-            clamp(1.3 * t.s.sqrt(), 0.6, 1.5)
         } else {
             clamp(1.1 * t.s.sqrt(), 0.45, 1.2)
         });
@@ -925,8 +915,10 @@ impl<'a, 'p> Draw<'a, 'p> {
             theme.accent
         } else if let Some(s) = status {
             theme.change(s).ink
+        } else if lane {
+            theme.lane_outline
         } else {
-            outline
+            theme.region_outline
         });
         if !lane {
             ctx.stroke();
@@ -982,15 +974,14 @@ impl<'a, 'p> Draw<'a, 'p> {
         self.ctx.set_alpha(1.0);
     }
 
-    /// What a loop's, a branch's or an arm's keyword says it does; an untitled
-    /// branch is what its first arm is (a `try` holding its handlers). None for other blocks.
+    /// What a loop's, a branch's or an arm's keyword says it does. None for
+    /// other blocks, and for an untitled branch, which has no band (its arms do).
     fn flow_role(&self, n: &Node) -> Option<FlowRole> {
         let of = |title: &str| flow_keyword(title).map(|k| k.2);
         match n.kind {
+            _ if n.title.is_empty() => None,
             Kind::Loop => Some(of(&n.title).unwrap_or(FlowRole::Loop)),
-            Kind::Lane => Some(of(&n.title).unwrap_or(FlowRole::Branch)),
-            Kind::Branch if n.title.is_empty() => Some(n.children.first().and_then(|&c| of(&self.m.node(c).title)).unwrap_or(FlowRole::Branch)),
-            Kind::Branch => Some(of(&n.title).unwrap_or(FlowRole::Branch)),
+            Kind::Lane | Kind::Branch => Some(of(&n.title).unwrap_or(FlowRole::Branch)),
             _ => None,
         }
     }

@@ -553,22 +553,15 @@ export class Renderer {
       alpha *= UNTOUCHED;
       this.faded++;
     }
-    // A loop, a branch and its arms, a try and its handlers are tinted and
-    // outlined in the color of what they do, under a band of it that holds their title.
+    // A loop, a branch's arm, a try's handler has its title on a band
+    // across its top in the color of what it does.
     const theme = this.theme;
     const role = this.flowRole(n);
     const flow = role ? theme.flow[role] : null;
-    let fill = fillOf(theme, n, status);
-    let outline = lane ? theme.laneOutline : theme.regionOutline;
-    if (flow && !status) {
-      // The role's color toward the page; an arm lighter than the branch around it.
-      fill = mix(flow.fill, theme.paper, lane ? 0.62 : 0.42);
-      outline = mix(flow.fill, flow.ink, lane ? 0.4 : 0.5);
-    }
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.roundRect(b.x, b.y, b.w, b.h, radius);
-    ctx.fillStyle = fill;
+    ctx.fillStyle = fillOf(theme, n, status);
     ctx.fill();
     if (flow && n.title) {
       ctx.save();
@@ -581,8 +574,8 @@ export class Renderer {
       ctx.beginPath();
       ctx.roundRect(b.x, b.y, b.w, b.h, radius);
     }
-    ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : flow ? clamp(1.3 * Math.sqrt(t.s), 0.6, 1.5) : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
-    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? theme.change[status].ink : outline;
+    ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
+    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? theme.change[status].ink : lane ? theme.laneOutline : theme.regionOutline;
     if (!lane) ctx.stroke();
     else if (4 * t.s < 1) {
       // Dashes finer than a pixel blend into a fainter line: drawn as one.
@@ -625,18 +618,11 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  /** What a loop's, a branch's or an arm's keyword says it does; an untitled branch is what its first arm is (a `try` holding its handlers). Null for other blocks. */
+  /** What a loop's, a branch's or an arm's keyword says it does. Null for other blocks, and for an untitled branch, which has no band (its arms do). */
   private flowRole(n: SceneNode): FlowRole | null {
-    const of = (title: string) => flowKeyword(title)?.role;
-    switch (n.kind) {
-      case 'loop': return of(n.title) ?? 'loop';
-      case 'lane': return of(n.title) ?? 'branch';
-      case 'branch': {
-        const first = n.children?.[0];
-        return (n.title ? of(n.title) : first !== undefined ? of(this.model.node(first).title) : undefined) ?? 'branch';
-      }
-      default: return null;
-    }
+    if (!n.title) return null;
+    const role = flowKeyword(n.title)?.role;
+    return n.kind === 'loop' ? role ?? 'loop' : n.kind === 'lane' || n.kind === 'branch' ? role ?? 'branch' : null;
   }
 
   /**
