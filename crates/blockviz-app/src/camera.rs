@@ -195,10 +195,10 @@ pub enum Framing {
     Fit,
 }
 
-/// A planned camera move: where it starts from (the shared part of both paths) and the views it passes.
+/// A planned camera move: how long it takes, where it starts from (the part
+/// of the path both ends share) and the views it passes.
 pub struct Plan {
     pub duration: f64,
-    pub length: f64,
     base: Vec<u32>,
     path: SmoothPath,
 }
@@ -317,7 +317,7 @@ impl Camera {
     }
 
     fn plan(base: Vec<u32>, path: SmoothPath) -> Plan {
-        Plan { duration: (path.length * 260.0).clamp(320.0, 1400.0), length: path.length, base, path }
+        Plan { duration: (path.length * 260.0).clamp(320.0, 1400.0), base, path }
     }
 
     /// Positions the camera `t` (0…1) of the way along a plan.
@@ -459,6 +459,31 @@ mod tests {
             }
             assert!(close(p.at(0.0).cx, a.cx, 1e-12) && close(p.at(1.0).w, b.w, 1e-6));
         }
+    }
+
+    #[test]
+    fn a_flight_opens_a_block_and_home_comes_back_out() {
+        let files = [
+            ("model.py", "class Block:\n    def forward(self, x):\n        x = x + self.attn(x)\n        x = x + self.mlp(x)\n        return x\n"),
+            ("train.py", "from model import Block\nfor step in range(10):\n    b = Block()\n    b.forward(step)\n"),
+        ];
+        let inputs = files.iter().map(|(p, t)| blockviz_core::project::InFile { path: p.to_string(), text: Some(t.to_string()), bytes: t.len() as u64 }).collect();
+        let m = Model::new(blockviz_core::analyze("t", inputs), files.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect());
+        let (w, h) = (1200.0, 800.0);
+        let mut cam = Camera::new(&m);
+        cam.fit_root(&m, w, h);
+        let forward = m.scene.nodes.iter().find(|n| n.title == "forward").unwrap().id;
+        let target = m.canonical_path(forward);
+        let plan = cam.flight(&m, &target, w, h, Framing::Open, 0.08);
+        assert!(plan.duration >= 320.0 && plan.duration <= 1400.0);
+        cam.step(&m, &plan, 1.0, w, h);
+        assert_eq!(cam.focus(&m, w, h).last(), Some(&forward), "{:?}", cam.focus(&m, w, h));
+        let home = cam.flight(&m, &[m.root()], w, h, Framing::Fit, 0.05);
+        cam.step(&m, &home, 1.0, w, h);
+        assert_eq!(cam.path, [m.root()]);
+        let mut fitted = Camera::new(&m);
+        fitted.fit_root(&m, w, h);
+        assert!(close(cam.xf.s, fitted.xf.s, 1e-9) && close(cam.xf.x, fitted.xf.x, 1e-6));
     }
 
     #[test]

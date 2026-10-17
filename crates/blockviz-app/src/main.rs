@@ -1,5 +1,7 @@
 //! blockviz as a native app: a folder on disk analyzed in process and drawn
-//! with GPUI. Drag pans, scrolling zooms at the pointer, a click selects.
+//! with GPUI. Drag pans, scrolling zooms at the pointer, a click selects, a
+//! double click (or Enter) opens; F fits the block the view is in, H or 0 shows
+//! the whole project.
 //!
 //! `blockviz-app [folder] [--svg out.svg]`: with `--svg`, the whole view is
 //! written as SVG, drawn as the window would draw it, and no window opens.
@@ -10,7 +12,7 @@ mod model;
 mod paint;
 mod theme;
 
-use camera::Camera;
+use camera::{Camera, Framing, Plan};
 use gpui::{
     canvas, div, prelude::*, px, size, App, Application, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window, WindowBounds, WindowOptions,
@@ -40,7 +42,11 @@ struct Viewer {
     /// Blocks drawn in the last frame, for clicks.
     hits: Vec<Hit>,
     selected: Option<u32>,
+    /// The instance path the selection was made through (the call it was reached by).
+    selected_path: Option<Vec<u32>>,
     press: Option<Press>,
+    /// A camera move under way, and when it started.
+    flight: Option<(Instant, Plan)>,
 }
 
 impl Viewer {
@@ -49,7 +55,59 @@ impl Viewer {
         cx.notify();
     }
 
+    /// Flies to the node at the end of an instance path: `Open` to read it, `Fit` to see all of it.
+    fn fly_to(&mut self, path: &[u32], how: Framing, pad: f64, cx: &mut Context<Self>) {
+        let plan = self.camera.flight(&self.m, path, self.width, self.height, how, pad);
+        self.flight = Some((Instant::now(), plan));
+        cx.notify();
+    }
+
+    fn select(&mut self, id: Option<u32>, path: Option<Vec<u32>>, cx: &mut Context<Self>) {
+        self.selected = id;
+        self.selected_path = path;
+        cx.notify();
+    }
+
+    /// Frames all of the block the view is in.
+    fn fit(&mut self, cx: &mut Context<Self>) {
+        let path = self.camera.focus(&self.m, self.width, self.height);
+        if path.len() <= 1 {
+            self.home(cx);
+        } else {
+            self.fly_to(&path, Framing::Fit, 0.04, cx);
+        }
+    }
+
+    fn home(&mut self, cx: &mut Context<Self>) {
+        self.fly_to(&[self.m.root()], Framing::Fit, 0.05, cx);
+    }
+
+    /// Opens the block at a point (a double click): zooms into it, or goes to its definition.
+    fn open(&mut self, x: f64, y: f64, cx: &mut Context<Self>) {
+        let i = paint::hit_at(&self.hits, x, y, true);
+        if i < 0 {
+            self.flight = None;
+            self.camera.zoom(&self.m, 2.0, x, y);
+            self.changed(cx);
+            return;
+        }
+        let n = self.m.node(self.hits[i as usize].id);
+        // A block with nothing inside but a definition elsewhere goes there.
+        match n.link {
+            Some(link) if self.m.owner(n).is_none() && link != n.id => {
+                let path = self.m.canonical_path(link);
+                self.select(Some(link), Some(path.clone()), cx);
+                self.fly_to(&path, Framing::Open, 0.08, cx);
+            }
+            _ => {
+                let path = paint::path_of(&self.hits, self.m.root(), i);
+                self.fly_to(&path, Framing::Open, 0.08, cx);
+            }
+        }
+    }
+
     fn scroll(&mut self, e: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.flight = None;
         let d = e.delta.pixel_delta(px(16.0));
         // Scrolling zooms, as on the web: AppKit's deltas are the opposite way round to a browser's.
         let factor = (f64::from(d.y).clamp(-160.0, 160.0) * 0.0022).exp();
@@ -57,8 +115,14 @@ impl Viewer {
         self.changed(cx);
     }
 
-    fn down(&mut self, e: &MouseDownEvent, window: &mut Window, _: &mut Context<Self>) {
+    fn down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
+        self.flight = None;
+        if e.click_count == 2 {
+            self.press = None;
+            self.open(f64::from(e.position.x), f64::from(e.position.y), cx);
+            return;
+        }
         self.press = Some(Press { at: e.position, last: e.position, moved: false });
     }
 
@@ -81,15 +145,26 @@ impl Viewer {
         let Some(p) = self.press.take() else { return };
         if !p.moved {
             let i = paint::hit_at(&self.hits, f64::from(e.position.x), f64::from(e.position.y), false);
-            self.selected = (i >= 0).then(|| self.hits[i as usize].id);
-            cx.notify();
+            let path = (i >= 0).then(|| paint::path_of(&self.hits, self.m.root(), i));
+            self.select(path.as_ref().and_then(|p| p.last().copied()), path, cx);
         }
     }
 
     fn key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if e.keystroke.key.as_str() == "escape" {
-            self.selected = None;
-            cx.notify();
+        let k = &e.keystroke;
+        if k.modifiers.platform || k.modifiers.control || k.modifiers.alt {
+            return;
+        }
+        match k.key.as_str() {
+            "escape" => self.select(None, None, cx),
+            "enter" => {
+                if let Some(path) = self.selected_path.clone() {
+                    self.fly_to(&path, Framing::Open, 0.08, cx);
+                }
+            }
+            "f" => self.fit(cx),
+            "h" | "0" => self.home(cx),
+            _ => {}
         }
     }
 }
@@ -128,6 +203,15 @@ impl Viewer {
             self.camera.reanchor(&self.m, width, height);
         }
         (self.width, self.height) = (width, height);
+        if let Some((start, plan)) = &self.flight {
+            let t = (start.elapsed().as_secs_f64() * 1000.0 / plan.duration).clamp(0.0, 1.0);
+            self.camera.step(&self.m, plan, camera::ease(t), width, height);
+            if t >= 1.0 {
+                self.flight = None;
+            } else {
+                window.request_animation_frame();
+            }
+        }
         window.paint_quad(gpui::fill(bounds, self.theme.background));
         let xfs = self.camera.transforms(&self.m);
         let mut walk = Walk::new(&self.m, &self.theme, width, height, &self.camera.path, &xfs);
@@ -182,7 +266,7 @@ fn main() {
                 let focus = cx.focus_handle();
                 window.focus(&focus);
                 let camera = Camera::new(&m);
-                Viewer { m, camera, theme: theme::light(), fonts: Fonts::new(), focus, width: 0.0, height: 0.0, hits: vec![], selected: None, press: None }
+                Viewer { m, camera, theme: theme::light(), fonts: Fonts::new(), focus, width: 0.0, height: 0.0, hits: vec![], selected: None, selected_path: None, press: None, flight: None }
             })
         })
         .unwrap();
