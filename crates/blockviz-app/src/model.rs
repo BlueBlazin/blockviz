@@ -252,6 +252,25 @@ impl Model {
         canonical
     }
 
+    /// When an instance path runs through a call into code defined elsewhere
+    /// (`… › block › attn`), the definition its end is in; None on a path
+    /// that stays where things are defined.
+    pub fn borrowed_definition(&self, path: &[u32]) -> Option<u32> {
+        let borrowed = path.iter().any(|&id| {
+            let n = self.node(id);
+            self.owner(n).is_some_and(|o| o.id != n.id)
+        });
+        if !borrowed {
+            return None;
+        }
+        let last = self.node(*path.last()?);
+        let o = self.owner(last).unwrap_or(last);
+        if whole(o.kind) {
+            return Some(o.id);
+        }
+        self.where_is(o.id).map(|w| w.1)
+    }
+
     /// What a block is in, as search lists it: `model.py › Block`.
     pub fn trail(&self, id: u32) -> String {
         let path = self.canonical_path(id);

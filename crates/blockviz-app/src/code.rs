@@ -15,17 +15,32 @@ pub struct Line {
     pub segs: Vec<Seg>,
 }
 
-#[cfg(test)]
 impl Line {
     pub fn text(&self) -> String {
         self.segs.iter().map(|s| s.text.as_str()).collect()
     }
+
+    /// The width of the line's leading whitespace, in characters (a tab is four).
+    pub fn indent(&self) -> usize {
+        let mut n = 0;
+        for s in &self.segs {
+            for c in s.text.chars() {
+                match c {
+                    ' ' => n += 1,
+                    '\t' => n += 4,
+                    _ => return n,
+                }
+            }
+        }
+        0
+    }
 }
 
 /// The whole lines a span touches, as classed segments, and how many lines
-/// past `max_lines` were left out. Common indentation is removed. `runs` is
+/// past `max_lines` were left out. Common indentation is removed unless
+/// `keep_indent` (two versions shown together share one cut). `runs` is
 /// `[len, class, ...]` over the file's UTF-8 bytes; empty, everything is plain.
-pub fn lines(text: &str, runs: &[u32], start: usize, end: usize, first_line: u32, max_lines: usize) -> (Vec<Line>, usize) {
+pub fn lines(text: &str, runs: &[u32], start: usize, end: usize, first_line: u32, max_lines: usize, keep_indent: bool) -> (Vec<Line>, usize) {
     let bytes = text.as_bytes();
     let start = start.min(bytes.len());
     let mut end = end.max(start).min(bytes.len());
@@ -91,7 +106,7 @@ pub fn lines(text: &str, runs: &[u32], start: usize, end: usize, first_line: u32
         }
     }
     let more = if out.len() >= max_lines && to > from { bytes[from..to].iter().filter(|&&b| b == b'\n').count() + 1 - out.len() } else { 0 };
-    (dedent(out), more)
+    (if keep_indent { out } else { dedent(out) }, more)
 }
 
 fn leading(s: &str) -> usize {
@@ -99,7 +114,7 @@ fn leading(s: &str) -> usize {
 }
 
 /// Removes the indentation every non-blank line shares.
-fn dedent(lines: Vec<Line>) -> Vec<Line> {
+pub fn dedent(lines: Vec<Line>) -> Vec<Line> {
     let indent = |l: &Line| {
         let mut n = 0;
         for s in &l.segs {
@@ -151,7 +166,7 @@ mod tests {
     #[test]
     fn shows_whole_lines_dedented_numbered_from_the_span() {
         let start = SRC.find("def").unwrap();
-        let (l, _) = lines(SRC, &[], start, SRC.len(), 2, 2000);
+        let (l, _) = lines(SRC, &[], start, SRC.len(), 2, 2000, false);
         assert_eq!(texts(&l), ["def f(self):", "    x = self.attn(x)", "    return x"]);
         assert_eq!(l.iter().map(|l| l.no).collect::<Vec<_>>(), [2, 3, 4]);
     }
@@ -160,7 +175,7 @@ mod tests {
     fn dims_the_rest_of_the_statement_around_a_call() {
         let start = SRC.find("self.attn").unwrap();
         let end = start + "self.attn(x)".len();
-        let (l, _) = lines(SRC, &[], start, end, 3, 2000);
+        let (l, _) = lines(SRC, &[], start, end, 3, 2000, false);
         assert_eq!(texts(&l), ["x = self.attn(x)"]);
         assert_eq!(l[0].segs.iter().map(|s| (s.text.as_str(), s.dim)).collect::<Vec<_>>(), [("x = ", true), ("self.attn(x)", false)]);
     }
@@ -168,7 +183,7 @@ mod tests {
     #[test]
     fn applies_syntax_runs_and_splits_them_at_line_ends() {
         let s = "a = 'x'\nb\n";
-        let (l, _) = lines(s, &[4, 0, 3, 2, 3, 0], 0, s.len(), 1, 2000);
+        let (l, _) = lines(s, &[4, 0, 3, 2, 3, 0], 0, s.len(), 1, 2000, false);
         assert_eq!(l[0].segs, [Seg { text: "a = ".into(), cls: 0, dim: false }, Seg { text: "'x'".into(), cls: 2, dim: false }]);
         assert_eq!(texts(&l), ["a = 'x'", "b"]);
     }
@@ -176,14 +191,14 @@ mod tests {
     #[test]
     fn keeps_multi_byte_characters_whole() {
         let s = "π = \"日本\"\n";
-        let (l, _) = lines(s, &[5, 0, 8, 2, 1, 0], 0, s.len(), 1, 2000);
+        let (l, _) = lines(s, &[5, 0, 8, 2, 1, 0], 0, s.len(), 1, 2000, false);
         assert_eq!(l[0].segs.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(), ["π = ", "\"日本\""]);
     }
 
     #[test]
     fn caps_very_long_spans() {
         let s = (0..50).map(|i| format!("l{i}")).collect::<Vec<_>>().join("\n");
-        let (l, more) = lines(&s, &[], 0, s.len(), 1, 10);
+        let (l, more) = lines(&s, &[], 0, s.len(), 1, 10, false);
         assert_eq!(l.len(), 10);
         assert_eq!(more, 40);
     }

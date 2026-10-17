@@ -199,6 +199,8 @@ pub enum Framing {
 /// of the path both ends share) and the views it passes.
 pub struct Plan {
     pub duration: f64,
+    /// How far it goes (0: nowhere).
+    pub length: f64,
     base: Vec<u32>,
     path: SmoothPath,
 }
@@ -317,7 +319,20 @@ impl Camera {
     }
 
     fn plan(base: Vec<u32>, path: SmoothPath) -> Plan {
-        Plan { duration: (path.length * 260.0).clamp(320.0, 1400.0), base, path }
+        Plan { duration: (path.length * 260.0).clamp(320.0, 1400.0), length: path.length, base, path }
+    }
+
+    /// Plans a flight back to a saved camera state (on the same scene).
+    pub fn flight_to(&self, m: &Model, path: &[u32], xf: Xf, width: f64, height: f64) -> Plan {
+        let common = self.path.iter().zip(path).take_while(|(a, b)| a == b).count();
+        let lca = common.saturating_sub(1);
+        // The saved transform, carried up to the common ancestor's interior.
+        let mut t = xf;
+        for i in (lca + 1..path.len()).rev() {
+            t = m.exterior(t, m.node(path[i]));
+        }
+        let from = view_of(self.transforms(m)[lca], width, height);
+        Self::plan(path[..=lca].to_vec(), SmoothPath::new(from, view_of(t, width, height)))
     }
 
     /// Positions the camera `t` (0…1) of the way along a plan.
@@ -397,14 +412,6 @@ impl Camera {
     }
 }
 
-/// The ease of a flight: slow in, slow out.
-pub fn ease(t: f64) -> f64 {
-    if t < 0.5 {
-        4.0 * t * t * t
-    } else {
-        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-    }
-}
 
 #[cfg(test)]
 mod tests {

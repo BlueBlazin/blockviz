@@ -1,8 +1,8 @@
 //! The containers the view is in, root first; each goes back out to it
 //! (src/ui/Breadcrumbs.tsx).
 
-use crate::theme::{Ui, UI_FONT};
-use gpui::{div, prelude::*, px, AnyElement, FontWeight, SharedString};
+use crate::theme::Ui;
+use gpui::{div, prelude::*, px, FontWeight, SharedString, Stateful};
 
 /// Long paths keep their first and last steps and fold the middle into a menu,
 /// folding more (keeping fewer last steps) while the path is wider than its room.
@@ -32,8 +32,9 @@ pub fn fold(titles: &[SharedString], room: f64) -> (Vec<Option<usize>>, Vec<usiz
     unreachable!()
 }
 
-/// A crumb as a button: `on_go` is called with its index.
-pub fn crumb(ui: &Ui, i: usize, title: SharedString, last: bool, on_go: impl Fn(usize, &mut gpui::Window, &mut gpui::App) + 'static) -> AnyElement {
+/// A crumb as a button (`.crumb button`), the last one bold.
+pub fn crumb(ui: &Ui, i: usize, title: SharedString, last: bool) -> Stateful<gpui::Div> {
+    let (hover, ink) = (ui.hover, ui.ink);
     div()
         .id(("crumb", i))
         .px(px(7.0))
@@ -44,20 +45,9 @@ pub fn crumb(ui: &Ui, i: usize, title: SharedString, last: bool, on_go: impl Fn(
         .cursor_pointer()
         .text_color(if last { ui.ink } else { ui.muted })
         .when(last, |d| d.font_weight(FontWeight::SEMIBOLD))
-        .hover(|s| s.bg(ui.hover).text_color(ui.ink))
+        .hover(move |s| s.bg(hover).text_color(ink))
         .when(i == 0, |d| d.debug_selector(|| "crumb-root".into()))
-        .on_click(move |_, window, cx| on_go(i, window, cx))
         .child(title)
-        .into_any_element()
-}
-
-pub fn chevron(ui: &Ui) -> AnyElement {
-    div().text_color(ui.faint).px(px(1.0)).child("›").into_any_element()
-}
-
-/// The bar the crumbs sit on.
-pub fn bar(ui: &Ui) -> gpui::Div {
-    div().flex().items_center().bg(ui.glass).rounded(px(8.0)).p(px(2.0)).font_family(UI_FONT).text_size(px(13.0)).occlude()
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@
 
 use crate::camera::{box_of, zoom_at, Camera, Rect, Xf};
 use crate::model::Model;
-use crate::paint::{self, Hit};
+use crate::render::{hit_at, path_of, Hit};
 use blockviz_core::ir::Node;
 
 /// The child of `new_owner` that is `old_child` of `old_owner`: the one of the
@@ -64,8 +64,8 @@ fn on_screen(camera: &Camera, m: &Model, path: &[u32]) -> Option<Rect> {
 pub fn carry(old: &Model, new: &Model, camera: &mut Camera, hits: &[Hit], width: f64, height: f64) {
     let i = camera.insets;
     let (cx, cy) = ((i.left + width - i.right) / 2.0, (i.top + height - i.bottom) / 2.0);
-    let at = paint::hit_at(hits, cx, cy, false);
-    let looked_at = (at >= 0).then(|| paint::path_of(hits, old.root(), at));
+    let at = hit_at(hits, cx, cy, false);
+    let looked_at = (at >= 0).then(|| path_of(hits, old.root(), at));
     let before = Camera { path: camera.path.clone(), xf: camera.xf, insets: camera.insets };
     let xfs = camera.transforms(old);
 
@@ -90,13 +90,21 @@ pub fn carry(old: &Model, new: &Model, camera: &mut Camera, hits: &[Hit], width:
 mod tests {
     use super::*;
     use crate::camera::Framing;
-    use crate::paint::Walk;
+    
 
     const MODEL_PY: &str = "class Block:\n    def forward(self, x):\n        x = x + self.attn(x)\n        x = x + self.mlp(x)\n        return x\n\n\nclass MLP:\n    def forward(self, x):\n        return self.fc(x)\n";
 
     fn model(files: &[(&str, &str)]) -> Model {
         let inputs = files.iter().map(|(p, t)| blockviz_core::project::InFile { path: p.to_string(), text: Some(t.to_string()), bytes: t.len() as u64 }).collect();
         Model::new(blockviz_core::analyze("t", inputs), files.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect())
+    }
+
+    /// What a frame of this view draws, as the window would draw it.
+    fn hits_of(m: &Model, cam: &Camera, w: f64, h: f64) -> Vec<Hit> {
+        let xfs = cam.transforms(m);
+        let p = crate::render::Paint { width: w, height: h, hover: None, selected: None, path: &cam.path, xfs: &xfs, related: None, trace: None, hover_edge: None, diff: None };
+        let mut pen = crate::svgpen::SvgPen::estimating();
+        crate::render::Renderer::default().draw(&mut pen, m, &crate::theme::Theme::light(), &p).hits
     }
 
     fn path_to(m: &Model, class: &str, method: &str) -> Vec<u32> {
@@ -128,13 +136,7 @@ mod tests {
         cam.fit_root(&old, w, h);
         let plan = cam.flight(&old, &path_to(&old, "Block", "forward"), w, h, Framing::Open, 0.08);
         cam.step(&old, &plan, 1.0, w, h);
-        let theme = crate::theme::light();
-        let hits = {
-            let xfs = cam.transforms(&old);
-            let mut walk = Walk::new(&old, &theme, w, h, &cam.path, &xfs);
-            walk.draw();
-            walk.hits
-        };
+        let hits = hits_of(&old, &cam, w, h);
         let target = path_to(&old, "Block", "forward");
         assert_eq!(cam.focus(&old, w, h), target);
         let was = on_screen(&cam, &old, &target).unwrap();
@@ -159,14 +161,10 @@ mod tests {
         let file = old.scene.nodes.iter().find(|n| n.title == "model.py").unwrap().id;
         let plan = cam.flight(&old, &old.canonical_path(file), w, h, Framing::Fit, 0.04);
         cam.step(&old, &plan, 1.0, w, h);
-        let theme = crate::theme::light();
-        let xfs = cam.transforms(&old);
-        let mut walk = Walk::new(&old, &theme, w, h, &cam.path, &xfs);
-        walk.draw();
-        let hits = walk.hits;
-        let at = paint::hit_at(&hits, w / 2.0, h / 2.0, false);
+        let hits = hits_of(&old, &cam, w, h);
+        let at = hit_at(&hits, w / 2.0, h / 2.0, false);
         assert!(at >= 0);
-        let looked_at = paint::path_of(&hits, old.root(), at);
+        let looked_at = path_of(&hits, old.root(), at);
         let was = hits[at as usize].rect;
 
         let new = files("def first(x):\n    a = p(x)\n    b = q(a)\n    return r(b)\n\n\n");

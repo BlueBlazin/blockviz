@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// A repository, seen from a folder in it.
+#[derive(Clone, Debug)]
 pub struct Repo {
     root: PathBuf,
     /// The folder's path within the repository, "" at its root.

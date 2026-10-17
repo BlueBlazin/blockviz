@@ -11,8 +11,15 @@ blockviz-core = { path = "../blockviz-core" }
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
 # Receiving new analyses from the thread that makes them.
 futures = "0.3"
+# Round joins for the diagram's lines (the tessellator GPUI draws paths with).
+lyon = "1"
 # Watching the folder for changes (FSEvents on macOS).
 notify = "8.2"
+# PNG downloads: the view's SVG rasterized (GPUI already builds it).
+resvg = "0.45"
+# Settings, kept as JSON.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # Moving through the search field by character, as a reader sees characters.
 unicode-segmentation = "1"
 

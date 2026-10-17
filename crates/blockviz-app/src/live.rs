@@ -8,7 +8,7 @@ use blockviz_core::project::{build_cached, ignored, Cache, InFile};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, RecvTimeoutError};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 /// How long the folder must be quiet before analyzing again.
@@ -26,14 +26,32 @@ pub struct File {
 /// The project's files, by path relative to its folder.
 pub type Files = BTreeMap<String, File>;
 
-/// A new analysis of the project, made after files changed.
+/// A new analysis of the project: its first, or one made after files changed.
 pub struct Update {
     pub model: Model,
-    /// The files that changed since the last one.
+    /// The files it was made from (a comparison reads them).
+    pub files: Files,
+    /// The files that changed since the last one (none for the first, or a new layout).
     pub changed: Vec<String>,
+    pub first: bool,
+    /// How long reading (the first time) and analyzing took.
+    pub read: Duration,
     pub took: Duration,
     /// Files whose parse was reused.
     pub reused: usize,
+}
+
+/// What the window asks of the project's thread.
+pub enum Ask {
+    /// Lay the project out again, each block's values on one branching line or not.
+    Layout { shared_trunks: bool },
+    /// Stop: another folder is open.
+    Stop,
+}
+
+enum Msg {
+    Fs(notify::Result<notify::Event>),
+    Ask(Ask),
 }
 
 pub fn read(root: &Path) -> Files {
@@ -127,30 +145,81 @@ pub fn apply(root: &Path, files: &mut Files, paths: impl IntoIterator<Item = Pat
     changed
 }
 
-/// Watches `root` on a thread of its own and sends a new analysis whenever
-/// its files change. Stops when `send` reports the receiver is gone.
-pub fn watch(root: PathBuf, name: String, mut files: Files, mut cache: Cache, send: impl Fn(Update) -> bool + Send + 'static) {
+/// Opens the project at `root` on a thread of its own: reads and analyzes
+/// it, sends the analysis, then watches the folder and sends a new one
+/// whenever its files change (or the window asks for a new layout). Stops when
+/// asked, or when `send` reports the window is gone.
+pub fn open(root: PathBuf, shared_trunks: bool, send: impl Fn(Update) -> bool + Send + 'static) -> Sender<Ask> {
+    let (tx, rx) = channel::<Msg>();
+    let (ask_tx, ask_rx) = channel::<Ask>();
+    // The window's asks join the folder's events in one queue.
+    let forward = tx.clone();
     std::thread::spawn(move || {
-        let (tx, rx) = channel();
-        let mut watcher = match notify::recommended_watcher(move |e| {
-            let _ = tx.send(e);
-        }) {
-            Ok(w) => w,
-            Err(e) => return eprintln!("Not watching {}: {e}", root.display()),
-        };
-        if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
-            return eprintln!("Not watching {}: {e}", root.display());
+        while let Ok(a) = ask_rx.recv() {
+            if forward.send(Msg::Ask(a)).is_err() {
+                return;
+            }
         }
+    });
+    std::thread::spawn(move || {
+        let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let mut opts = blockviz_core::layout::Options { shared_trunks };
+        let mut cache = Cache::default();
+        let reading = Instant::now();
+        let mut files = read(&root);
+        let read_took = reading.elapsed();
+        let analyze = |files: &Files, opts: blockviz_core::layout::Options, cache: &mut Cache| {
+            let start = Instant::now();
+            let scene = build_cached(&name, inputs(files), opts, cache);
+            (Model::new(scene, texts(files)), start.elapsed())
+        };
+        let (model, took) = analyze(&files, opts, &mut cache);
+        if !send(Update { model, files: files.clone(), changed: vec![], first: true, read: read_took, took, reused: 0 }) {
+            return;
+        }
+        let events = tx.clone();
+        let watcher = notify::recommended_watcher(move |e| {
+            let _ = events.send(Msg::Fs(e));
+        })
+        .and_then(|mut w| w.watch(&root, RecursiveMode::Recursive).map(|_| w));
+        let _watcher = match watcher {
+            Ok(w) => Some(w),
+            Err(e) => {
+                eprintln!("Not watching {}: {e}", root.display());
+                None
+            }
+        };
+        drop(tx);
         let paths_of = |e: notify::Result<notify::Event>| match e {
             // Reading a file is not changing it.
             Ok(e) if !matches!(e.kind, EventKind::Access(_)) => e.paths,
             _ => vec![],
         };
         while let Ok(first) = rx.recv() {
-            let mut paths = paths_of(first);
+            let mut paths = vec![];
+            let mut relayout = false;
+            let mut take = |m: Msg, paths: &mut Vec<PathBuf>| -> bool {
+                match m {
+                    Msg::Fs(e) => paths.extend(paths_of(e)),
+                    Msg::Ask(Ask::Layout { shared_trunks }) => {
+                        relayout |= opts.shared_trunks != shared_trunks;
+                        opts.shared_trunks = shared_trunks;
+                    }
+                    Msg::Ask(Ask::Stop) => return false,
+                }
+                true
+            };
+            if !take(first, &mut paths) {
+                return;
+            }
+            // A save is often several events, a checkout many: wait until the folder is quiet.
             loop {
                 match rx.recv_timeout(SETTLE) {
-                    Ok(e) => paths.extend(paths_of(e)),
+                    Ok(m) => {
+                        if !take(m, &mut paths) {
+                            return;
+                        }
+                    }
                     Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
@@ -158,18 +227,17 @@ pub fn watch(root: PathBuf, name: String, mut files: Files, mut cache: Cache, se
             paths.sort();
             paths.dedup();
             let changed = apply(&root, &mut files, paths);
-            if changed.is_empty() {
+            if changed.is_empty() && !relayout {
                 continue;
             }
-            let start = Instant::now();
-            let scene = build_cached(&name, inputs(&files), blockviz_core::layout::Options::default(), &mut cache);
-            let model = Model::new(scene, texts(&files));
-            let update = Update { model, changed, took: start.elapsed(), reused: cache.reused() };
+            let (model, took) = analyze(&files, opts, &mut cache);
+            let update = Update { model, files: files.clone(), changed, first: false, read: Duration::ZERO, took, reused: cache.reused() };
             if !send(update) {
                 return;
             }
         }
     });
+    ask_tx
 }
 
 #[cfg(test)]
