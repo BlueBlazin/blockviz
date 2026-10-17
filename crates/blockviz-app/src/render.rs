@@ -232,6 +232,9 @@ pub fn guard_keywords(caption: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// The band at the top of a loop or a branch that holds its title: the layout's region header.
+const FLOW_BAND: f64 = 26.0;
+
 /// As the web's `clamp`: the low bound wins when the bounds cross.
 pub fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
     lo.max(hi.min(v))
@@ -881,16 +884,40 @@ impl<'a, 'p> Draw<'a, 'p> {
         }
         let theme = self.theme;
         let selected = self.p.selected == Some(n.id);
+        // A loop, a branch and its arms, a try and its handlers are tinted and
+        // outlined in the color of what they do, under a band of it that holds their title.
+        let role = self.flow_role(n);
+        let flow = role.map(|r| theme.flow(r));
+        let mut fill = fill_of(theme, n, status);
+        let mut outline = if lane { theme.lane_outline } else { theme.region_outline };
+        if let (Some(f), None) = (flow, status) {
+            // The role's color toward the page; an arm lighter than the branch around it.
+            fill = mix(f.fill, theme.paper, if lane { 0.62 } else { 0.42 });
+            outline = mix(f.fill, f.ink, if lane { 0.4 } else { 0.5 });
+        }
         let ctx = &mut *self.ctx;
         ctx.set_alpha(alpha);
         ctx.begin_path();
         ctx.round_rect(b.x, b.y, b.w, b.h, radius);
-        ctx.set_fill(fill_of(theme, n, status));
+        ctx.set_fill(fill);
         ctx.fill();
+        if let (Some(f), false) = (flow, n.title.is_empty()) {
+            ctx.save();
+            ctx.clip();
+            ctx.set_fill(if let Some(s) = status { mix(f.fill, theme.change(s).tint, 0.5) } else { f.fill });
+            ctx.fill_rect(b.x, b.y, b.w, (FLOW_BAND * t.s).min(b.h));
+            ctx.restore();
+            ctx.set_alpha(alpha);
+            // The clip's path was the region's outline: draw it again for the stroke.
+            ctx.begin_path();
+            ctx.round_rect(b.x, b.y, b.w, b.h, radius);
+        }
         ctx.set_line_width(if selected {
             2.0
         } else if status.is_some() {
             1.5
+        } else if flow.is_some() {
+            clamp(1.3 * t.s.sqrt(), 0.6, 1.5)
         } else {
             clamp(1.1 * t.s.sqrt(), 0.45, 1.2)
         });
@@ -898,10 +925,8 @@ impl<'a, 'p> Draw<'a, 'p> {
             theme.accent
         } else if let Some(s) = status {
             theme.change(s).ink
-        } else if lane {
-            theme.lane_outline
         } else {
-            theme.region_outline
+            outline
         });
         if !lane {
             ctx.stroke();
@@ -921,8 +946,8 @@ impl<'a, 'p> Draw<'a, 'p> {
             self.seen(me, n, size, alpha * smoothstep(4.2, 7.0, size));
         }
         // A loop's or a branch's title is drawn over what is inside it, below.
-        let flow = !n.title.is_empty() && (code_kind(n.kind) || lane);
-        if !flow && !n.title.is_empty() && size >= 4.2 {
+        let titled_flow = !n.title.is_empty() && flow.is_some();
+        if !titled_flow && !n.title.is_empty() && size >= 4.2 {
             self.ctx.set_alpha(alpha * smoothstep(4.2, 7.0, size));
             let code = code_kind(n.kind);
             let badges = n.badges.join("  ");
@@ -944,9 +969,9 @@ impl<'a, 'p> Draw<'a, 'p> {
         if let Some(inner) = inner {
             self.interior(n, inner, me, path_pos, chain, alpha);
         }
-        if flow {
+        if let (Some(f), true) = (flow, titled_flow) {
             // Over the lines that come in through its top, which pass behind it.
-            self.flow_title(n, b, t, alpha, fill_of(theme, n, status));
+            self.flow_title(n, b, t, alpha, f);
         }
         if self.p.diff.is_some() {
             self.change_marks(n, b, t, alpha, unfaded, status);
@@ -957,79 +982,67 @@ impl<'a, 'p> Draw<'a, 'p> {
         self.ctx.set_alpha(1.0);
     }
 
-    /// A loop's or a branch's title: its keyword on a tag colored by what it
-    /// does (a loop's with a circling arrow), then the rest as code, its own
-    /// keywords in the tag's color; a loop's count on a tag at the right.
-    /// While too small to read, the tags stay as spots of their color. The
-    /// code is haloed in the region's `fill`, so lines it is drawn over pass behind it.
-    fn flow_title(&mut self, n: &Node, b: Rect, t: Xf, alpha: f64, fill: Color) {
-        // Code grows with the zoom only so far: past that, more of it fits.
-        let size = (11.5 * t.s).min(14.0);
-        let spot = alpha * smoothstep(1.6, 3.2, size);
-        if spot < 0.01 {
-            return;
-        }
-        let shown = alpha * smoothstep(4.2, 7.0, size);
-        let split = flow_keyword(&n.title);
-        let role = split.map_or(FlowRole::Loop, |s| s.2);
-        let flow = self.theme.flow(role);
-        let (left, y, right) = (b.x + 10.0 * t.s, b.y + 17.0 * t.s, b.x + b.w - 10.0 * t.s);
-        // Tags are centered on the title's line; their words are a little smaller.
-        let ks = size * 0.86;
-        let h = size * 1.5;
-        let mid = y - size * 0.36;
-        let (top, ky, pad) = (mid - h / 2.0, mid + ks * 0.36, size * 0.5);
-        let mut end = right;
-        for badge in n.badges.iter().rev() {
-            self.font(ks, Family::Sans, 700);
-            let w = self.width(badge) + 2.0 * pad;
-            if end - w < left + 3.0 * h {
-                break;
-            }
-            end -= w;
-            self.tag(end, top, w, h, flow.fill, spot);
-            if shown > 0.01 {
-                self.ctx.set_alpha(shown);
-                self.ctx.set_fill(flow.ink);
-                self.text(badge, end + pad, ky, false);
-            }
-            end -= size * 0.4;
-        }
-        let mut x = left;
-        if let Some((keyword, _, role)) = split {
-            self.font(ks, Family::Sans, 700);
-            let icon = if role == FlowRole::Loop { size * 0.92 } else { 0.0 };
-            let w = self.width(keyword) + icon + 2.0 * pad;
-            if x + w > right {
-                return;
-            }
-            self.tag(x, top, w, h, flow.fill, spot);
-            if shown > 0.01 {
-                if icon > 0.0 {
-                    self.loop_mark(x + pad + size * 0.3, mid, size * 0.3, flow.ink, shown);
-                }
-                self.ctx.set_alpha(shown);
-                self.ctx.set_fill(flow.ink);
-                self.text(keyword, x + pad + icon, ky, false);
-            }
-            x += w + size * 0.45;
-        }
-        let rest = split.map_or(n.title.as_str(), |s| s.1);
-        if shown > 0.01 && !rest.is_empty() {
-            self.font(size, Family::Mono, 400);
-            let rest = self.fit(rest, end - x);
-            self.code(&rest, x, y, flow.ink, shown, Some(fill));
+    /// What a loop's, a branch's or an arm's keyword says it does; an untitled
+    /// branch is what its first arm is (a `try` holding its handlers). None for other blocks.
+    fn flow_role(&self, n: &Node) -> Option<FlowRole> {
+        let of = |title: &str| flow_keyword(title).map(|k| k.2);
+        match n.kind {
+            Kind::Loop => Some(of(&n.title).unwrap_or(FlowRole::Loop)),
+            Kind::Lane => Some(of(&n.title).unwrap_or(FlowRole::Branch)),
+            Kind::Branch if n.title.is_empty() => Some(n.children.first().and_then(|&c| of(&self.m.node(c).title)).unwrap_or(FlowRole::Branch)),
+            Kind::Branch => Some(of(&n.title).unwrap_or(FlowRole::Branch)),
+            _ => None,
         }
     }
 
-    /// A pill of `fill`.
-    fn tag(&mut self, x: f64, y: f64, w: f64, h: f64, fill: Color, alpha: f64) {
-        let ctx = &mut *self.ctx;
-        ctx.set_alpha(alpha);
-        ctx.set_fill(fill);
-        ctx.begin_path();
-        ctx.round_rect(x, y, w, h, h / 2.0);
-        ctx.fill();
+    /// A loop's or a branch's title on its band: its keyword in the band's
+    /// ink (a loop's after a circling arrow), then the rest as code, its own
+    /// keywords in the same ink; a loop's count at the right. The code is
+    /// haloed in the band's color, so lines it is drawn over pass behind it.
+    fn flow_title(&mut self, n: &Node, b: Rect, t: Xf, alpha: f64, flow: crate::theme::Flow) {
+        let band = (FLOW_BAND * t.s).min(b.h);
+        // Text grows with the zoom only so far: past that, more of it fits.
+        let size = (12.0 * t.s).min(16.0);
+        let shown = alpha * smoothstep(4.2, 7.0, size);
+        if shown < 0.01 {
+            return;
+        }
+        let pad = (10.0 * t.s).min(14.0);
+        let (left, right) = (b.x + pad, b.x + b.w - pad);
+        let mid = b.y + band / 2.0;
+        let y = mid + size * 0.36;
+        let split = flow_keyword(&n.title);
+        self.ctx.set_alpha(shown);
+        let mut end = right;
+        if !n.badges.is_empty() {
+            let badges = n.badges.join("  ");
+            self.font(size * 0.92, Family::Sans, 700);
+            let w = self.width(&badges);
+            if right - w > left + 6.0 * size {
+                self.ctx.set_fill(flow.ink);
+                self.text(&badges, right - w, mid + size * 0.92 * 0.36, false);
+                end = right - w - size * 0.8;
+            }
+        }
+        let mut x = left;
+        if let Some((keyword, _, role)) = split {
+            if role == FlowRole::Loop {
+                self.loop_mark(x + size * 0.36, mid, size * 0.36, flow.ink, shown);
+                x += size * 1.05;
+            }
+            self.font(size, Family::Sans, 700);
+            self.ctx.set_alpha(shown);
+            self.ctx.set_fill(flow.ink);
+            let k = self.fit(keyword, end - x);
+            self.text(&k, x, y, false);
+            x += self.width(&k) + size * 0.5;
+        }
+        let rest = split.map_or(n.title.as_str(), |s| s.1);
+        if !rest.is_empty() {
+            self.font(size * 0.95, Family::Mono, 400);
+            let rest = self.fit(rest, end - x);
+            self.code(&rest, x, y, flow.ink, shown, Some(flow.fill));
+        }
     }
 
     /// A circling arrow around (cx, cy): the mark of a loop.
