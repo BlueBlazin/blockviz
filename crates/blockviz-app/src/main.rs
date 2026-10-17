@@ -8,6 +8,7 @@
 //! `blockviz-app [folder] [--svg out.svg]`: with `--svg`, the whole view is
 //! written as SVG, drawn as the window would draw it, and no window opens.
 
+mod anchor;
 mod camera;
 mod code;
 mod crumbs;
@@ -95,19 +96,26 @@ impl Viewer {
     fn replace(&mut self, u: live::Update, cx: &mut Context<Self>) {
         let files = if u.changed.len() <= 3 { u.changed.join(", ") } else { format!("{} files", u.changed.len()) };
         println!("{files} changed: analyzed again in {:.0} ms, {} files' parse reused", u.took.as_secs_f64() * 1000.0, u.reused);
-        let m = Rc::new(u.model);
-        self.m = m.clone();
+        let old = std::mem::replace(&mut self.m, Rc::new(u.model));
+        let m = self.m.clone();
         self.inspector.update(cx, |i, cx| i.set_model(m, cx));
-        // Ids are the new scene's: start again from the whole project.
-        self.selected = None;
-        self.selected_path = None;
-        self.search = None;
+        // Ids are the new scene's: the view, the selection and search carry over to the same blocks.
         self.flight = None;
+        if self.width > 0.0 {
+            anchor::carry(&old, &self.m, &mut self.camera, &self.hits, self.width, self.height);
+        } else {
+            self.camera.path = vec![self.m.root()];
+        }
         self.hits.clear();
-        self.crumbs.clear();
-        self.camera.path = vec![self.m.root()];
-        self.camera.insets.right = 12.0;
-        self.width = 0.0;
+        let selected = self.selected_path.take().map(|p| (p.len(), anchor::map_path(&old, &self.m, &p)));
+        match selected {
+            Some((len, path)) if path.len() == len => self.select(path.last().copied(), Some(path), cx),
+            _ => self.select(None, None, cx),
+        }
+        if let Some(s) = self.search.as_mut() {
+            s.results = self.m.find(&s.query);
+            s.active = s.active.min(s.results.len().saturating_sub(1));
+        }
         cx.notify();
     }
 
