@@ -2,7 +2,7 @@ import type { Edge, EdgeKind, SceneNode } from '../core/types';
 import { boxOf, clamp, intersects, rectLine, smoothstep, visibleRuns, type Box, type Xf } from './geometry';
 import type { RemovedEdge, SceneDiff, Status } from './diff';
 import type { SceneModel } from './model';
-import { swatch, type Theme } from './theme';
+import { swatch, type Flow, type FlowRole, type Theme } from './theme';
 
 /** A block drawn this frame. `clear` when the reader can see what it is (its
  * name is legible, or the box is large), so clicks never land on a block
@@ -59,6 +59,78 @@ const SPECK = 2;
 const CUT = 24;
 
 const CODE_KINDS = new Set(['op', 'loop', 'branch']);
+
+/** The band at the top of a loop or a branch that holds its title: the layout's region header. */
+const FLOW_BAND = 26;
+
+/** Keywords that open a loop's or a branch's title, and what they do. A keyword that starts another (`else if`, `else`) comes first. */
+const FLOW_KEYWORDS: [string, FlowRole][] = [
+  ['else if', 'branch'], ['for', 'loop'], ['while', 'loop'], ['repeat', 'loop'], ['loop', 'loop'],
+  ['if', 'branch'], ['elif', 'branch'], ['else', 'branch'], ['unless', 'branch'], ['match', 'branch'], ['switch', 'branch'],
+  ['select', 'branch'], ['case', 'branch'], ['default', 'branch'], ['otherwise', 'branch'],
+  ['try', 'attempt'], ['finally', 'attempt'], ['except', 'catch'], ['catch', 'catch'],
+];
+
+/** A loop's or a branch's title as its keyword, what follows it and what it does: `for block in blocks` is `for`, `block in blocks`, a loop. */
+export function flowKeyword(title: string): { keyword: string; rest: string; role: FlowRole } | null {
+  for (const [keyword, role] of FLOW_KEYWORDS) {
+    if (!title.startsWith(keyword)) continue;
+    const rest = title.slice(keyword.length);
+    if (!rest || rest.startsWith(' ')) return { keyword, rest: rest.trimStart(), role };
+  }
+  return null;
+}
+
+/** What a word of code on the diagram is, for its color: `keyword` joins a condition's or a loop's parts (`in`, `is not`). */
+export type Tok = 'plain' | 'keyword' | 'literal' | 'string';
+
+/** Words that join the parts of a condition or a loop's header, in the languages read. */
+const JOINERS = new Set(['in', 'of', 'is', 'not', 'and', 'or', 'if', 'else', 'for', 'as', 'await', 'instanceof', 'typeof', 'let', 'unless', 'until']);
+const LITERALS = new Set(['None', 'True', 'False', 'true', 'false', 'null', 'nil', 'undefined', 'NaN', 'Infinity']);
+
+/** Code cut into the runs drawn in one color each. */
+export function codeTokens(text: string): [string, Tok][] {
+  const runs: [string, Tok][] = [];
+  const word = /[\p{L}\p{N}_]/u;
+  const chars = Array.from(text);
+  let i = 0;
+  while (i < chars.length) {
+    const start = i;
+    const c = chars[i++];
+    let tok: Tok = 'plain';
+    if (c === '"' || c === "'" || c === '`') {
+      let escaped = false;
+      while (i < chars.length) {
+        const d = chars[i++];
+        if (escaped) escaped = false;
+        else if (d === '\\') escaped = true;
+        else if (d === c) break;
+      }
+      tok = 'string';
+    } else if (word.test(c)) {
+      while (i < chars.length && word.test(chars[i])) i++;
+      const w = chars.slice(start, i).join('');
+      tok = /[0-9]/.test(c) || LITERALS.has(w) ? 'literal' : JOINERS.has(w) ? 'keyword' : 'plain';
+    }
+    const part = chars.slice(start, i).join('');
+    const last = runs[runs.length - 1];
+    if (last && tok === 'plain' && last[1] === 'plain') last[0] += part;
+    else runs.push([part, tok]);
+  }
+  return runs;
+}
+
+/** Where a caption's guards (`if ready`, `unless user`) have their keyword, as ranges of its UTF-16 offsets. */
+export function guardKeywords(caption: string): [number, number][] {
+  const out: [number, number][] = [];
+  let at = 0;
+  for (const part of caption.split(' · ')) {
+    const k = ['if ', 'unless '].find(k => part.startsWith(k));
+    if (k) out.push([at, at + k.length - 1]);
+    at += part.length + ' · '.length;
+  }
+  return out;
+}
 /** Boxes whose names are navigation landmarks and stay readable longest. */
 const NAMED_KINDS = new Set(['file', 'notebook', 'dir', 'class', 'function', 'section', 'artifact', 'doc', 'table']);
 
@@ -419,8 +491,7 @@ export class Renderer {
     titles.forEach((l, i) => this.text(l, cx, titleY + i * lh));
     if (twoLines) {
       this.font(ms, this.theme.sans);
-      ctx.fillStyle = this.theme.muted;
-      this.text(this.fit(meta, maxW), cx, titleY + extra + ms + 3);
+      this.caption(this.fit(meta, maxW), cx, titleY + extra + ms + 3, ms, this.theme.muted, true);
     }
     if (deep && !overlay && b.w > 46 && size > 6) {
       // Something lives inside: a small corner mark invites zooming.
@@ -455,8 +526,7 @@ export class Renderer {
     const meta = [n.subtitle, ...(n.badges ?? [])].filter(Boolean).join(' · ');
     if (meta && used < maxW - 20 * t.s) {
       this.font(size * 0.82, this.theme.sans);
-      ctx.fillStyle = this.theme.muted;
-      this.text(this.fit(meta, maxW - used), x + used, y);
+      this.caption(this.fit(meta, maxW - used), x + used, y, size * 0.82, this.theme.muted, false);
     }
   }
 
@@ -483,13 +553,36 @@ export class Renderer {
       alpha *= UNTOUCHED;
       this.faded++;
     }
+    // A loop, a branch and its arms, a try and its handlers are tinted and
+    // outlined in the color of what they do, under a band of it that holds their title.
+    const theme = this.theme;
+    const role = this.flowRole(n);
+    const flow = role ? theme.flow[role] : null;
+    let fill = fillOf(theme, n, status);
+    let outline = lane ? theme.laneOutline : theme.regionOutline;
+    if (flow && !status) {
+      // The role's color toward the page; an arm lighter than the branch around it.
+      fill = mix(flow.fill, theme.paper, lane ? 0.62 : 0.42);
+      outline = mix(flow.fill, flow.ink, lane ? 0.4 : 0.5);
+    }
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.roundRect(b.x, b.y, b.w, b.h, radius);
-    ctx.fillStyle = fillOf(this.theme, n, status);
+    ctx.fillStyle = fill;
     ctx.fill();
-    ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
-    ctx.strokeStyle = p.selected === n.id ? this.theme.accent : status ? this.theme.change[status].ink : lane ? this.theme.laneOutline : this.theme.regionOutline;
+    if (flow && n.title) {
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = status ? mix(flow.fill, theme.change[status].tint, 0.5) : flow.fill;
+      ctx.fillRect(b.x, b.y, b.w, Math.min(FLOW_BAND * t.s, b.h));
+      ctx.restore();
+      ctx.globalAlpha = alpha;
+      // The clip's path was the region's outline: draw it again for the stroke.
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, radius);
+    }
+    ctx.lineWidth = p.selected === n.id ? 2 : status ? 1.5 : flow ? clamp(1.3 * Math.sqrt(t.s), 0.6, 1.5) : clamp(1.1 * Math.sqrt(t.s), 0.45, 1.2);
+    ctx.strokeStyle = p.selected === n.id ? theme.accent : status ? theme.change[status].ink : outline;
     if (!lane) ctx.stroke();
     else if (4 * t.s < 1) {
       // Dashes finer than a pixel blend into a fainter line: drawn as one.
@@ -504,7 +597,9 @@ export class Renderer {
     const me = this.hit(n, b, parentHit);
     const size = 11.5 * t.s;
     if (n.title) this.seen(me, n, size, alpha * smoothstep(4.2, 7, size));
-    if (n.title && size >= 4.2) {
+    // A loop's or a branch's title is drawn over what is inside it, below.
+    const titledFlow = !!n.title && !!flow;
+    if (!titledFlow && n.title && size >= 4.2) {
       ctx.globalAlpha = alpha * smoothstep(4.2, 7, size);
       const code = CODE_KINDS.has(n.kind);
       const badges = (n.badges ?? []).join('  ');
@@ -523,9 +618,153 @@ export class Renderer {
     }
     const inner = pathPos >= 0 ? p.xfs[pathPos] : this.model.interior(t, n, n);
     if (inner) this.interior(n, inner, me, pathPos, p, chain, alpha);
+    // Over the lines that come in through its top, which pass behind it.
+    if (flow && titledFlow) this.flowTitle(n, b, t, alpha, flow);
     if (diff) this.changeMarks(n, b, t, alpha, unfaded, diff, status, p);
     if (fade) this.faded--;
     ctx.globalAlpha = 1;
+  }
+
+  /** What a loop's, a branch's or an arm's keyword says it does; an untitled branch is what its first arm is (a `try` holding its handlers). Null for other blocks. */
+  private flowRole(n: SceneNode): FlowRole | null {
+    const of = (title: string) => flowKeyword(title)?.role;
+    switch (n.kind) {
+      case 'loop': return of(n.title) ?? 'loop';
+      case 'lane': return of(n.title) ?? 'branch';
+      case 'branch': {
+        const first = n.children?.[0];
+        return (n.title ? of(n.title) : first !== undefined ? of(this.model.node(first).title) : undefined) ?? 'branch';
+      }
+      default: return null;
+    }
+  }
+
+  /**
+   * A loop's or a branch's title on its band: its keyword in the band's ink
+   * (a loop's after a circling arrow), then the rest as code, its own
+   * keywords in the same ink; a loop's count at the right. The code is
+   * haloed in the band's color, so lines it is drawn over pass behind it.
+   */
+  private flowTitle(n: SceneNode, b: Box, t: Xf, alpha: number, flow: Flow) {
+    const band = Math.min(FLOW_BAND * t.s, b.h);
+    // Text grows with the zoom only so far: past that, more of it fits.
+    const size = Math.min(12 * t.s, 16);
+    const shown = alpha * smoothstep(4.2, 7, size);
+    if (shown < 0.01) return;
+    const ctx = this.ctx;
+    const pad = Math.min(10 * t.s, 14);
+    const left = b.x + pad;
+    const right = b.x + b.w - pad;
+    const mid = b.y + band / 2;
+    const y = mid + size * 0.36;
+    const split = flowKeyword(n.title);
+    ctx.globalAlpha = shown;
+    let end = right;
+    if (n.badges?.length) {
+      const badges = n.badges.join('  ');
+      this.font(size * 0.92, this.theme.sans, 700);
+      const w = this.width(badges);
+      if (right - w > left + 6 * size) {
+        ctx.fillStyle = flow.ink;
+        this.text(badges, right - w, mid + size * 0.92 * 0.36);
+        end = right - w - size * 0.8;
+      }
+    }
+    let x = left;
+    if (split) {
+      if (split.role === 'loop') {
+        this.loopMark(x + size * 0.36, mid, size * 0.36, flow.ink, shown);
+        x += size * 1.05;
+      }
+      this.font(size, this.theme.sans, 700);
+      ctx.globalAlpha = shown;
+      ctx.fillStyle = flow.ink;
+      const k = this.fit(split.keyword, end - x);
+      this.text(k, x, y);
+      x += this.width(k) + size * 0.5;
+    }
+    const rest = split ? split.rest : n.title;
+    if (rest) {
+      this.font(size * 0.95, this.theme.mono);
+      this.code(this.fit(rest, end - x), x, y, flow.ink, shown, flow.fill);
+    }
+  }
+
+  /** A circling arrow around (cx, cy): the mark of a loop. */
+  private loopMark(cx: number, cy: number, r: number, color: string, alpha: number) {
+    const ctx = this.ctx;
+    const from = -Math.PI * 0.35;
+    const to = Math.PI * 1.25;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = r * 0.36;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, from, to);
+    ctx.stroke();
+    // The head points the way the arc turns.
+    const px = cx + r * Math.cos(to);
+    const py = cy + r * Math.sin(to);
+    const [dx, dy] = [-Math.sin(to), Math.cos(to)];
+    const [nx, ny] = [Math.cos(to), Math.sin(to)];
+    const s = r * 0.62;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(px + dx * s, py + dy * s);
+    ctx.lineTo(px + nx * s * 0.8, py + ny * s * 0.8);
+    ctx.lineTo(px - nx * s * 0.8, py - ny * s * 0.8);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /** Code at (x, y) in the current font, its words colored by what they are: the words joining its parts in `keyword`; over a `halo` of a color. */
+  private code(text: string, x: number, y: number, keyword: string, alpha: number, halo?: string) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = alpha;
+    if (halo) {
+      ctx.strokeStyle = halo;
+      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+      this.text(text, x, y, true);
+    }
+    for (const [part, tok] of codeTokens(text)) {
+      if (part.trim()) {
+        ctx.fillStyle = tok === 'keyword' ? keyword : tok === 'literal' ? this.theme.literal : tok === 'string' ? this.theme.string : this.theme.ink;
+        this.text(part, x, y);
+      }
+      x += this.width(part);
+    }
+  }
+
+  /** A caption in `px` pixels of sans and `color`, from `x` or centered on it: the keyword of a guard in it (`if ready`) in the color of a branch. */
+  private caption(text: string, x: number, y: number, px: number, color: string, center: boolean) {
+    const ctx = this.ctx;
+    const keywords = guardKeywords(text);
+    if (!keywords.length) {
+      this.font(px, this.theme.sans);
+      ctx.fillStyle = color;
+      this.text(text, x, y);
+      return;
+    }
+    const runs: [string, boolean][] = [];
+    let at = 0;
+    for (const [a, b] of keywords) {
+      runs.push([text.slice(at, a), false], [text.slice(a, b), true]);
+      at = b;
+    }
+    runs.push([text.slice(at), false]);
+    const widths = runs.map(([run, keyword]) => {
+      this.font(px, this.theme.sans, keyword ? 600 : 400);
+      return this.width(run);
+    });
+    if (center) x -= widths.reduce((a, b) => a + b, 0) / 2;
+    ctx.textAlign = 'left';
+    runs.forEach(([run, keyword], i) => {
+      this.font(px, this.theme.sans, keyword ? 600 : 400);
+      ctx.fillStyle = keyword ? this.theme.flow.branch.ink : color;
+      this.text(run, x, y);
+      x += widths[i];
+    });
+    if (center) ctx.textAlign = 'center';
   }
 
   private glyph(n: SceneNode, b: Box, t: Xf, alpha: number, p: Paint) {

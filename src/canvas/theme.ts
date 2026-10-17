@@ -9,6 +9,12 @@ import type { Status } from './diff';
 
 export interface Swatch { fill: string; tint: string; ink?: string }
 
+/** What a control-flow keyword does, which its tag's color says: `for`; `if`, `else`; `try`, `finally`; `except`, `catch`. */
+export type FlowRole = 'loop' | 'branch' | 'attempt' | 'catch';
+
+/** The colors of a control-flow keyword's tag: its fill, and the keyword drawn on it. */
+export interface Flow { fill: string; ink: string }
+
 /** The colors a diagram is drawn in. */
 export interface Theme {
   /** The page under the diagram. */
@@ -41,6 +47,11 @@ export interface Theme {
   swatches: Record<string, Swatch>;
   /** Colors of a change being read (a pull request): outlines and text (`ink`), and the fill blocks are tinted with. */
   change: Record<Status, { ink: string; tint: string }>;
+  /** Tags of loops' and branches' keywords, by what they do. */
+  flow: Record<FlowRole, Flow>;
+  /** Literals in code on the diagram: `None`, `true`, `3`. */
+  literal: string;
+  string: string;
 }
 
 const swatches: Record<string, Swatch> = {
@@ -110,6 +121,14 @@ export const LIGHT: Theme = {
     changed: { ink: '#bf8700', tint: '#fbecb3' },
     removed: { ink: '#cf222e', tint: '#ffd8d6' },
   },
+  flow: {
+    loop: { fill: '#ebe5fb', ink: '#6236b3' },
+    branch: { fill: '#fce8cf', ink: '#974c00' },
+    attempt: { fill: '#e2e9f2', ink: '#3c5878' },
+    catch: { fill: '#fce0dd', ink: '#b42318' },
+  },
+  literal: '#0550ae',
+  string: '#0a3069',
 };
 
 /** The page of the dark theme, and its lightness: keep in step with `--bg` in styles.css. */
@@ -144,6 +163,14 @@ export const DARK: Theme = {
     changed: { ink: '#d29922', tint: '#4a3b12' },
     removed: { ink: '#f85149', tint: '#552321' },
   },
+  flow: {
+    loop: { fill: '#2f2747', ink: '#c8adff' },
+    branch: { fill: '#3d2c18', ink: '#f2ad66' },
+    attempt: { fill: '#242f3c', ink: '#a3bdd9' },
+    catch: { fill: '#45211f', ink: '#ff8f86' },
+  },
+  literal: '#79c0ff',
+  string: '#a5d6ff',
 };
 
 export function swatch(theme: Theme, category: string): Swatch {
