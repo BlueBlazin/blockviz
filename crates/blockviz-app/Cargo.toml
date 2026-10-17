@@ -9,6 +9,10 @@ publish = false
 blockviz-core = { path = "../blockviz-core" }
 # Shaders are compiled as the app starts: building them ahead needs Xcode's separate Metal Toolchain.
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+# Receiving new analyses from the thread that makes them.
+futures = "0.3"
+# Watching the folder for changes (FSEvents on macOS).
+notify = "8.2"
 # Moving through the search field by character, as a reader sees characters.
 unicode-segmentation = "1"
 

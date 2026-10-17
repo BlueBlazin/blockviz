@@ -76,6 +76,14 @@ impl Inspector {
         Inspector { m, ui: crate::theme::ui(), viewer, node: None, all_uses: false, scroll: ScrollHandle::new(), runs: HashMap::new(), reveal: None }
     }
 
+    /// Shows blocks of a new analysis of the project.
+    pub fn set_model(&mut self, m: Rc<Model>, cx: &mut Context<Self>) {
+        self.m = m;
+        self.runs.clear();
+        self.node = None;
+        cx.notify();
+    }
+
     pub fn show(&mut self, node: Option<u32>, cx: &mut Context<Self>) {
         if node != self.node {
             self.node = node;

@@ -3,6 +3,7 @@
 //! double click (or Enter) opens; F fits the block the view is in, H or 0 shows
 //! the whole project. Breadcrumbs name the blocks the view is in, and a
 //! panel shows the selected block's details and source. `/` or ⌘K searches.
+//! The diagram follows the folder: saving a file analyzes the project again.
 //!
 //! `blockviz-app [folder] [--svg out.svg]`: with `--svg`, the whole view is
 //! written as SVG, drawn as the window would draw it, and no window opens.
@@ -10,8 +11,8 @@
 mod camera;
 mod code;
 mod crumbs;
-mod folder;
 mod input;
+mod live;
 mod model;
 mod paint;
 mod panel;
@@ -25,7 +26,6 @@ use gpui::{
 use model::Model;
 use paint::{Fonts, Hit, Walk};
 use panel::Inspector;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -78,6 +78,39 @@ struct Search {
 }
 
 impl Viewer {
+    /// Takes in new analyses as the thread watching the folder makes them.
+    fn listen(&mut self, mut updates: futures::channel::mpsc::UnboundedReceiver<live::Update>, cx: &mut Context<Self>) {
+        use futures::StreamExt;
+        cx.spawn(async move |this, cx| {
+            while let Some(u) = updates.next().await {
+                if this.update(cx, |v, cx| v.replace(u, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Shows a new analysis of the project.
+    fn replace(&mut self, u: live::Update, cx: &mut Context<Self>) {
+        let files = if u.changed.len() <= 3 { u.changed.join(", ") } else { format!("{} files", u.changed.len()) };
+        println!("{files} changed: analyzed again in {:.0} ms, {} files' parse reused", u.took.as_secs_f64() * 1000.0, u.reused);
+        let m = Rc::new(u.model);
+        self.m = m.clone();
+        self.inspector.update(cx, |i, cx| i.set_model(m, cx));
+        // Ids are the new scene's: start again from the whole project.
+        self.selected = None;
+        self.selected_path = None;
+        self.search = None;
+        self.flight = None;
+        self.hits.clear();
+        self.crumbs.clear();
+        self.camera.path = vec![self.m.root()];
+        self.camera.insets.right = 12.0;
+        self.width = 0.0;
+        cx.notify();
+    }
+
     fn new(m: Rc<Model>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus);
@@ -588,12 +621,12 @@ fn main() {
     let folder = folder.canonicalize().unwrap_or(folder);
 
     let reading = Instant::now();
-    let files = folder::read(&folder);
+    let files = live::read(&folder);
     let read = reading.elapsed();
-    let texts: HashMap<String, String> = files.iter().filter_map(|f| Some((f.path.clone(), f.text.clone()?))).collect();
     let name = folder.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let analyzing = Instant::now();
-    let scene = blockviz_core::analyze(&name, files);
+    let mut cache = blockviz_core::project::Cache::default();
+    let scene = blockviz_core::project::build_cached(&name, live::inputs(&files), blockviz_core::layout::Options::default(), &mut cache);
     let analyzed = analyzing.elapsed();
     let ms = |d: Duration| d.as_secs_f64() * 1000.0;
     println!("{} — {} files, {} lines, {} nodes", scene.title, scene.stats.files, scene.stats.lines, scene.stats.nodes);
@@ -602,7 +635,7 @@ fn main() {
         println!("{:>9.1} ms  {stage}", ms(d));
     }
     println!("{:>9.1} ms  analysis in all", ms(analyzed));
-    let m = Rc::new(Model::new(scene, texts));
+    let m = Rc::new(Model::new(scene, live::texts(&files)));
 
     if let Some(out) = svg {
         let (width, height) = (1440.0, 900.0);
@@ -621,7 +654,16 @@ fn main() {
         input::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
-        cx.open_window(options, |window, cx| cx.new(|cx| Viewer::new(m, window, cx))).unwrap();
+        let (send, updates) = futures::channel::mpsc::unbounded();
+        live::watch(folder, name, files, cache, move |u| send.unbounded_send(u).is_ok());
+        cx.open_window(options, |window, cx| {
+            cx.new(|cx| {
+                let mut v = Viewer::new(m, window, cx);
+                v.listen(updates, cx);
+                v
+            })
+        })
+        .unwrap();
         cx.activate(true);
     });
 }
