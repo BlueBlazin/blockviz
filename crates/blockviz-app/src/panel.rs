@@ -56,7 +56,7 @@ fn use_kind(k: Kind) -> Option<&'static str> {
 }
 
 /// What the panel shows.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Content {
     None,
     Block(u32),
@@ -141,6 +141,12 @@ impl Inspector {
         }
         self.state = state;
         cx.notify();
+    }
+
+    /// What the panel shows.
+    #[cfg(test)]
+    pub fn content(&self) -> Content {
+        self.state.as_ref().map_or(Content::None, |s| s.content.clone())
     }
 
     pub fn set_hover(&mut self, hover: Option<u32>, cx: &mut Context<Self>) {

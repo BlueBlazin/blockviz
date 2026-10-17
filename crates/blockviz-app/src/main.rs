@@ -3,8 +3,8 @@
 //! the folder live as files change, and comparing it with any git revision.
 //!
 //! `blockviz-app [folder]` opens a folder (or asks for one).
-//! `blockviz-app folder --svg out.svg [--at file/Class/method] [--dark] [--size 1440x900]`
-//! draws a view into an SVG without a window, as the window would draw it.
+//! `blockviz-app folder --svg out.svg|out.png [--at file/Class/method] [--dark] [--size 1440x900]`
+//! draws a view into an SVG (or PNG) without a window, as the window would draw it.
 
 mod anchor;
 mod camera;
@@ -28,6 +28,8 @@ mod render;
 mod settings;
 mod shell;
 mod svgpen;
+#[cfg(test)]
+mod tests;
 mod theme;
 mod trace;
 mod viewer;
@@ -65,7 +67,13 @@ fn draw_svg(folder: &std::path::Path, out: &str, at: Option<&str>, dark: bool, (
     let p = render::Paint { width: w, height: h, hover: None, selected: None, path: &cam.path, xfs: &xfs, related: None, trace: None, hover_edge: None, diff: None };
     let mut pen = svgpen::SvgPen::estimating();
     render::Renderer::default().draw(&mut pen, &m, &theme, &p);
-    std::fs::write(out, pen.svg(w, h)).unwrap();
+    let svg = pen.svg(w, h);
+    // A PNG is the SVG rasterized, as the Download menu makes one.
+    if out.ends_with(".png") {
+        std::fs::write(out, export::png(&svg, 1.0).expect("rasterized")).unwrap();
+    } else {
+        std::fs::write(out, svg).unwrap();
+    }
     println!("wrote {out}");
 }
 

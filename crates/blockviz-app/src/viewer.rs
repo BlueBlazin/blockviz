@@ -300,8 +300,16 @@ impl Viewer {
         cx.notify();
     }
 
+    /// Shows a project analyzed elsewhere, as its first analysis (tests open projects this way).
+    #[cfg(test)]
+    pub fn show(&mut self, folder: PathBuf, files: Files, model: Model, cx: &mut Context<Self>) {
+        let (ask, _) = std::sync::mpsc::channel();
+        self.project = Some(Project { folder, ask, repo: None, files: files.clone(), elapsed: Duration::ZERO });
+        self.take(Update { model, files, changed: vec![], first: true, read: Duration::ZERO, took: Duration::ZERO, reused: 0 }, cx);
+    }
+
     /// Takes in an analysis of the project: its first, or a new one after files changed.
-    fn take(&mut self, u: Update, cx: &mut Context<Self>) {
+    pub(crate) fn take(&mut self, u: Update, cx: &mut Context<Self>) {
         let new = Rc::new(u.model);
         if let Some(p) = self.project.as_mut() {
             p.files = u.files;
@@ -635,6 +643,11 @@ impl Viewer {
         self.camera.insets = self.insets();
         self.sync_panel(cx);
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub fn select_edge_for_test(&mut self, edge: EdgeId, cx: &mut Context<Self>) {
+        self.select_edge(edge, cx);
     }
 
     pub fn close_value(&mut self, cx: &mut Context<Self>) {
