@@ -15,6 +15,7 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One source file, parsed and lowered to the shared syntax tree.
+#[derive(Clone)]
 pub struct Module {
     pub file: u32,
     pub path: String,

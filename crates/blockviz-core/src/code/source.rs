@@ -7,6 +7,7 @@
 use super::syntax::{Ranged, TextRange};
 use crate::ir::Span;
 
+#[derive(Clone)]
 pub struct Comment {
     pub line: u32,
     /// The comment's words without its markers (`#`, `//`, `/* */`).
@@ -17,6 +18,7 @@ pub struct Comment {
     pub doc: bool,
 }
 
+#[derive(Clone)]
 pub struct Source {
     pub text: String,
     pub file: u32,

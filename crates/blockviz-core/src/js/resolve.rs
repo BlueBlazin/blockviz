@@ -107,6 +107,24 @@ pub fn join(base: &str, rel: &str) -> Option<String> {
 }
 
 impl Resolver {
+    /// A digest of everything lowering a file reads from the resolver: the
+    /// files imports can name, the path mappings of configs and the
+    /// workspace's packages.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut files: Vec<_> = self.files.iter().collect();
+        files.sort();
+        files.hash(&mut h);
+        for c in &self.configs {
+            (&c.dir, &c.base_url, &c.paths).hash(&mut h);
+        }
+        let mut packages: Vec<_> = self.packages.iter().collect();
+        packages.sort();
+        packages.hash(&mut h);
+        h.finish()
+    }
+
     /// `files` are every repository path with its text when it is a config
     /// file the resolver reads (`tsconfig*.json`, `jsconfig.json`, `package.json`).
     pub fn new(files: &[(&str, Option<&str>)]) -> Self {

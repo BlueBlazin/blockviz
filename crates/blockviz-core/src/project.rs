@@ -92,7 +92,123 @@ pub fn build(name: &str, files: Vec<InFile>) -> Scene {
 }
 
 pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) -> Scene {
+    build_inner(name, files, opts, None)
+}
+
+/// `build_with`, keeping what the front ends made of each file in `cache`
+/// for the next analysis of the same project: a file whose text is
+/// unchanged, and whose lowering reads nothing else that changed (how its
+/// imports resolve), is not parsed again. The scene is the one `build_with` makes.
+pub fn build_cached(name: &str, files: Vec<InFile>, opts: crate::layout::Options, cache: &mut Cache) -> Scene {
+    build_inner(name, files, opts, Some(cache))
+}
+
+/// What the front ends made of each file, by path, kept between analyses (`build_cached`).
+#[derive(Default)]
+pub struct Cache {
+    files: Map<String, Cached>,
+    /// Files the last analysis took from the cache.
+    reused: usize,
+}
+
+struct Cached {
+    /// Which front end made it, and a digest of what its lowering read besides the file.
+    front_end: u8,
+    context: u64,
+    module: code::Module,
+    header: String,
+    diagnostics: Vec<String>,
+    used: bool,
+}
+
+impl Cache {
+    /// Files the last analysis took from the cache instead of parsing them.
+    pub fn reused(&self) -> usize {
+        self.reused
+    }
+
+    /// Files kept.
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+}
+
+/// A file handed to a front end.
+trait FrontEndInput {
+    fn file(&self) -> u32;
+    fn path(&self) -> &str;
+    fn text(&self) -> &str;
+}
+
+macro_rules! front_end_input {
+    ($($t:ty),*) => {$(
+        impl FrontEndInput for $t {
+            fn file(&self) -> u32 { self.file }
+            fn path(&self) -> &str { &self.path }
+            fn text(&self) -> &str { &self.text }
+        }
+    )*};
+}
+front_end_input!(PyInput, crate::js::JsInput, crate::rust::RsInput);
+
+type FrontEndOut = (Vec<code::Module>, Vec<String>, Vec<code::CodeFile>);
+
+/// Runs a front end over `inputs`, taking unchanged files from `cache`. With a
+/// cache, files go through the front end one at a time, in order, so that what
+/// it adds to the scene (nodes for files it could not read) and says comes out
+/// as it would for all of them at once.
+#[allow(clippy::too_many_arguments)]
+fn front_end<I: FrontEndInput>(
+    cache: Option<&mut Cache>,
+    front_end: u8,
+    context: u64,
+    b: &mut Builder,
+    inputs: Vec<I>,
+    diagnostics: &mut Vec<String>,
+    mut run: impl FnMut(&mut Builder, Vec<I>, &mut Vec<String>) -> FrontEndOut,
+) -> FrontEndOut {
+    let Some(cache) = cache else { return run(b, inputs, diagnostics) };
+    let (mut modules, mut headers, mut failed) = (vec![], vec![], vec![]);
+    for input in inputs {
+        let kept = cache.files.get_mut(input.path()).filter(|c| c.front_end == front_end && c.context == context && c.module.src.text == input.text());
+        if let Some(c) = kept {
+            c.used = true;
+            cache.reused += 1;
+            let mut m = c.module.clone();
+            m.file = input.file();
+            m.src.file = input.file();
+            modules.push(m);
+            headers.push(c.header.clone());
+            diagnostics.extend(c.diagnostics.iter().cloned());
+            continue;
+        }
+        let path = input.path().to_string();
+        let mut said = vec![];
+        let (m, h, f) = run(b, vec![input], &mut said);
+        // A file the front end could not read is a node in this scene: made again each time.
+        if let ([one], [header], []) = (&m[..], &h[..], &f[..]) {
+            cache.files.insert(path, Cached { front_end, context, module: one.clone(), header: header.clone(), diagnostics: said.clone(), used: true });
+        }
+        diagnostics.extend(said);
+        modules.extend(m);
+        headers.extend(h);
+        failed.extend(f);
+    }
+    (modules, headers, failed)
+}
+
+fn build_inner(name: &str, files: Vec<InFile>, opts: crate::layout::Options, mut cache: Option<&mut Cache>) -> Scene {
     crate::timing::start();
+    if let Some(c) = cache.as_deref_mut() {
+        c.reused = 0;
+        for f in c.files.values_mut() {
+            f.used = false;
+        }
+    }
     let mut diagnostics = vec![];
     let mut files: Vec<InFile> = files
         .into_iter()
@@ -209,14 +325,16 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     let mut b = Builder::default();
     let root = b.add(None, Kind::Repo, Shape::Box, title.clone());
     b.get_mut(root).category = "repo";
-    let (mut modules, mut headers, mut failed) = python::parse(&mut b, py_inputs, &mut diagnostics);
+    let (mut modules, mut headers, mut failed) = front_end(cache.as_deref_mut(), 0, 0, &mut b, py_inputs, &mut diagnostics, |b, i, d| python::parse(b, i, d));
     crate::timing::stage("parse Python");
-    let (js_modules, js_headers, js_failed) = crate::js::parse(&mut b, js_inputs, &resolver, &mut diagnostics);
+    let context = if cache.is_some() { resolver.fingerprint() } else { 0 };
+    let (js_modules, js_headers, js_failed) = front_end(cache.as_deref_mut(), 1, context, &mut b, js_inputs, &mut diagnostics, |b, i, d| crate::js::parse(b, i, &resolver, d));
     crate::timing::stage("parse JavaScript");
     modules.extend(js_modules);
     headers.extend(js_headers);
     failed.extend(js_failed);
-    let (rs_modules, rs_headers, rs_failed) = crate::rust::parse(&mut b, rs_inputs, &rs_resolver, &mut diagnostics);
+    let context = if cache.is_some() { rs_resolver.fingerprint() } else { 0 };
+    let (rs_modules, rs_headers, rs_failed) = front_end(cache.as_deref_mut(), 2, context, &mut b, rs_inputs, &mut diagnostics, |b, i, d| crate::rust::parse(b, i, &rs_resolver, d));
     crate::timing::stage("parse Rust");
     modules.extend(rs_modules);
     headers.extend(rs_headers);
@@ -712,6 +830,10 @@ pub fn build_with(name: &str, files: Vec<InFile>, opts: crate::layout::Options) 
     let (nodes, scene_root) = b.finish(scene_root);
     diagnostics.push("Static analysis: arrows show likely dataflow and dependencies inferred from source, not a runtime trace. Dynamic dispatch and code passed through strings may be missed.".into());
     let stats = Stats { files: metas.len() as u32, python_files, lines, nodes: nodes.len() as u32, max_depth };
+    if let Some(c) = cache {
+        // What no file read this time belongs to a file that is gone or changed.
+        c.files.retain(|_, f| f.used);
+    }
     crate::timing::stage("finish");
     Scene { version: 2, title, description, root: scene_root, nodes, files: metas, diagnostics, stats }
 }

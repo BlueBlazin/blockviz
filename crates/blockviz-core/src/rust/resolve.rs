@@ -12,7 +12,7 @@
 use super::lex::{self, ModDecl};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CrateKind {
     Lib,
     Bin,
@@ -139,6 +139,30 @@ pub struct Resolver {
 }
 
 impl Resolver {
+    /// A digest of everything lowering a file reads from the resolver: the
+    /// crates and where their modules are. Unchanged by edits that add no
+    /// module or crate, so those leave other files' lowering valid.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for c in &self.crates {
+            (&c.root, &c.name, c.kind, c.lib).hash(&mut h);
+        }
+        let mut modules: Vec<_> = self.module_of.iter().collect();
+        modules.sort();
+        modules.hash(&mut h);
+        let mut files: Vec<_> = self.file_of.iter().collect();
+        files.sort();
+        files.hash(&mut h);
+        let mut libs: Vec<_> = self.libs.iter().collect();
+        libs.sort();
+        libs.hash(&mut h);
+        let mut deps: Vec<_> = self.dependencies.iter().collect();
+        deps.sort();
+        deps.hash(&mut h);
+        h.finish()
+    }
+
     /// `files` lists every path with the text of Rust files and manifests.
     pub fn new(files: &[(&str, Option<&str>)]) -> Self {
         let rs: HashSet<&str> = files.iter().filter(|(p, _)| p.ends_with(".rs")).map(|(p, _)| *p).collect();
