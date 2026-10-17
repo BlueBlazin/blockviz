@@ -66,6 +66,26 @@ pub struct ChangeColors {
     pub tint: Color,
 }
 
+/// The colors of a control-flow keyword's tag: its fill, and the keyword drawn on it.
+#[derive(Clone, Copy, Debug)]
+pub struct Flow {
+    pub fill: Color,
+    pub ink: Color,
+}
+
+/// What a control-flow keyword does, which its tag's color says.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlowRole {
+    /// `for`, `while`, `repeat`.
+    Loop,
+    /// `if`, `else`, `match`, `case`.
+    Branch,
+    /// `try`, `finally`.
+    Attempt,
+    /// `except`, `catch`.
+    Catch,
+}
+
 /// The colors a diagram is drawn in.
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -98,6 +118,13 @@ pub struct Theme {
     pub added: ChangeColors,
     pub changed: ChangeColors,
     pub removed: ChangeColors,
+    pub loops: Flow,
+    pub branch: Flow,
+    pub attempt: Flow,
+    pub catch: Flow,
+    /// Literals in code on the diagram: `None`, `true`, `3`.
+    pub literal: Color,
+    pub string: Color,
 }
 
 const SWATCHES: [(&str, u32, u32); 29] = [
@@ -208,6 +235,12 @@ impl Theme {
             added: ChangeColors { ink: h(0x1a7f37), tint: h(0xc9f2d4) },
             changed: ChangeColors { ink: h(0xbf8700), tint: h(0xfbecb3) },
             removed: ChangeColors { ink: h(0xcf222e), tint: h(0xffd8d6) },
+            loops: Flow { fill: h(0xebe5fb), ink: h(0x6236b3) },
+            branch: Flow { fill: h(0xfce8cf), ink: h(0x974c00) },
+            attempt: Flow { fill: h(0xe2e9f2), ink: h(0x3c5878) },
+            catch: Flow { fill: h(0xfce0dd), ink: h(0xb42318) },
+            literal: h(0x0550ae),
+            string: h(0x0a3069),
         }
     }
 
@@ -240,11 +273,26 @@ impl Theme {
             added: ChangeColors { ink: h(0x3fb950), tint: h(0x1e4a2b) },
             changed: ChangeColors { ink: h(0xd29922), tint: h(0x4a3b12) },
             removed: ChangeColors { ink: h(0xf85149), tint: h(0x552321) },
+            loops: Flow { fill: h(0x2f2747), ink: h(0xc8adff) },
+            branch: Flow { fill: h(0x3d2c18), ink: h(0xf2ad66) },
+            attempt: Flow { fill: h(0x242f3c), ink: h(0xa3bdd9) },
+            catch: Flow { fill: h(0x45211f), ink: h(0xff8f86) },
+            literal: h(0x79c0ff),
+            string: h(0xa5d6ff),
         }
     }
 
     pub fn swatch(&self, category: &str) -> Swatch {
         self.swatches.iter().find(|(k, _)| *k == category).or_else(|| self.swatches.iter().find(|(k, _)| *k == "neutral")).unwrap().1
+    }
+
+    pub fn flow(&self, role: FlowRole) -> Flow {
+        match role {
+            FlowRole::Loop => self.loops,
+            FlowRole::Branch => self.branch,
+            FlowRole::Attempt => self.attempt,
+            FlowRole::Catch => self.catch,
+        }
     }
 
     pub fn change(&self, s: crate::render::Mark) -> ChangeColors {

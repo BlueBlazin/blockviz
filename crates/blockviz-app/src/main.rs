@@ -49,13 +49,22 @@ fn draw_svg(folder: &std::path::Path, out: &str, at: Option<&str>, dark: bool, (
     cam.insets = camera::Insets { top: 56.0, right: 12.0, bottom: 52.0, left: 12.0 };
     cam.fit_root(&m, w, h);
     if let Some(at) = at {
-        // A path of titles from the top: `model.py/Block/forward`.
+        // A path of titles from the top: `model.py/Block/forward`; a title's
+        // start will do (`for block`), and `#2` is the third child, for untitled ones.
         let mut id = m.root();
         for part in at.split('/') {
             let o = m.owner(m.node(id)).map_or(id, |o| o.id);
-            match m.node(o).children.iter().copied().find(|&c| m.node(c).title == part) {
+            let kids = &m.node(o).children;
+            let found = match part.strip_prefix('#').and_then(|i| i.parse::<usize>().ok()) {
+                Some(i) => kids.get(i).copied(),
+                None => kids.iter().copied().find(|&c| m.node(c).title == part).or_else(|| kids.iter().copied().find(|&c| m.node(c).title.starts_with(part))),
+            };
+            match found {
                 Some(c) => id = c,
-                None => return eprintln!("no {part} in {}", m.node(o).title),
+                None => {
+                    let titles: Vec<String> = kids.iter().enumerate().map(|(i, &c)| format!("#{i} {:?} {:?}", m.node(c).kind, m.node(c).title)).collect();
+                    return eprintln!("no {part} in {}:\n{}", m.node(o).title, titles.join("\n"));
+                }
             }
         }
         let plan = cam.flight(&m, &m.canonical_path(id), w, h, camera::Framing::Open, 0.08);

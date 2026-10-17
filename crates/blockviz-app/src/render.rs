@@ -8,7 +8,7 @@ use crate::camera::{box_of, Rect, Xf};
 use crate::lines::{rect_line, visible_runs};
 use crate::model::Model;
 use crate::pen::{Align, Family, Font, Pen};
-use crate::theme::{mix, Color, Theme};
+use crate::theme::{mix, Color, FlowRole, Theme};
 use blockviz_core::ir::{Edge, EdgeKind, Kind, Node, Shape};
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
@@ -130,6 +130,106 @@ fn code_kind(k: Kind) -> bool {
 /// Boxes whose names are navigation landmarks and stay readable longest.
 fn named_kind(k: Kind) -> bool {
     matches!(k, Kind::File | Kind::Notebook | Kind::Dir | Kind::Class | Kind::Function | Kind::Section | Kind::Artifact | Kind::Doc | Kind::Table)
+}
+
+/// Keywords that open a loop's or a branch's title, and what they do. A
+/// keyword that starts another (`else if`, `else`) comes first.
+const FLOW_KEYWORDS: [(&str, FlowRole); 19] = [
+    ("else if", FlowRole::Branch),
+    ("for", FlowRole::Loop),
+    ("while", FlowRole::Loop),
+    ("repeat", FlowRole::Loop),
+    ("loop", FlowRole::Loop),
+    ("if", FlowRole::Branch),
+    ("elif", FlowRole::Branch),
+    ("else", FlowRole::Branch),
+    ("unless", FlowRole::Branch),
+    ("match", FlowRole::Branch),
+    ("switch", FlowRole::Branch),
+    ("select", FlowRole::Branch),
+    ("case", FlowRole::Branch),
+    ("default", FlowRole::Branch),
+    ("otherwise", FlowRole::Branch),
+    ("try", FlowRole::Attempt),
+    ("finally", FlowRole::Attempt),
+    ("except", FlowRole::Catch),
+    ("catch", FlowRole::Catch),
+];
+
+/// A loop's or a branch's title as its keyword, what follows it and what it
+/// does: `for block in blocks` is `for`, `block in blocks`, a loop.
+pub fn flow_keyword(title: &str) -> Option<(&'static str, &str, FlowRole)> {
+    FLOW_KEYWORDS.iter().find_map(|&(k, role)| {
+        let rest = title.strip_prefix(k)?;
+        (rest.is_empty() || rest.starts_with(' ')).then(|| (k, rest.trim_start(), role))
+    })
+}
+
+/// What a word of code on the diagram is, for its color.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tok {
+    Plain,
+    /// A word joining a condition's or a loop's parts: `in`, `is not`, `and`.
+    Keyword,
+    /// `None`, `true`, `3`.
+    Literal,
+    Str,
+}
+
+/// Words that join the parts of a condition or a loop's header, in the languages read.
+const JOINERS: [&str; 16] = ["in", "of", "is", "not", "and", "or", "if", "else", "for", "as", "await", "instanceof", "typeof", "let", "unless", "until"];
+const LITERALS: [&str; 10] = ["None", "True", "False", "true", "false", "null", "nil", "undefined", "NaN", "Infinity"];
+
+/// Code cut into the runs drawn in one color each.
+pub fn code_tokens(text: &str) -> Vec<(&str, Tok)> {
+    let mut runs: Vec<(usize, usize, Tok)> = vec![];
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        let tok = if matches!(c, '"' | '\'' | '`') {
+            let mut escaped = false;
+            for (_, d) in chars.by_ref() {
+                if escaped {
+                    escaped = false;
+                } else if d == '\\' {
+                    escaped = true;
+                } else if d == c {
+                    break;
+                }
+            }
+            Tok::Str
+        } else if c.is_alphanumeric() || c == '_' {
+            while chars.next_if(|&(_, d)| d.is_alphanumeric() || d == '_').is_some() {}
+            let word = &text[start..chars.peek().map_or(text.len(), |&(j, _)| j)];
+            if c.is_ascii_digit() || LITERALS.contains(&word) {
+                Tok::Literal
+            } else if JOINERS.contains(&word) {
+                Tok::Keyword
+            } else {
+                Tok::Plain
+            }
+        } else {
+            Tok::Plain
+        };
+        let end = chars.peek().map_or(text.len(), |&(j, _)| j);
+        match runs.last_mut() {
+            Some(last) if last.2 == tok && tok == Tok::Plain => last.1 = end,
+            _ => runs.push((start, end, tok)),
+        }
+    }
+    runs.into_iter().map(|(a, b, t)| (&text[a..b], t)).collect()
+}
+
+/// Where a caption's guards (`if ready`, `unless user`) have their keyword, as byte ranges.
+pub fn guard_keywords(caption: &str) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    let mut at = 0;
+    for part in caption.split(" · ") {
+        if let Some(k) = ["if ", "unless "].into_iter().find(|k| part.starts_with(k)) {
+            out.push((at, at + k.len() - 1));
+        }
+        at += part.len() + " · ".len();
+    }
+    out
 }
 
 /// As the web's `clamp`: the low bound wins when the bounds cross.
@@ -712,9 +812,8 @@ impl<'a, 'p> Draw<'a, 'p> {
         }
         if two_lines {
             self.font(ms, Family::Sans, 400);
-            self.ctx.set_fill(self.theme.muted);
             let m = self.fit(&meta, max_w);
-            self.text(&m, cx, title_y + extra + ms + 3.0, false);
+            self.caption(&m, cx, title_y + extra + ms + 3.0, ms, self.theme.muted, true);
         }
         if deep && !overlay && b.w > 46.0 && size > 6.0 {
             // Something lives inside: a small corner mark invites zooming.
@@ -751,9 +850,8 @@ impl<'a, 'p> Draw<'a, 'p> {
         let meta = std::iter::once(n.subtitle.as_str()).chain(n.badges.iter().map(String::as_str)).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
         if !meta.is_empty() && used < max_w - 20.0 * t.s {
             self.font(size * 0.82, Family::Sans, 400);
-            self.ctx.set_fill(self.theme.muted);
             let m = self.fit(&meta, max_w - used);
-            self.text(&m, x + used, y, false);
+            self.caption(&m, x + used, y, size * 0.82, self.theme.muted, false);
         }
     }
 
@@ -822,7 +920,9 @@ impl<'a, 'p> Draw<'a, 'p> {
         if !n.title.is_empty() {
             self.seen(me, n, size, alpha * smoothstep(4.2, 7.0, size));
         }
-        if !n.title.is_empty() && size >= 4.2 {
+        // A loop's or a branch's title is drawn over what is inside it, below.
+        let flow = !n.title.is_empty() && (code_kind(n.kind) || lane);
+        if !flow && !n.title.is_empty() && size >= 4.2 {
             self.ctx.set_alpha(alpha * smoothstep(4.2, 7.0, size));
             let code = code_kind(n.kind);
             let badges = n.badges.join("  ");
@@ -844,6 +944,10 @@ impl<'a, 'p> Draw<'a, 'p> {
         if let Some(inner) = inner {
             self.interior(n, inner, me, path_pos, chain, alpha);
         }
+        if flow {
+            // Over the lines that come in through its top, which pass behind it.
+            self.flow_title(n, b, t, alpha, fill_of(theme, n, status));
+        }
         if self.p.diff.is_some() {
             self.change_marks(n, b, t, alpha, unfaded, status);
         }
@@ -851,6 +955,168 @@ impl<'a, 'p> Draw<'a, 'p> {
             self.faded -= 1;
         }
         self.ctx.set_alpha(1.0);
+    }
+
+    /// A loop's or a branch's title: its keyword on a tag colored by what it
+    /// does (a loop's with a circling arrow), then the rest as code, its own
+    /// keywords in the tag's color; a loop's count on a tag at the right.
+    /// While too small to read, the tags stay as spots of their color. The
+    /// code is haloed in the region's `fill`, so lines it is drawn over pass behind it.
+    fn flow_title(&mut self, n: &Node, b: Rect, t: Xf, alpha: f64, fill: Color) {
+        // Code grows with the zoom only so far: past that, more of it fits.
+        let size = (11.5 * t.s).min(14.0);
+        let spot = alpha * smoothstep(1.6, 3.2, size);
+        if spot < 0.01 {
+            return;
+        }
+        let shown = alpha * smoothstep(4.2, 7.0, size);
+        let split = flow_keyword(&n.title);
+        let role = split.map_or(FlowRole::Loop, |s| s.2);
+        let flow = self.theme.flow(role);
+        let (left, y, right) = (b.x + 10.0 * t.s, b.y + 17.0 * t.s, b.x + b.w - 10.0 * t.s);
+        // Tags are centered on the title's line; their words are a little smaller.
+        let ks = size * 0.86;
+        let h = size * 1.5;
+        let mid = y - size * 0.36;
+        let (top, ky, pad) = (mid - h / 2.0, mid + ks * 0.36, size * 0.5);
+        let mut end = right;
+        for badge in n.badges.iter().rev() {
+            self.font(ks, Family::Sans, 700);
+            let w = self.width(badge) + 2.0 * pad;
+            if end - w < left + 3.0 * h {
+                break;
+            }
+            end -= w;
+            self.tag(end, top, w, h, flow.fill, spot);
+            if shown > 0.01 {
+                self.ctx.set_alpha(shown);
+                self.ctx.set_fill(flow.ink);
+                self.text(badge, end + pad, ky, false);
+            }
+            end -= size * 0.4;
+        }
+        let mut x = left;
+        if let Some((keyword, _, role)) = split {
+            self.font(ks, Family::Sans, 700);
+            let icon = if role == FlowRole::Loop { size * 0.92 } else { 0.0 };
+            let w = self.width(keyword) + icon + 2.0 * pad;
+            if x + w > right {
+                return;
+            }
+            self.tag(x, top, w, h, flow.fill, spot);
+            if shown > 0.01 {
+                if icon > 0.0 {
+                    self.loop_mark(x + pad + size * 0.3, mid, size * 0.3, flow.ink, shown);
+                }
+                self.ctx.set_alpha(shown);
+                self.ctx.set_fill(flow.ink);
+                self.text(keyword, x + pad + icon, ky, false);
+            }
+            x += w + size * 0.45;
+        }
+        let rest = split.map_or(n.title.as_str(), |s| s.1);
+        if shown > 0.01 && !rest.is_empty() {
+            self.font(size, Family::Mono, 400);
+            let rest = self.fit(rest, end - x);
+            self.code(&rest, x, y, flow.ink, shown, Some(fill));
+        }
+    }
+
+    /// A pill of `fill`.
+    fn tag(&mut self, x: f64, y: f64, w: f64, h: f64, fill: Color, alpha: f64) {
+        let ctx = &mut *self.ctx;
+        ctx.set_alpha(alpha);
+        ctx.set_fill(fill);
+        ctx.begin_path();
+        ctx.round_rect(x, y, w, h, h / 2.0);
+        ctx.fill();
+    }
+
+    /// A circling arrow around (cx, cy): the mark of a loop.
+    fn loop_mark(&mut self, cx: f64, cy: f64, r: f64, color: Color, alpha: f64) {
+        let (from, to) = (-PI * 0.35, PI * 1.25);
+        let ctx = &mut *self.ctx;
+        ctx.set_alpha(alpha);
+        ctx.set_stroke(color);
+        ctx.set_line_width(r * 0.36);
+        ctx.begin_path();
+        ctx.arc(cx, cy, r, from, to);
+        ctx.stroke();
+        // The head points the way the arc turns.
+        let (px, py) = (cx + r * to.cos(), cy + r * to.sin());
+        let (dx, dy) = (-to.sin(), to.cos());
+        let (nx, ny) = (to.cos(), to.sin());
+        let s = r * 0.62;
+        ctx.set_fill(color);
+        ctx.begin_path();
+        ctx.move_to(px + dx * s, py + dy * s);
+        ctx.line_to(px + nx * s * 0.8, py + ny * s * 0.8);
+        ctx.line_to(px - nx * s * 0.8, py - ny * s * 0.8);
+        ctx.close_path();
+        ctx.fill();
+    }
+
+    /// Code at (x, y) in the current font, its words colored by what they
+    /// are: the words joining its parts in `keyword`; over a `halo` of a color.
+    fn code(&mut self, text: &str, x: f64, y: f64, keyword: Color, alpha: f64, halo: Option<Color>) {
+        self.ctx.set_alpha(alpha);
+        if let Some(halo) = halo {
+            self.ctx.set_stroke(halo);
+            self.ctx.set_line_width(3.0);
+            self.ctx.set_round_join(true);
+            self.text(text, x, y, true);
+            self.ctx.set_round_join(false);
+        }
+        let mut x = x;
+        for (part, tok) in code_tokens(text) {
+            let color = match tok {
+                Tok::Plain => self.theme.ink,
+                Tok::Keyword => keyword,
+                Tok::Literal => self.theme.literal,
+                Tok::Str => self.theme.string,
+            };
+            if !part.trim().is_empty() {
+                self.ctx.set_fill(color);
+                self.text(part, x, y, false);
+            }
+            x += self.width(part);
+        }
+    }
+
+    /// A caption in `px` pixels of sans and `color`, from `x` or centered on
+    /// it: the keyword of a guard in it (`if ready`) in the color of a branch.
+    fn caption(&mut self, text: &str, x: f64, y: f64, px: f64, color: Color, center: bool) {
+        let keywords = guard_keywords(text);
+        if keywords.is_empty() {
+            self.font(px, Family::Sans, 400);
+            self.ctx.set_fill(color);
+            self.text(text, x, y, false);
+            return;
+        }
+        let mut runs = vec![];
+        let mut at = 0;
+        for &(a, b) in &keywords {
+            runs.push((&text[at..a], false));
+            runs.push((&text[a..b], true));
+            at = b;
+        }
+        runs.push((&text[at..], false));
+        let mut widths = vec![];
+        for &(run, keyword) in &runs {
+            self.font(px, Family::Sans, if keyword { 600 } else { 400 });
+            widths.push(self.width(run));
+        }
+        let mut x = if center { x - widths.iter().sum::<f64>() / 2.0 } else { x };
+        self.ctx.set_align(Align::Left);
+        for (&(run, keyword), w) in runs.iter().zip(widths) {
+            self.font(px, Family::Sans, if keyword { 600 } else { 400 });
+            self.ctx.set_fill(if keyword { self.theme.branch.ink } else { color });
+            self.text(run, x, y, false);
+            x += w;
+        }
+        if center {
+            self.ctx.set_align(Align::Center);
+        }
     }
 
     fn glyph(&mut self, n: &Node, b: Rect, t: Xf, alpha: f64) {
@@ -1389,6 +1655,38 @@ mod tests {
         assert_eq!(font_size(10.0), 10.0);
         assert!((font_size(11.0) - 10.0 * 2f64.powf(0.25)).abs() < 1e-9);
         assert_eq!(clamp(5.0, 7.0, 6.0), 7.0);
+    }
+
+    #[test]
+    fn control_flow_titles_split_at_their_keyword() {
+        assert_eq!(flow_keyword("for block in blocks"), Some(("for", "block in blocks", FlowRole::Loop)));
+        assert_eq!(flow_keyword("else if x > 0"), Some(("else if", "x > 0", FlowRole::Branch)));
+        assert_eq!(flow_keyword("else"), Some(("else", "", FlowRole::Branch)));
+        assert_eq!(flow_keyword("except ValueError"), Some(("except", "ValueError", FlowRole::Catch)));
+        // A word that only starts like a keyword is not one; a Rust arm has none.
+        assert_eq!(flow_keyword("format(x)"), None);
+        assert_eq!(flow_keyword("Some(cmd)"), None);
+    }
+
+    #[test]
+    fn code_is_colored_by_what_its_words_are() {
+        let toks = code_tokens("targets is not None and k == 'a b' or 3");
+        let of = |t: Tok| toks.iter().filter(|p| p.1 == t).map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(of(Tok::Keyword), ["is", "not", "and", "or"]);
+        assert_eq!(of(Tok::Literal), ["None", "3"]);
+        assert_eq!(of(Tok::Str), ["'a b'"]);
+        assert_eq!(toks.iter().map(|p| p.0).collect::<String>(), "targets is not None and k == 'a b' or 3");
+        // An unclosed string, as an ellipsis leaves one, runs to the end.
+        assert_eq!(code_tokens("x == \"ab…").last(), Some(&("\"ab…", Tok::Str)));
+    }
+
+    #[test]
+    fn guards_in_captions_have_their_keyword_found() {
+        let caption = "torch.nn.init · if module.bias is not None";
+        let found = guard_keywords(caption);
+        assert_eq!(found.iter().map(|&(a, b)| &caption[a..b]).collect::<Vec<_>>(), ["if"]);
+        assert_eq!(guard_keywords("unless user"), [(0, 6)]);
+        assert!(guard_keywords("iffy · gift").is_empty());
     }
 
     #[test]
