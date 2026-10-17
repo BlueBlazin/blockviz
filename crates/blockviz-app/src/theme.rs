@@ -56,6 +56,7 @@ pub struct Theme {
     pub edge: Hsla,
     pub artifact: Hsla,
     pub label_ink: Hsla,
+    pub accent: Hsla,
 }
 
 pub fn light() -> Theme {
@@ -71,6 +72,7 @@ pub fn light() -> Theme {
         edge: c(0x2c3036),
         artifact: c(0x9a5566),
         label_ink: c(0x3d434c),
+        accent: c(0x2563eb),
     }
 }
 
