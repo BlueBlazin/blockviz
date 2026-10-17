@@ -4,6 +4,7 @@
 //! legend, the details panel's frame, and the dialogs over the diagram.
 
 use crate::crumbs;
+use crate::menus;
 use crate::icons::icon;
 use crate::pen::Pen;
 use crate::render::drawn_in;
@@ -950,12 +951,7 @@ impl Viewer {
 
     fn search_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(Dialog::Search(s)) = self.dialog.as_mut() else { return };
-        let k = &e.keystroke;
-        if k.key == "k" && (k.modifiers.platform || k.modifiers.control) {
-            cx.stop_propagation();
-            return self.close_dialog(window, cx);
-        }
-        match k.key.as_str() {
+        match e.keystroke.key.as_str() {
             "down" => s.active = (s.active + 1).min(s.results.len().saturating_sub(1)),
             "up" => s.active = s.active.saturating_sub(1),
             "enter" => {
@@ -972,6 +968,12 @@ impl Viewer {
         s.scroll.scroll_to_item(s.active);
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn open_recent(&mut self, i: usize, cx: &mut Context<Self>) {
+        if let Some(f) = self.settings.recent.get(i).cloned() {
+            self.open_folder(std::path::PathBuf::from(f), cx);
+        }
     }
 
     fn resize_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1013,6 +1015,40 @@ impl Render for Viewer {
             .text_color(ui.ink)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            .on_action(cx.listener(|v, _: &menus::Open, _, cx| v.prompt_folder(cx)))
+            .on_action(cx.listener(|_, _: &menus::CloseWindow, window, _| window.remove_window()))
+            .on_action(cx.listener(|v, _: &menus::DownloadSvg, window, cx| v.download(false, window, cx)))
+            .on_action(cx.listener(|v, _: &menus::DownloadPng, window, cx| v.download(true, window, cx)))
+            .on_action(cx.listener(|v, _: &menus::Search, window, cx| v.toggle_search(window, cx)))
+            .on_action(cx.listener(|v, _: &menus::Back, _, cx| v.back(cx)))
+            .on_action(cx.listener(|v, _: &menus::Forward, _, cx| v.forward(cx)))
+            .on_action(cx.listener(|v, _: &menus::ZoomIn, _, cx| v.zoom_by(1.5, cx)))
+            .on_action(cx.listener(|v, _: &menus::ZoomOut, _, cx| v.zoom_by(1.0 / 1.5, cx)))
+            .on_action(cx.listener(|v, _: &menus::Fit, _, cx| v.fit(cx)))
+            .on_action(cx.listener(|v, _: &menus::Home, _, cx| v.home(cx)))
+            .on_action(cx.listener(|v, _: &menus::ToggleLegend, _, cx| {
+                v.legend = !v.legend;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|v, _: &menus::ToggleTrunks, _, cx| {
+                let on = !v.trunks;
+                v.set_trunks(on, cx);
+            }))
+            .on_action(cx.listener(|v, _: &menus::ToggleScheme, _, cx| v.toggle_scheme(cx)))
+            .on_action(cx.listener(|_, _: &menus::FullScreen, window, _| window.toggle_fullscreen()))
+            .on_action(cx.listener(|v, _: &menus::CompareUncommitted, _, cx| v.compare_uncommitted(cx)))
+            .on_action(cx.listener(|v, _: &menus::CompareBranch, _, cx| v.compare_branch(cx)))
+            .on_action(cx.listener(|v, _: &menus::StopComparing, _, cx| v.stop_compare(cx)))
+            .on_action(cx.listener(|_, _: &menus::Minimize, window, _| window.minimize_window()))
+            .on_action(cx.listener(|_, _: &menus::Zoom, window, _| window.zoom_window()))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent0, _, cx| v.open_recent(0, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent1, _, cx| v.open_recent(1, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent2, _, cx| v.open_recent(2, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent3, _, cx| v.open_recent(3, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent4, _, cx| v.open_recent(4, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent5, _, cx| v.open_recent(5, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent6, _, cx| v.open_recent(6, cx)))
+            .on_action(cx.listener(|v, _: &menus::OpenRecent7, _, cx| v.open_recent(7, cx)))
             .on_mouse_move(cx.listener(Self::resize_move))
             .on_mouse_up(MouseButton::Left, cx.listener(|v, _: &MouseUpEvent, _, cx| v.end_resize(cx)))
             .drag_over::<ExternalPaths>(|s, _, _, _| s.border_2().border_dashed().border_color(gpui::hsla(0.0, 0.0, 0.5, 0.6)))

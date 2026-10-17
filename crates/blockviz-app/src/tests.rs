@@ -32,7 +32,10 @@ fn frame(cx: &mut VisualTestContext) {
 }
 
 fn open(cx: &mut TestAppContext) -> (Entity<Viewer>, &mut VisualTestContext) {
-    cx.update(crate::input::bind_keys);
+    cx.update(|cx| {
+        crate::input::bind_keys(cx);
+        crate::menus::bind(cx);
+    });
     let f = files(&[("model.py", MODEL_PY), ("train.py", TRAIN_PY)]);
     let m = model(&f);
     let (view, cx) = cx.add_window_view(|window, cx| Viewer::new(window, cx));
@@ -315,4 +318,31 @@ fn compare_reads_the_folder_at_a_revision_and_shows_what_changed(cx: &mut TestAp
     assert!(changes >= 1);
     assert_eq!(content(&view, cx), Content::Changes);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn the_menu_bar_drives_the_view(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    // Choosing a menu item dispatches its action to the window.
+    cx.dispatch_action(crate::menus::Search);
+    frame(cx);
+    assert!(view.read_with(cx, |v, _| matches!(v.dialog, Some(Dialog::Search(_)))));
+    cx.dispatch_action(crate::menus::Search);
+    frame(cx);
+    assert!(view.read_with(cx, |v, _| v.dialog.is_none()));
+    let s0 = view.read_with(cx, |v, _| v.camera.transforms(v.m.as_ref().unwrap())[0].s);
+    cx.dispatch_action(crate::menus::ZoomIn);
+    frame(cx);
+    let s1 = view.read_with(cx, |v, _| v.camera.transforms(v.m.as_ref().unwrap())[0].s);
+    assert!((s1 / s0 - 1.5).abs() < 1e-6);
+    cx.dispatch_action(crate::menus::ToggleLegend);
+    frame(cx);
+    assert!(view.read_with(cx, |v, _| v.legend));
+    cx.simulate_keystrokes("cmd-0");
+    frame(cx);
+    assert!(view.read_with(cx, |v, _| v.flight.is_some()));
+    // The menus list the folders opened lately.
+    let menus = crate::menus::menus(&["/a/one".into(), "/b/two".into()]);
+    let names: Vec<String> = menus.iter().map(|m| m.name.to_string()).collect();
+    assert_eq!(names, ["blockviz", "File", "Edit", "View", "Compare", "Window"]);
 }

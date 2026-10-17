@@ -21,6 +21,7 @@ mod input;
 mod linediff;
 mod lines;
 mod live;
+mod menus;
 mod model;
 mod panel;
 mod pen;
@@ -34,11 +35,9 @@ mod theme;
 mod trace;
 mod viewer;
 
-use gpui::{px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions};
+use gpui::{px, size, App, AppContext, Application, Bounds, WindowBounds, WindowOptions};
 use std::path::PathBuf;
 use viewer::Viewer;
-
-gpui::actions!(blockviz, [Quit]);
 
 /// Draws a view of `folder` into an SVG, without a window.
 fn draw_svg(folder: &std::path::Path, out: &str, at: Option<&str>, dark: bool, (w, h): (f64, f64)) {
@@ -94,8 +93,19 @@ fn main() {
 
     Application::new().with_assets(icons::Icons).run(move |cx: &mut App| {
         input::bind_keys(cx);
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        menus::bind(cx);
+        cx.on_action(|_: &menus::Quit, cx| cx.quit());
+        cx.on_action(|_: &menus::Hide, cx| cx.hide());
+        cx.on_action(|_: &menus::HideOthers, cx| cx.hide_other_apps());
+        cx.on_action(|_: &menus::ShowAll, cx| cx.unhide_other_apps());
+        cx.set_menus(menus::menus(&settings::Settings::load().recent));
+        // The app is its window: closing it quits.
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
         cx.open_window(options, |window, cx| {

@@ -267,6 +267,7 @@ impl Viewer {
         let ask = live::open(folder.clone(), self.trunks, move |u| send.unbounded_send(u).is_ok());
         self.project = Some(Project { folder: folder.clone(), ask, repo: None, files: Files::new(), elapsed: Duration::ZERO });
         self.settings.opened(&folder);
+        cx.set_menus(crate::menus::menus(&self.settings.recent));
         self.title = format!("{name} · blockviz");
         cx.spawn(async move |this, cx| {
             use futures::StreamExt;
@@ -936,19 +937,6 @@ impl Viewer {
         let key = k.key.as_str();
         let ch = k.key_char.as_deref().unwrap_or(key);
         let cmd = k.modifiers.platform || k.modifiers.control;
-        if cmd && key == "k" {
-            cx.stop_propagation();
-            if matches!(self.dialog, Some(Dialog::Search(_))) {
-                self.close_dialog(window, cx);
-            } else if self.m.is_some() {
-                self.open_search(window, cx);
-            }
-            return;
-        }
-        if cmd && key == "o" {
-            cx.stop_propagation();
-            return self.prompt_folder(cx);
-        }
         // Esc closes a dialog, else the details panel (as its close button does); it never moves the view.
         if key == "escape" {
             if self.menu.take().is_some() {
@@ -978,11 +966,11 @@ impl Viewer {
         if self.dialog.is_some() {
             return;
         }
-        // Back and forward, as in a browser.
-        if (k.modifiers.alt && key == "left") || (cmd && key == "[") {
+        // Back and forward, as in a browser (⌘[ and ⌘] are the View menu's).
+        if k.modifiers.alt && key == "left" {
             return self.back(cx);
         }
-        if (k.modifiers.alt && key == "right") || (cmd && key == "]") {
+        if k.modifiers.alt && key == "right" {
             return self.forward(cx);
         }
         if cmd || k.modifiers.alt || self.m.is_none() {
@@ -1010,6 +998,25 @@ impl Viewer {
     }
 
     // ----- dialogs --------------------------------------------------------------------
+
+    /// ⌘K: the search palette, or away from it.
+    pub fn toggle_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.dialog, Some(Dialog::Search(_))) {
+            self.close_dialog(window, cx);
+        } else if self.m.is_some() {
+            self.open_search(window, cx);
+        }
+    }
+
+    /// The Compare menu's first item: the folder against its last commit.
+    pub fn compare_uncommitted(&mut self, cx: &mut Context<Self>) {
+        if self.project.as_ref().is_some_and(|p| p.repo.is_some()) {
+            self.start_compare("HEAD".into(), "Uncommitted changes".into(), "HEAD".into(), "Working tree vs HEAD".into(), cx);
+        } else {
+            self.error = Some("This folder is not in a git repository.".into());
+            cx.notify();
+        }
+    }
 
     pub fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dialog = None;
