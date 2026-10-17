@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 /// What each kind of block is called.
-fn kind_label(k: Kind) -> &'static str {
+pub(crate) fn kind_label(k: Kind) -> &'static str {
     match k {
         Kind::Repo => "Repository",
         Kind::Dir => "Folder",

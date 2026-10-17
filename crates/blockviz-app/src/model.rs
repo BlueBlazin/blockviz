@@ -359,6 +359,11 @@ impl Model {
         }
         best.into_iter().map(|b| b.1).collect()
     }
+
+    /// The code a span covers (none when its file's text is not known).
+    pub fn source(&self, span: &Span) -> Option<&str> {
+        self.file_text(span.file)?.get(span.start as usize..span.end as usize)
+    }
 }
 
 #[cfg(test)]
