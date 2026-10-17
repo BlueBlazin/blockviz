@@ -227,6 +227,13 @@ impl<'a> Later<'a> {
 }
 
 const SECTION_MIN: usize = 12;
+
+/// `b` follows `a` in the source. Front ends can place statements out of
+/// source order (JavaScript class fields are set as the constructor starts),
+/// and statements out of order never share a paragraph or a run.
+fn in_order(a: &Stmt, b: &Stmt) -> bool {
+    a.end() <= b.start()
+}
 /// Branches with more arms are drawn as a table of the arms.
 const MAX_LANES: usize = 24;
 const MINOR_EXT: &[&str] = &[
@@ -625,12 +632,15 @@ impl<'c, 'p> Fb<'c, 'p> {
     }
 
     /// Paragraphs separated by blank lines; a paragraph opened by a comment takes it as its title.
+    /// A paragraph is one stretch of source: a statement a front end placed out
+    /// of source order (a class field set as the constructor starts) opens its own.
     fn paragraphs(&self, stmts: &[Stmt]) -> Vec<(usize, usize, Option<String>, String)> {
         let src = self.src();
         let mut paras: Vec<(usize, usize, Option<String>, String)> = vec![];
         for (i, s) in stmts.iter().enumerate() {
             let start_line = stmt_start_line(src, s);
-            let new_para = i == 0 || {
+            let hoisted = i > 0 && !in_order(&stmts[i - 1], s);
+            let new_para = i == 0 || hoisted || {
                 let prev_end = src.line_of(usize::from(stmts[i - 1].end()).saturating_sub(1));
                 // `# ------` rulers separate parts of a script as clearly as blank lines.
                 let ruler = src.comments_between(prev_end, start_line).iter().any(|c| {
@@ -649,7 +659,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 // An untitled paragraph continues the titled one before it, unless it
                 // starts a definition: definitions stand on their own.
                 let definition = matches!(s, Stmt::FunctionDef(_) | Stmt::ClassDef(_));
-                if title.is_none() && !definition && paras.last().is_some_and(|p| p.2.is_some()) {
+                if title.is_none() && !definition && !hoisted && paras.last().is_some_and(|p| p.2.is_some()) {
                     paras.last_mut().unwrap().1 = i + 1;
                     continue;
                 }
@@ -671,7 +681,7 @@ impl<'c, 'p> Fb<'c, 'p> {
                 let same = match (self.subject(&stmts[last.1 - 1]), self.subject(&stmts[p.0])) {
                     (Some(a), Some(b)) => a.recv == b.recv && a.kind == b.kind && a.project == b.project,
                     _ => false,
-                };
+                } && in_order(&stmts[last.1 - 1], &stmts[p.0]);
                 if same {
                     last.1 = p.1;
                     last.2 = None;
@@ -856,7 +866,7 @@ impl<'c, 'p> Fb<'c, 'p> {
         let Some(first) = self.subject(&stmts[i]) else { return i };
         let mut j = i + 1;
         let mut project = first.project;
-        while j < stmts.len() && !self.handled.contains(&u32::from(stmts[j].start())) {
+        while j < stmts.len() && !self.handled.contains(&u32::from(stmts[j].start())) && in_order(&stmts[j - 1], &stmts[j]) {
             match self.subject(&stmts[j]) {
                 Some(x) if x.recv == first.recv && x.kind == first.kind => {
                     project |= x.project;

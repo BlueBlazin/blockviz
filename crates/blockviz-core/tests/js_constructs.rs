@@ -683,3 +683,45 @@ export function evaluated(url: string) {
     // A case that returns does not run on: what it made is unread.
     assert_eq!(stopped("leaves"), ["out"]);
 }
+
+#[test]
+fn fields_declared_after_the_constructor_stay_out_of_its_paragraphs() {
+    // Instance fields are set as the constructor starts, so a field declared
+    // after it comes first in the body while sitting later in the file. Its
+    // paragraph is its own: the constructor's sections cover only its code.
+    let s = analyze(&[(
+        "engine.ts",
+        r#"
+export class Engine {
+  private zoom = 1;
+
+  constructor(private canvas: HTMLCanvasElement, private model: Model) {
+    this.ctx = canvas.getContext('2d')!;
+    this.renderer = new Renderer(this.ctx);
+    this.camera = new Camera(canvas.width);
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(canvas);
+    canvas.addEventListener('wheel', e => this.wheel(e));
+    canvas.addEventListener('pointerdown', e => this.down(e));
+    canvas.addEventListener('pointermove', e => this.move(e));
+    canvas.addEventListener('pointerup', e => this.up(e));
+    canvas.addEventListener('dblclick', e => this.open(e));
+    window.addEventListener('keydown', e => this.key(e));
+    this.resize();
+    this.draw();
+  }
+
+  /** Where the reader is. */
+  private focused: number[] | null = null;
+}
+"#,
+    )]);
+    let ctor = find(&s, "constructor");
+    let within = ctor.span.as_ref().expect("constructor span");
+    let sections: Vec<&Node> = descendants(&s, ctor).into_iter().filter(|n| n.kind == Kind::Section).collect();
+    assert!(!sections.is_empty(), "{:?}", kids(&s, ctor).iter().map(|k| &k.title).collect::<Vec<_>>());
+    for n in sections {
+        let span = n.span.as_ref().expect("section span");
+        assert!(within.start <= span.start && span.start <= span.end && span.end <= within.end, "{} spans {}..{}, outside the constructor's {}..{}", n.title, span.line, span.end_line, within.line, within.end_line);
+    }
+}
